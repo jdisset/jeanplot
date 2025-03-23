@@ -1,58 +1,55 @@
-from typing import Optional, Union, Tuple, Set, List
-from pathlib import Path as FilePath
+from typing import Optional, Union, Tuple, Set, List, Dict, Any
+from pathlib import Path
 from pydantic import BaseModel, Field
 from lxml import etree
 from io import StringIO
 import re
-import numpy as np
-import matplotlib.collections as mcollections
-import matplotlib.transforms as mtransforms
-from svgpath2mpl import parse_path
-import matplotlib.pyplot as plt
-from .components import Component
+from .models import Size, Offset
 
 
 class SVGPath(BaseModel):
+    """represents a single SVG path element"""
+
     path_data: str
     fill: Optional[str] = None
     stroke: Optional[str] = None
     stroke_width: float = 1.0
     transform: Optional[str] = None
-
-    def get_mpl_path(self, viewBox: Optional[Tuple[float, float, float, float]] = None):
-        path = parse_path(self.path_data)
-        if viewBox is not None:
-            vx, vy, vw, vh = viewBox
-            path.vertices[:, 0] -= vx
-            path.vertices[:, 1] -= vy
-        return path
+    is_main_color: bool = False
+    is_secondary_color: bool = False
 
 
-class SVGDefinition(BaseModel):
-    """handles loading and parsing of SVG files with support for color indexing"""
+class SVGDocument(BaseModel):
+    """represents an SVG document with paths and metadata"""
 
     width: float
     height: float
     viewBox: Optional[Tuple[float, float, float, float]] = None
     paths: List[SVGPath] = Field(default_factory=list)
-    main_color_indices: Set[int] = Field(default_factory=set)
-    secondary_color_indices: Set[int] = Field(default_factory=set)
 
     @classmethod
-    def from_file(cls, file_path: Union[str, FilePath], ppi: float = 1.0):
-        path = FilePath(file_path)
+    def from_file(cls, file_path: Union[str, Path], ppi: float = 1.0):
+        """load an SVG document from a file"""
+        path = Path(file_path)
         if not path.exists():
-            raise FileNotFoundError(f"svg file not found: {path.absolute()}")
+            raise FileNotFoundError(f"SVG file not found: {path.absolute()}")
 
         try:
-            tree = etree.parse(StringIO(path.read_text()))
+            tree = etree.parse(str(path))
         except Exception as e:
-            raise ValueError(f"failed to parse svg file {file_path}: {str(e)}")
+            raise ValueError(f"Failed to parse SVG file {file_path}: {str(e)}")
 
         root = tree.getroot()
-        width = float(re.match(r"\d+", root.attrib["width"]).group()) / ppi
-        height = float(re.match(r"\d+", root.attrib["height"]).group()) / ppi
 
+        # extract width and height
+        width_str = root.attrib.get("width", "100")
+        height_str = root.attrib.get("height", "100")
+
+        # remove 'px' suffix if present
+        width = float(re.match(r"[\d\.]+", width_str).group()) / ppi
+        height = float(re.match(r"[\d\.]+", height_str).group()) / ppi
+
+        # extract viewBox
         viewBox = None
         if "viewBox" in root.attrib:
             try:
@@ -60,24 +57,24 @@ class SVGDefinition(BaseModel):
             except ValueError:
                 pass
 
+        # extract paths
         paths = []
-        main_color_indices = set()
-        secondary_color_indices = set()
-
-        for i, elem in enumerate(root.findall(".//{http://www.w3.org/2000/svg}path")):
+        for elem in root.findall(".//{http://www.w3.org/2000/svg}path"):
             try:
+                fill = elem.attrib.get("fill", "none")
+                is_main_color = fill == "#0000FF"
+                is_secondary_color = fill == "#00FF00"
+
                 path = SVGPath(
                     path_data=elem.attrib["d"],
-                    fill=elem.attrib.get("fill", "none"),
+                    fill=fill,
                     stroke=elem.attrib.get("stroke", "none"),
                     stroke_width=float(elem.attrib.get("stroke-width", 1.0)),
                     transform=elem.attrib.get("transform"),
+                    is_main_color=is_main_color,
+                    is_secondary_color=is_secondary_color,
                 )
                 paths.append(path)
-                if path.fill == "#0000FF":
-                    main_color_indices.add(i)
-                elif path.fill == "#00FF00":
-                    secondary_color_indices.add(i)
             except Exception:
                 continue
 
@@ -86,74 +83,38 @@ class SVGDefinition(BaseModel):
             height=height,
             viewBox=viewBox,
             paths=paths,
-            main_color_indices=main_color_indices,
-            secondary_color_indices=secondary_color_indices,
         )
 
 
-class SVG(Component):
-    """renders SVG paths as matplotlib collections with support for color theming"""
+def get_svg_data(file_path: Union[str, Path]) -> Dict[str, Any]:
+    """utility function to load SVG data from a file"""
+    try:
+        document = SVGDocument.from_file(file_path)
 
-    definition: SVGDefinition
-    main_color: str = "black"
-    secondary_color: str = "gray"
-    edge_color: Optional[str] = None
-    line_width: Optional[float] = None
-    preserve_aspect_ratio: bool = True
-
-    @classmethod
-    def from_file(cls, file_path: Union[str, FilePath], id: str, **kwargs):
-        definition = SVGDefinition.from_file(file_path)
-        return cls(id=id, definition=definition, **kwargs)
-
-    def _get_collection(self, transform: np.ndarray, ax: plt.Axes) -> mcollections.PathCollection:
+        # prepare path data in the format expected by renderers
         paths = []
-        for svg_path in self.definition.paths:
-            path = svg_path.get_mpl_path(self.definition.viewBox)
-            path.vertices[:, 1] = self.definition.height - path.vertices[:, 1]
-            paths.append(path)
+        for path in document.paths:
+            path_data = {
+                "d": path.path_data,
+                "fill": path.fill,
+                "stroke": path.stroke,
+                "stroke_width": path.stroke_width,
+                "is_main_color": path.is_main_color,
+                "is_secondary_color": path.is_secondary_color,
+            }
+            paths.append(path_data)
 
-        facecolors = []
-        for i, path in enumerate(self.definition.paths):
-            if i in self.definition.main_color_indices:
-                color = self.main_color
-            elif i in self.definition.secondary_color_indices:
-                color = self.secondary_color
-            else:
-                color = path.fill if path.fill != "none" else None
-            facecolors.append(color)
-
-        edgecolors = [
-            self.edge_color if self.edge_color else path.stroke for path in self.definition.paths
-        ]
-
-        return mcollections.PathCollection(
-            paths,
-            facecolors=facecolors,
-            edgecolors=edgecolors,
-            linewidths=self.line_width if self.line_width else 1.0,
-            capstyle="round",
-            transform=mtransforms.Affine2D(matrix=transform) + ax.transData,
-        )
-
-    def render(self, ax: plt.Axes, parent_transform: Optional[np.ndarray] = None):
-        transform = self.get_transform_matrix(parent_transform)
-
-        if self.definition.viewBox:
-            vx, vy, vw, vh = self.definition.viewBox
-            scale_x = self.bounds.width / vw
-            scale_y = self.bounds.height / vh
-
-            if self.preserve_aspect_ratio:
-                scale = min(scale_x, scale_y)
-                scale_x = scale_y = scale
-
-            transform = transform @ np.array(
-                [
-                    [scale_x, 0, self.bounds.x + vx * scale_x],
-                    [0, scale_y, self.bounds.y + vy * scale_y],
-                    [0, 0, 1],
-                ]
-            )
-
-        ax.add_collection(self._get_collection(transform, ax))
+        return {
+            "width": document.width,
+            "height": document.height,
+            "viewBox": document.viewBox,
+            "paths": paths,
+        }
+    except Exception as e:
+        print(f"Failed to load SVG: {e}")
+        return {
+            "width": 100,
+            "height": 100,
+            "viewBox": None,
+            "paths": [],
+        }
