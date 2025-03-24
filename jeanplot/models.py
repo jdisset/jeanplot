@@ -7,6 +7,7 @@ PositionType = Literal["relative", "absolute"]
 LineStyleType = Literal["solid", "dashed", "dotted", "custom"]
 AlignType = Literal["start", "center", "end", "stretch"]
 DistributeType = Literal["start", "center", "end", "space-between", "space-around", "space-evenly"]
+LineWidthMode = Literal["point", "data"]  # point = constant visual size, data = scales with data
 
 
 class Size(BaseModel):
@@ -43,9 +44,9 @@ class Offset(BaseModel):
 
     def compute(self, dimensions: Size) -> Tuple[float, float]:
         """compute the combined offset based on dimensions"""
-        # the negative sign for relative offset is because we want to
+        # The negative sign for relative offset is because we want to
         # shift the drawing origin relative to the component's position
-        # tor example, relative=(0.5, 0.5) means "center the origin"
+        # For example, relative=(0.5, 0.5) means "center the origin"
         return (
             -dimensions.width * self.relative[0] + self.absolute[0],
             -dimensions.height * self.relative[1] + self.absolute[1],
@@ -115,6 +116,7 @@ class VisualStyle(BaseModel):
     background_color: Optional[str] = None
     border_color: Optional[str] = None
     border_width: float = 0.0
+    border_width_mode: LineWidthMode = "point"  # default to point units (matplotlib default)
     border_style: LineStyleType = "solid"
     dash_sequence: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0

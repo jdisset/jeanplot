@@ -1,156 +1,63 @@
-from typing import Optional, Dict, Any, Union, BinaryIO, TextIO, Tuple, List
+from typing import Optional, Dict, Any, Union, BinaryIO, TextIO, List, Callable, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtransforms
 import matplotlib.collections as mcollections
-from matplotlib.path import Path
 from .components import Component
 from .models import Size
 
 
-def generate_rounded_rect_points(
-    width: float, height: float, radius: float, inset: float = 0, segments: int = 10
-) -> np.ndarray:
-    """
-    generate points for drawing a rounded rectangle with optional inset
-
-    Args:
-        width: width of the rectangle
-        height: height of the rectangle
-        radius: corner radius
-        inset: amount to inset the rectangle (for creating inner border)
-        segments: number of segments to use for each corner arc
-    """
-    # apply inset to dimensions
-    if inset > 0:
-        width = max(0, width - 2 * inset)
-        height = max(0, height - 2 * inset)
-
-    if width <= 0 or height <= 0:
-        return np.array([[0, 0]])
-
-    # clamp radius to half the min dimension to avoid invalid shapes
-    radius = min(radius, min(width, height) / 2)
-
-    # if radius is zero or negative, return a simple rectangle
-    if radius <= 0:
-        return np.array(
-            [
-                [inset, inset],  # top-left
-                [width + inset, inset],  # top-right
-                [width + inset, height + inset],  # bottom-right
-                [inset, height + inset],  # bottom-left
-                [inset, inset],  # close the path
-            ]
-        )
-
-    points = []
-
-    # top-left corner
-    for i in range(segments + 1):
-        angle = np.pi + (i / segments) * (np.pi / 2)
-        points.append(
-            [inset + radius + radius * np.cos(angle), inset + radius + radius * np.sin(angle)]
-        )
-
-    # top-right corner
-    for i in range(segments + 1):
-        angle = 3 * np.pi / 2 + (i / segments) * (np.pi / 2)
-        points.append(
-            [
-                inset + width - radius + radius * np.cos(angle),
-                inset + radius + radius * np.sin(angle),
-            ]
-        )
-
-    # bottom-right corner
-    for i in range(segments + 1):
-        angle = 0 + (i / segments) * (np.pi / 2)
-        points.append(
-            [
-                inset + width - radius + radius * np.cos(angle),
-                inset + height - radius + radius * np.sin(angle),
-            ]
-        )
-
-    # bottom-left corner
-    for i in range(segments + 1):
-        angle = np.pi / 2 + (i / segments) * (np.pi / 2)
-        points.append(
-            [
-                inset + radius + radius * np.cos(angle),
-                inset + height - radius + radius * np.sin(angle),
-            ]
-        )
-
-    # close the path
-    points.append(points[0])
-
-    return np.array(points)
+def linewidth_from_data_units(linewidth, axis, reference="y"):
+    """convert linewidth in data units to points"""
+    fig = axis.get_figure()
+    if reference == "x":
+        length = fig.bbox_inches.width * axis.get_position().width
+        value_range = np.diff(axis.get_xlim())
+    elif reference == "y":
+        length = fig.bbox_inches.height * axis.get_position().height
+        value_range = np.diff(axis.get_ylim())
+    length *= 72
+    # scale linewidth to value range
+    assert value_range > 0, "value_range must be positive"
+    result = linewidth * (length / value_range)
+    return result
 
 
-def generate_dashed_points(points: np.ndarray, dash_pattern: Tuple[float, float]) -> np.ndarray:
-    """generate points for a dashed line following the given points"""
-    if len(points) < 2:
-        return points
+class DataWidthPatch:
+    """wrapper to track patches that use data units for line width"""
 
-    dash_length, gap_length = dash_pattern
-    result_points = []
+    def __init__(self, patch, data_width, axis):
+        self.patch = patch
+        self.data_width = data_width
+        self.axis = axis
+        # update initially
+        self.update_linewidth()
 
-    # compute the cumulative distance along the path
-    distances = np.zeros(len(points))
-    for i in range(1, len(points)):
-        segment = points[i] - points[i - 1]
-        distances[i] = distances[i - 1] + np.sqrt(np.sum(segment**2))
-
-    total_length = distances[-1]
-
-    # generate dashes
-    dash_start = 0
-    while dash_start < total_length:
-        dash_end = min(dash_start + dash_length, total_length)
-
-        # find points for dash start
-        start_idx = np.searchsorted(distances, dash_start) - 1
-        if start_idx < 0:
-            start_idx = 0
-        end_idx = np.searchsorted(distances, dash_end)
-
-        # interpolate start point if needed
-        if dash_start > distances[start_idx]:
-            t = (dash_start - distances[start_idx]) / (
-                distances[start_idx + 1] - distances[start_idx]
-            )
-            start_point = points[start_idx] + t * (points[start_idx + 1] - points[start_idx])
-            result_points.append(start_point)
-        else:
-            result_points.append(points[start_idx])
-
-        # add intermediate points
-        for i in range(start_idx + 1, end_idx):
-            result_points.append(points[i])
-
-        # interpolate end point if needed
-        if end_idx < len(points) and dash_end < distances[end_idx]:
-            t = (dash_end - distances[end_idx - 1]) / (distances[end_idx] - distances[end_idx - 1])
-            end_point = points[end_idx - 1] + t * (points[end_idx] - points[end_idx - 1])
-            result_points.append(end_point)
-        elif end_idx < len(points):
-            result_points.append(points[end_idx])
-
-        # move to next dash
-        dash_start = dash_end + gap_length
-        result_points.append(None)  # None creates a break in the line
-
-    return np.array(result_points, dtype=object)
+    def update_linewidth(self):
+        """update line width based on current axis state"""
+        new_width = linewidth_from_data_units(self.data_width, self.axis)
+        if hasattr(self.patch, "set_linewidth"):
+            self.patch.set_linewidth(new_width)
 
 
 class BaseRenderer:
     """base renderer class defining a unified interface for all renderers"""
 
     RENDERER_NAME = "base"
+
+    def __init__(self):
+        self.pre_render_callbacks = []
+        self.post_render_callbacks = []
+
+    def add_pre_render_callback(self, callback: Callable):
+        """add a callback to be called just before rendering"""
+        self.pre_render_callbacks.append(callback)
+
+    def add_post_render_callback(self, callback: Callable):
+        """add a callback to be called just after rendering"""
+        self.post_render_callbacks.append(callback)
 
     def create_context(self, width: float, height: float, **kwargs):
         """create a rendering context with the specified dimensions"""
@@ -191,17 +98,31 @@ class MatplotlibRenderer(BaseRenderer):
 
     RENDERER_NAME = "matplotlib"
 
-    def create_context(self, width=None, height=None, dpi: int = 100, ax=None, **kwargs):
-        """
-        create a matplotlib figure and axes context
+    def __init__(self, debug=False):
+        super().__init__()
+        self.data_width_patches = []
+        self.debug = debug
 
-        args:
-            width: width of the figure
-            height: height of the figure
-            dpi: dpi of the figure
-            ax: optional existing axes to use
-            **kwargs: additional args for plt.subplots
-        """
+    def debug_print(self, message):
+        """print debug information if debug is enabled"""
+        if self.debug:
+            print(f"[MatplotlibRenderer] {message}")
+
+    def refresh_linewidths(self, context):
+        """update all line widths for data-unit elements"""
+        self.debug_print(f"Refreshing {len(self.data_width_patches)} tracked patches")
+        for patch_wrapper in self.data_width_patches:
+            patch_wrapper.update_linewidth()
+
+    def track_data_width_patch(self, patch, data_width, context):
+        """track a patch that uses data units for linewidth"""
+        wrapper = DataWidthPatch(patch, data_width, context)
+        self.data_width_patches.append(wrapper)
+        self.debug_print(f"Now tracking {len(self.data_width_patches)} patches")
+        return patch
+
+    def create_context(self, width=None, height=None, dpi: int = 100, ax=None, **kwargs):
+        """create a matplotlib figure and axes context"""
         if ax is not None:
             return ax
 
@@ -210,7 +131,10 @@ class MatplotlibRenderer(BaseRenderer):
 
         fig, ax = plt.subplots(figsize=(width / dpi, height / dpi), dpi=dpi, **kwargs)
         ax.set_aspect("equal")
-        # ax.axis("off")
+
+        # clear tracking when creating a new context
+        self.data_width_patches = []
+        self.debug_print("Created new context and cleared tracking")
 
         return ax
 
@@ -222,13 +146,30 @@ class MatplotlibRenderer(BaseRenderer):
         adjust_lims: bool = True,
     ):
         """render a component to the context, optionally adjusting limits"""
+        # ensure measurement and layout are current before rendering
         component.measure_and_layout(self)
 
         if adjust_lims:
             self.adjust_limits(context, component)
 
+        # run pre-render callbacks after limits are set but before rendering
+        for callback in self.pre_render_callbacks:
+            callback(context)
+
+        # clear tracking before rendering to avoid duplicates
+        self.data_width_patches = []
+
+        # render the component
         matrix = component.compute_world_matrix(parent_matrix)
         component.render(self, context, matrix)
+
+        # refresh line widths after component is rendered
+        self.debug_print("Refreshing line widths after component render")
+        self.refresh_linewidths(context)
+
+        # run post-render callbacks
+        for callback in self.post_render_callbacks:
+            callback(context)
 
     def adjust_limits(self, context: Axes, root_component: Component, padding: float = 0.05):
         """adjust plot limits to fit all components with padding"""
@@ -245,16 +186,22 @@ class MatplotlibRenderer(BaseRenderer):
         context.set_xlim(min_x - pad_x, max_x + pad_x)
         context.set_ylim(min_y - pad_y, max_y + pad_y)
 
+        self.debug_print(
+            f"Set limits: x=[{min_x-pad_x:.1f}, {max_x+pad_x:.1f}], y=[{min_y-pad_y:.1f}, {max_y+pad_y:.1f}]"
+        )
+
     def _calculate_world_bounds(
         self, component: Component, parent_matrix: Optional[np.ndarray] = None
     ):
         """recursively calculate the world bounds of all components"""
+        # compute the world matrix for this component
         world_matrix = component.compute_world_matrix(parent_matrix)
 
+        # get the component's dimensions
         width = component._dimensions.width
         height = component._dimensions.height
 
-        # corners of the component in local space
+        # define the corners of the component in local space
         corners = np.array(
             [
                 [0, 0, 1],  # bottom left
@@ -264,13 +211,16 @@ class MatplotlibRenderer(BaseRenderer):
             ]
         )
 
+        # transform the corners to world space
         world_corners = (world_matrix @ corners.T).T
 
+        # initialize min/max coordinates
         min_x = float("inf")
         min_y = float("inf")
         max_x = float("-inf")
         max_y = float("-inf")
 
+        # update min/max coordinates based on corners
         for corner in world_corners:
             min_x = min(min_x, corner[0])
             min_y = min(min_y, corner[1])
@@ -298,135 +248,72 @@ class MatplotlibRenderer(BaseRenderer):
         matrix: np.ndarray,
         component=None,
     ):
-        """render a rectangle using the double-polygon approach for consistent borders"""
-        background_color = style.get("background_color", "none")
-        border_color = style.get("border_color", "none")
-        border_width = style.get("width", 1.0)
+        """render a rectangle to the matplotlib axes"""
+        facecolor = style.get("background_color", "none")
+        edgecolor = style.get("border_color", "none")
         corner_radius = style.get("corner_radius", 0.0)
+
+        # map border style to matplotlib line style
         border_style = style.get("border_style", "solid")
-        dash_sequence = style.get("dash_sequence")
-        dash_offset = style.get("dash_offset", 0.0)
+        linestyle_map = {
+            "solid": "-",
+            "dashed": "--",
+            "dotted": ":",
+            "custom": "-",  # we'll handle custom dash patterns separately
+        }
+        linestyle = linestyle_map.get(border_style, "-")
 
-        # early exit if no fill or border
-        if (not background_color or background_color == "none") and (
-            not border_color or border_color == "none"
-        ):
-            return
+        # get the line width and mode
+        width_value = style.get("width", 1.0)
+        width_mode = style.get("border_width_mode", "point")
 
-        # handle border with double polygon approach
-        if border_color and border_color != "none" and border_width > 0:
-            outer_points = generate_rounded_rect_points(bounds.width, bounds.height, corner_radius)
+        comp_id = component.id if component and component.id else "unknown"
 
-            homogeneous_outer = np.hstack([outer_points, np.ones((len(outer_points), 1))])
-            transformed_outer = (matrix @ homogeneous_outer.T).T[:, :2]
-
-            # for dashed/dotted border style
-            if border_style in ["dashed", "dotted", "custom"]:
-                if border_style == "dashed":
-                    dash_pattern = (4 * border_width, 2 * border_width)
-                elif border_style == "dotted":
-                    dash_pattern = (border_width, border_width)
-                elif border_style == "custom" and dash_sequence:
-                    dash_pattern = dash_sequence
-                else:
-                    dash_pattern = (4 * border_width, 2 * border_width)
-
-                dashed_points = generate_dashed_points(transformed_outer, dash_pattern)
-
-                # create line segments for dashed border
-                for i in range(0, len(dashed_points) - 1):
-                    if dashed_points[i] is None or dashed_points[i + 1] is None:
-                        continue
-
-                    dash_segment = np.array([dashed_points[i], dashed_points[i + 1]])
-
-                    # calculate perpendicular vector for line thickness
-                    dx = dash_segment[1][0] - dash_segment[0][0]
-                    dy = dash_segment[1][1] - dash_segment[0][1]
-                    length = np.sqrt(dx * dx + dy * dy)
-
-                    if length > 0:
-                        # normalize and rotate 90 degrees
-                        nx = -dy / length * border_width / 2
-                        ny = dx / length * border_width / 2
-
-                        poly_points = np.array(
-                            [
-                                [dash_segment[0][0] + nx, dash_segment[0][1] + ny],
-                                [dash_segment[1][0] + nx, dash_segment[1][1] + ny],
-                                [dash_segment[1][0] - nx, dash_segment[1][1] - ny],
-                                [dash_segment[0][0] - nx, dash_segment[0][1] - ny],
-                            ]
-                        )
-
-                        dash_poly = plt.Polygon(
-                            poly_points,
-                            closed=True,
-                            fill=True,
-                            facecolor=border_color,
-                            edgecolor="none",
-                        )
-                        context.add_patch(dash_poly)
-            else:
-                # for solid border, create inner points inset by border width
-                inner_points = generate_rounded_rect_points(
-                    bounds.width,
-                    bounds.height,
-                    max(0, corner_radius - border_width),
-                    inset=border_width,
-                )
-
-                homogeneous_inner = np.hstack([inner_points, np.ones((len(inner_points), 1))])
-                transformed_inner = (matrix @ homogeneous_inner.T).T[:, :2]
-
-                # create a polygon for the full rectangle (border + fill)
-                outer_poly = plt.Polygon(
-                    transformed_outer,
-                    closed=True,
-                    fill=True,
-                    facecolor=border_color,
-                    edgecolor="none",
-                )
-                context.add_patch(outer_poly)
-
-                # if there's a background fill, create an inner polygon to "cut out" the center
-                if background_color and background_color != "none":
-                    inner_poly = plt.Polygon(
-                        transformed_inner,
-                        closed=True,
-                        fill=True,
-                        facecolor=background_color,
-                        edgecolor="none",
-                    )
-                    context.add_patch(inner_poly)
-                else:  # if no background color, still need to cut out center to create a border
-                    # use figure background color if available, otherwise white
-                    bg_color = context.figure.get_facecolor()
-                    if bg_color == (0, 0, 0, 0):  # transparent
-                        bg_color = "white"
-
-                    inner_poly = plt.Polygon(
-                        transformed_inner,
-                        closed=True,
-                        fill=True,
-                        facecolor=bg_color,
-                        edgecolor="none",
-                    )
-                    context.add_patch(inner_poly)
-        elif background_color and background_color != "none":
-            points = generate_rounded_rect_points(bounds.width, bounds.height, corner_radius)
-
-            homogeneous_points = np.hstack([points, np.ones((len(points), 1))])
-            transformed_points = (matrix @ homogeneous_points.T).T[:, :2]
-
-            poly = plt.Polygon(
-                transformed_points,
-                closed=True,
-                fill=True,
-                facecolor=background_color,
-                edgecolor="none",
+        if width_mode == "data":
+            self.debug_print(
+                f"Creating data-width rectangle for {comp_id} with width={width_value}"
             )
-            context.add_patch(poly)
+
+            # create with dummy linewidth - we'll update it later
+            patch = mpatches.FancyBboxPatch(
+                (0, 0),
+                bounds.width,
+                bounds.height,
+                boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=corner_radius),
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                linewidth=1.0,  # temporary value
+                linestyle=linestyle,
+                transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
+            )
+
+            # track for updating
+            self.track_data_width_patch(patch, width_value, context)
+        else:
+            # regular point-based line width
+            self.debug_print(
+                f"Creating point-width rectangle for {comp_id} with width={width_value}"
+            )
+
+            patch = mpatches.FancyBboxPatch(
+                (0, 0),
+                bounds.width,
+                bounds.height,
+                boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=corner_radius),
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                linewidth=width_value,
+                linestyle=linestyle,
+                transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
+            )
+
+        # apply custom dash pattern if needed
+        if border_style == "custom" and style.get("dash_sequence") and hasattr(patch, "set_dashes"):
+            dash_sequence = style.get("dash_sequence")
+            dash_offset = style.get("dash_offset", 0)
+            patch.set_dashes(dash_offset, dash_sequence)
+
+        context.add_patch(patch)
 
     def render_svg(self, context: Axes, svg_element, matrix: np.ndarray):
         """render an svg element to the matplotlib axes"""
@@ -436,12 +323,14 @@ class MatplotlibRenderer(BaseRenderer):
             print("svgpath2mpl is required for SVG rendering")
             return
 
+        # get svg data
         paths_data = svg_element.svg_data.get("paths", [])
         viewBox = svg_element.svg_data.get("viewBox")
 
         if not paths_data:
             return  # nothing to render
 
+        # calculate scaling to fit bounds
         scale_x = svg_element._dimensions.width
         scale_y = svg_element._dimensions.height
 
@@ -449,6 +338,7 @@ class MatplotlibRenderer(BaseRenderer):
             scale_x = scale_x / viewBox[2]
             scale_y = scale_y / viewBox[3]
 
+            # create a combined transform matrix
             svg_matrix = np.array(
                 [
                     [scale_x, 0, -viewBox[0] * scale_x],
@@ -463,18 +353,22 @@ class MatplotlibRenderer(BaseRenderer):
         # combine with component transform
         combined_matrix = matrix @ svg_matrix
 
-        mpl_paths = []
-        facecolors = []
-        edgecolors = []
-        linewidths = []
+        # get SVG line width mode from component options
+        svg_width_mode = svg_element.get_renderer_options(self.RENDERER_NAME).get(
+            "line_width_mode", "point"
+        )
 
-        for path_data in paths_data:
+        self.debug_print(
+            f"Rendering SVG '{svg_element.id}' with {len(paths_data)} paths in {svg_width_mode} mode"
+        )
+
+        # render each path individually to avoid array dimension issues
+        for i, path_data in enumerate(paths_data):
             try:
+                # parse the path data
                 path = parse_path(path_data["d"])
 
-                mpl_paths.append(path)
-
-                # determine colors, apply customization
+                # determine colors
                 fill = path_data["fill"]
                 if path_data.get("is_main_color"):
                     fill = svg_element.main_color
@@ -483,92 +377,84 @@ class MatplotlibRenderer(BaseRenderer):
 
                 stroke = path_data["stroke"]
 
-                facecolors.append(fill if fill != "none" else "none")
-                edgecolors.append(stroke if stroke != "none" else "none")
-                linewidths.append(path_data["stroke_width"])
-            except Exception as e:
-                print(f"Error parsing SVG path: {e}")
+                # get the raw line width
+                raw_linewidth = path_data["stroke_width"]
 
-        if mpl_paths:
-            collection = mcollections.PathCollection(
-                mpl_paths,
-                facecolors=facecolors,
-                edgecolors=edgecolors,
-                linewidths=linewidths,
-                transform=mtransforms.Affine2D(matrix=combined_matrix) + context.transData,
-            )
-            context.add_collection(collection)
+                if svg_width_mode == "data":
+                    self.debug_print(f"  Path {i}: data width = {raw_linewidth}")
+
+                    # create patch with dummy width
+                    patch = mpatches.PathPatch(
+                        path,
+                        facecolor=fill if fill != "none" else "none",
+                        edgecolor=stroke if stroke != "none" else "none",
+                        linewidth=1.0,  # temporary
+                        transform=mtransforms.Affine2D(matrix=combined_matrix) + context.transData,
+                    )
+
+                    # track for updating
+                    self.track_data_width_patch(patch, raw_linewidth, context)
+                else:
+                    # point mode - use raw value
+                    self.debug_print(f"  Path {i}: point width = {raw_linewidth}")
+
+                    patch = mpatches.PathPatch(
+                        path,
+                        facecolor=fill if fill != "none" else "none",
+                        edgecolor=stroke if stroke != "none" else "none",
+                        linewidth=raw_linewidth,
+                        transform=mtransforms.Affine2D(matrix=combined_matrix) + context.transData,
+                    )
+
+                context.add_patch(patch)
+
+            except Exception as e:
+                print(f"Error rendering SVG path: {e}")
 
     def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
-        """render debug visuals for a component, showing bounds and origin"""
-        # generate points for a rectangle outline with fixed width
-        outer_points = generate_rounded_rect_points(
-            component._dimensions.width, component._dimensions.height, 0
-        )
-        inner_points = generate_rounded_rect_points(
+        """render debug visuals for a component, showing origin and bounds"""
+        # debug line width in data units (0.5)
+        debug_width = 0.5
+
+        # draw bounds rectangle with initial thin width
+        rect = mpatches.Rectangle(
+            (0, 0),
             component._dimensions.width,
             component._dimensions.height,
-            0,
-            inset=0.3,  # fixed debug border width
+            fill=False,
+            edgecolor="red",
+            linestyle="--",
+            linewidth=1.0,  # temporary
+            transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
         )
 
-        homogeneous_outer = np.hstack([outer_points, np.ones((len(outer_points), 1))])
-        transformed_outer = (matrix @ homogeneous_outer.T).T[:, :2]
+        # track for updating
+        self.track_data_width_patch(rect, debug_width, context)
+        context.add_patch(rect)
 
-        homogeneous_inner = np.hstack([inner_points, np.ones((len(inner_points), 1))])
-        transformed_inner = (matrix @ homogeneous_inner.T).T[:, :2]
-
-        # create dashed border effect - we'll just use 8 segments for simplicity
-        segments = 8
-        for i in range(segments):
-            start_idx = int(i * len(transformed_outer) / segments)
-            end_idx = int((i + 0.5) * len(transformed_outer) / segments)
-
-            if start_idx >= len(transformed_outer) or end_idx >= len(transformed_outer):
-                continue
-
-            dash_points = transformed_outer[start_idx : end_idx + 1]
-
-            if len(dash_points) > 1:
-                # Draw this dash segment
-                dash_poly = plt.Polygon(
-                    dash_points,
-                    closed=False,
-                    fill=False,
-                    edgecolor="red",
-                    linewidth=0.5,
-                )
-                context.add_patch(dash_poly)
-
-        # calculate origin point in local coordinates based on relative offset
+        # calculate origin point based on relative offset
         origin_x = component.offset.relative[0] * component._dimensions.width
         origin_y = component.offset.relative[1] * component._dimensions.height
 
-        origin = matrix @ np.array([origin_x, origin_y, 1])
-
-        # create a plus marker at the origin
-        marker_size = 1  # size in data units
-        horizontal_line = plt.Line2D(
-            [origin[0] - marker_size, origin[0] + marker_size],
-            [origin[1], origin[1]],
+        # draw origin marker
+        component_id = component.id or "unnamed"
+        origin_marker = plt.Line2D(
+            [origin_x],
+            [origin_y],
+            marker="+",
             color="red",
-            linewidth=0.5,
+            markersize=6,
+            linestyle="",
+            transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
         )
-        vertical_line = plt.Line2D(
-            [origin[0], origin[0]],
-            [origin[1] - marker_size, origin[1] + marker_size],
-            color="red",
-            linewidth=0.5,
-        )
-        context.add_line(horizontal_line)
-        context.add_line(vertical_line)
+        context.add_line(origin_marker)
 
         # add id text above the component
         world_coords = matrix @ np.array([0, component._dimensions.height, 1])
         context.text(
             world_coords[0],
             world_coords[1] + 2,  # slight offset
-            f"{component.id if component.id else ''} ({component._dimensions.width:.1f}x{component._dimensions.height:.1f})",
+            f"{component_id} ({component._dimensions.width:.1f}x{component._dimensions.height:.1f})",
             color="red",
             fontsize=6,
             ha="left",
@@ -577,6 +463,10 @@ class MatplotlibRenderer(BaseRenderer):
 
     def render_to_output(self, context, output=None, **kwargs):
         """render the matplotlib figure to output"""
+        # refresh line widths before output
+        self.debug_print("Refreshing line widths before output")
+        self.refresh_linewidths(context)
+
         if output is None:
             context.figure.show()
         else:
@@ -589,22 +479,29 @@ class MatplotlibRenderer(BaseRenderer):
         import matplotlib.font_manager as fm
         import numpy as np
 
+        # create font properties object
         font_props = fm.FontProperties(
             family=text_component.font_name if text_component.font_name else "sans-serif",
             weight=text_component.font_weight,
             style=text_component.font_style,
         )
 
+        # split text into lines
         lines = text_component.text.split("\n")
+
+        # estimated line height based on font size
         line_height = text_component.font_size * 1.2
 
+        # we'll store all rendered paths and their positions
         paths = []
         line_widths = []
 
+        # process each line
         for i, line in enumerate(lines):
-            if not line:
+            if not line:  # skip empty lines
                 continue
 
+            # create path for the current line
             path = TextPath((0, 0), line, size=text_component.font_size, prop=font_props)
 
             # get path bounds
@@ -618,11 +515,14 @@ class MatplotlibRenderer(BaseRenderer):
 
             line_widths.append(line_width)
 
+            # store path for later use
             paths.append({"path": path, "width": line_width, "index": i})
 
+        # calculate max width and total height
         max_width = max(line_widths) if line_widths else 0
         total_height = len(lines) * line_height
 
+        # store the paths and measurements for rendering
         text_component._text_cache = {
             "paths": paths,
             "line_widths": line_widths,
@@ -637,6 +537,7 @@ class MatplotlibRenderer(BaseRenderer):
     def render_text(self, context, text_component, matrix):
         """render pre-created text paths with proper alignment"""
         import matplotlib.transforms as mtransforms
+        import matplotlib.patches as mpatches
 
         # measure if not already measured
         if not hasattr(text_component, "_text_cache") or not text_component._text_cache:
@@ -652,10 +553,13 @@ class MatplotlibRenderer(BaseRenderer):
 
         # calculate vertical starting position based on alignment
         if text_component.vertical_align == "top":
+            # align to top - first line starting at top of bounding box
             y_start = text_component._dimensions.height
         elif text_component.vertical_align == "middle":
+            # center vertically - center of text block at center of bounding box
             y_start = text_component._dimensions.height / 2 + total_height / 2
         else:  # bottom
+            # align to bottom - last line ending at bottom of bounding box
             y_start = total_height
 
         # render each line
@@ -672,8 +576,10 @@ class MatplotlibRenderer(BaseRenderer):
             else:  # right
                 x_offset = text_component._dimensions.width - line_width  # aligned to right
 
+            # vertical position - each line is positioned below the previous
             y_position = y_start - (line_index + 1) * line_height
 
+            # create position transform
             position_transform = mtransforms.Affine2D().translate(x_offset, y_position)
 
             # combine with component matrix and data transform
@@ -681,6 +587,7 @@ class MatplotlibRenderer(BaseRenderer):
                 position_transform + mtransforms.Affine2D(matrix=matrix) + context.transData
             )
 
+            # create and add path patch
             patch = mpatches.PathPatch(
                 path, facecolor=text_component.color, edgecolor="none", transform=combined_transform
             )

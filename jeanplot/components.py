@@ -386,6 +386,7 @@ class Container(Component):
                         "background_color": self.style.background_color,
                         "border_color": self.style.border_color,
                         "width": self.style.border_width,
+                        "border_width_mode": self.style.border_width_mode,
                         "corner_radius": self.style.corner_radius,
                         "border_style": self.style.border_style,
                         "dash_sequence": self.style.dash_sequence,
@@ -395,6 +396,7 @@ class Container(Component):
                     component=self,
                 )
 
+            # render debug visuals if needed
             if self.debug:
                 renderer.render_debug(context, self, matrix)
 
@@ -409,6 +411,7 @@ class Container(Component):
                     "background_color": self.style.background_color,
                     "border_color": self.style.border_color,
                     "width": self.style.border_width,
+                    "border_width_mode": self.style.border_width_mode,
                     "corner_radius": self.style.corner_radius,
                     "border_style": self.style.border_style,
                     "dash_sequence": self.style.dash_sequence,
@@ -418,6 +421,7 @@ class Container(Component):
                 component=self,
             )
 
+        # render debug visuals if needed
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
