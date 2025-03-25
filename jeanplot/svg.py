@@ -1,47 +1,44 @@
-from typing import Optional, Union, Tuple, Set, List, Dict, Any
+from typing import Optional, Union, Any, List, Tuple
 from pathlib import Path
-from pydantic import BaseModel, Field
-from lxml import etree
-from io import StringIO
+from pydantic import BaseModel, Field, model_validator
+import numpy as np
 import re
-from .models import Size, Offset
+from lxml import etree
+from .component import Component
+from .models import Size
 
 
-class SVGPath(BaseModel):
-    """represents a single SVG path element"""
+class SVGPathData(BaseModel):
+    """Represents a single SVG path with its attributes"""
 
-    path_data: str
-    fill: Optional[str] = None
-    stroke: Optional[str] = None
+    d: str
+    fill: str = "none"
+    stroke: str = "none"
     stroke_width: float = 1.0
     transform: Optional[str] = None
     is_main_color: bool = False
     is_secondary_color: bool = False
 
 
-class SVGDocument(BaseModel):
-    """represents an SVG document with paths and metadata"""
+class SVGContent(BaseModel):
+    """Structured representation of SVG data"""
 
-    width: float
-    height: float
+    width: float = 100
+    height: float = 100
     viewBox: Optional[Tuple[float, float, float, float]] = None
-    paths: List[SVGPath] = Field(default_factory=list)
+    paths: List[SVGPathData] = Field(default_factory=list)
 
-    @classmethod
-    def from_file(cls, file_path: Union[str, Path], ppi: float = 1.0):
-        """load an SVG document from a file"""
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"SVG file not found: {path.absolute()}")
 
-        try:
-            tree = etree.parse(str(path))
-        except Exception as e:
-            raise ValueError(f"Failed to parse SVG file {file_path}: {str(e)}")
+def get_svg_data_from_string(
+    svg_content: str,
+    ppi: float = 1.0,
+    main_color: str = "#0000FF",
+    secondary_color: str = "#00FF00",
+) -> SVGContent:
+    """Extract SVG data from a string containing SVG content"""
+    try:
+        root = etree.fromstring(svg_content.encode("utf-8"))
 
-        root = tree.getroot()
-
-        # extract width and height
         width_str = root.attrib.get("width", "100")
         height_str = root.attrib.get("height", "100")
 
@@ -62,59 +59,91 @@ class SVGDocument(BaseModel):
         for elem in root.findall(".//{http://www.w3.org/2000/svg}path"):
             try:
                 fill = elem.attrib.get("fill", "none")
-                is_main_color = fill == "#0000FF"
-                is_secondary_color = fill == "#00FF00"
+                stroke = elem.attrib.get("stroke", "none")
+                stroke_width = float(elem.attrib.get("stroke-width", 1.0))
+                transform = elem.attrib.get("transform")
+                is_main_color = fill == main_color
+                is_secondary_color = fill == secondary_color
 
-                path = SVGPath(
-                    path_data=elem.attrib["d"],
+                path_data = SVGPathData(
+                    d=elem.attrib["d"],
                     fill=fill,
-                    stroke=elem.attrib.get("stroke", "none"),
-                    stroke_width=float(elem.attrib.get("stroke-width", 1.0)),
-                    transform=elem.attrib.get("transform"),
+                    stroke=stroke,
+                    stroke_width=stroke_width,
+                    transform=transform,
                     is_main_color=is_main_color,
                     is_secondary_color=is_secondary_color,
                 )
-                paths.append(path)
+                paths.append(path_data)
             except Exception:
                 continue
 
-        return cls(
+        return SVGContent(
             width=width,
             height=height,
             viewBox=viewBox,
             paths=paths,
         )
-
-
-def get_svg_data(file_path: Union[str, Path]) -> Dict[str, Any]:
-    """utility function to load SVG data from a file"""
-    try:
-        document = SVGDocument.from_file(file_path)
-
-        # prepare path data in the format expected by renderers
-        paths = []
-        for path in document.paths:
-            path_data = {
-                "d": path.path_data,
-                "fill": path.fill,
-                "stroke": path.stroke,
-                "stroke_width": path.stroke_width,
-                "is_main_color": path.is_main_color,
-                "is_secondary_color": path.is_secondary_color,
-            }
-            paths.append(path_data)
-
-        return {
-            "width": document.width,
-            "height": document.height,
-            "viewBox": document.viewBox,
-            "paths": paths,
-        }
     except Exception as e:
-        print(f"Failed to load SVG: {e}")
-        return {
-            "width": 100,
-            "height": 100,
-            "viewBox": None,
-            "paths": [],
-        }
+        print(f"Failed to parse SVG string: {e}")
+        return SVGContent()
+
+
+def get_svg_data_from_file(
+    file_path: Union[str, Path],
+    ppi: float = 1.0,
+    main_color: str = "#0000FF",
+    secondary_color: str = "#00FF00",
+) -> SVGContent:
+    """Extract SVG data from a file"""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"SVG file not found: {path.absolute()}")
+
+        with open(path, "r") as f:
+            svg_content = f.read()
+
+        return get_svg_data_from_string(svg_content, ppi, main_color, secondary_color)
+    except Exception as e:
+        print(f"Failed to load SVG file: {e}")
+        return SVGContent()
+
+
+class SVGElement(Component):
+    """svg element loaded from a file"""
+
+    main_color: str = "black"
+    secondary_color: str = "gray"
+    svg_content: Union[str, Path, SVGContent] = Field(default_factory=SVGContent)
+
+    @model_validator(mode="after")
+    def load_svg_data(self):
+        """load svg file and extract paths and viewBox"""
+        if isinstance(self.svg_content, (str, Path)):
+            try:
+                self.svg_content = get_svg_data_from_file(self.svg_content)
+            except Exception as e:
+                print(f"Error loading SVG: {e}")
+                self.svg_content = SVGContent()
+
+        assert isinstance(self.svg_content, SVGContent), "Invalid SVG data"
+
+        self._dimensions = Size(
+            width=self.svg_content.width,
+            height=self.svg_content.height,
+        )
+        self._transformed_aabb = self.compute_transformed_aabb()
+        return self
+
+    def measure(self, renderer=None) -> Size:
+        """return the natural size of the svg"""
+        self._transformed_aabb = self.compute_transformed_aabb()
+        return self._dimensions
+
+    def render(self, renderer, context, matrix: np.ndarray):
+        """render svg using the provided renderer"""
+        renderer.render_svg(context, self, matrix)
+
+        if self.debug:
+            renderer.render_debug(context, self, matrix)

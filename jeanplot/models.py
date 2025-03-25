@@ -116,7 +116,7 @@ class VisualStyle(BaseModel):
     background_color: Optional[str] = None
     border_color: Optional[str] = None
     border_width: float = 0.0
-    border_width_mode: LineWidthMode = "point"  # default to point units (matplotlib default)
+    border_width_mode: LineWidthMode = "data"  # default to data units (not matplotlib default)
     border_style: LineStyleType = "solid"
     dash_sequence: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0

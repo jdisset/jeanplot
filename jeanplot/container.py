@@ -1,119 +1,13 @@
-from typing import List, Optional, Dict, Any, Union, Tuple, cast, TYPE_CHECKING, Literal
-from pydantic import BaseModel, Field, model_validator, PrivateAttr
+from pydantic import Field
+from .component import Component
 import numpy as np
-from pathlib import Path
-from collections import defaultdict
-from .models import Transform, Size, VisualStyle, LayoutConstraints, Offset
-from functools import partial
-
-
-class Component(BaseModel):
-    """base component class - anything that can be rendered"""
-
-    id: Optional[str] = None
-    transform: Transform = Field(default_factory=Transform)
-    offset: Offset = Field(default_factory=Offset)
-
-    min_dimensions: Size = Field(default_factory=Size)
-    max_dimensions: Size = Field(
-        default_factory=partial(Size, width=float("inf"), height=float("inf"))
-    )
-
-    style: VisualStyle = Field(default_factory=VisualStyle)
-
-    renderer_options: Dict[str, Dict[str, Any]] = Field(default_factory=lambda: defaultdict(dict))
-    debug: bool = False
-
-    _dimensions: Size = PrivateAttr(default_factory=Size)
-    _transformed_aabb: Size = PrivateAttr(default_factory=Size)
-
-    @model_validator(mode="after")
-    def validate_dimensions(self):
-        if self.min_dimensions.width > self.max_dimensions.width:
-            raise ValueError("min_dimensions.width cannot be greater than max_dimensions.width")
-        if self.min_dimensions.height > self.max_dimensions.height:
-            raise ValueError("min_dimensions.height cannot be greater than max_dimensions.height")
-        return self
-
-    def compute_layout_matrix(self) -> np.ndarray:
-        """compute transform matrix for layout only (without offset)"""
-        return self.transform.to_matrix(self._dimensions)
-
-    def compute_local_matrix(self) -> np.ndarray:
-        """convert local transform to matrix with offset applied after transform"""
-        transform_matrix = self.transform.to_matrix(self._dimensions)
-
-        # get offset in data units
-        offset_x, offset_y = self.offset.compute(self._dimensions)
-        offset_matrix = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
-
-        # combine: offset * transform. Offset is applied after transform
-        return offset_matrix @ transform_matrix
-
-    def compute_world_matrix(self, parent_matrix: Optional[np.ndarray] = None) -> np.ndarray:
-        """compute world transform by combining with parent"""
-        local = self.compute_local_matrix()
-        if parent_matrix is not None:
-            return parent_matrix @ local
-        return local
-
-    def compute_transformed_aabb(self) -> Size:
-        """compute axis-aligned bounding box after applying local transform"""
-        # get the local transform matrix
-        matrix = self.compute_local_matrix()
-
-        # define corners of the component in local space
-        corners = np.array(
-            [
-                [0, 0, 1],  # bottom left
-                [self._dimensions.width, 0, 1],  # bottom right
-                [0, self._dimensions.height, 1],  # top left
-                [self._dimensions.width, self._dimensions.height, 1],  # top right
-            ]
-        )
-
-        transformed_corners = np.dot(matrix, corners.T).T
-
-        min_x = np.min(transformed_corners[:, 0])
-        max_x = np.max(transformed_corners[:, 0])
-        min_y = np.min(transformed_corners[:, 1])
-        max_y = np.max(transformed_corners[:, 1])
-
-        # return aabb dimensions
-        return Size(width=max_x - min_x, height=max_y - min_y)
-
-    def measure(self, renderer=None) -> Size:
-        """measure intrinsic size if needed"""
-        self._transformed_aabb = self.compute_transformed_aabb()
-        return self._dimensions
-
-    def apply_layout(self):
-        """apply layout to position children"""
-        pass
-
-    def measure_and_layout(self, renderer=None) -> Size:
-        """unified method for measurement and layout"""
-        # base component just measures itself
-        self.measure(renderer)
-        return self._dimensions
-
-    def render(self, renderer, context, matrix: np.ndarray):
-        """render this component using provided renderer"""
-        raise NotImplementedError("Subclasses must implement render")
-
-    def add_renderer_option(self, renderer_name: str, option_name: str, value: Any):
-        """add a renderer-specific option"""
-        self.renderer_options[renderer_name][option_name] = value
-
-    def get_renderer_options(self, renderer_name: str) -> Dict[str, Any]:
-        """get all options for a specific renderer"""
-        return self.renderer_options.get(renderer_name, {})
+from .models import Size, LayoutConstraints
 
 
 class Container(Component):
     """container that lays out and renders child components"""
 
-    children: List[Component] = []
+    children: list[Component] = []
     layout: LayoutConstraints = Field(default_factory=LayoutConstraints)
 
     def measure(self, renderer=None) -> Size:
@@ -396,7 +290,6 @@ class Container(Component):
                     component=self,
                 )
 
-            # render debug visuals if needed
             if self.debug:
                 renderer.render_debug(context, self, matrix)
 
@@ -421,7 +314,6 @@ class Container(Component):
                 component=self,
             )
 
-        # render debug visuals if needed
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
@@ -431,135 +323,8 @@ class Container(Component):
             world_matrix = matrix @ child_matrix
             child.render(renderer, context, world_matrix)
 
-
-class SVGElement(Component):
-    """svg element loaded from a file"""
-
-    file_path: Union[str, Path]
-    main_color: str = "black"
-    secondary_color: str = "gray"
-
-    svg_data: Dict[str, Any] = Field(default_factory=dict)
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        self.load_svg()
-
-    def load_svg(self):
-        """load svg file and extract paths and viewBox"""
-        try:
-            from lxml import etree
-
-            path = Path(self.file_path)
-            tree = etree.parse(str(path))
-            root = tree.getroot()
-
-            # extract size and viewBox
-            try:
-                width = float(root.attrib.get("width", "100").rstrip("px"))
-                height = float(root.attrib.get("height", "100").rstrip("px"))
-                self._dimensions.width = width
-                self._dimensions.height = height
-            except (ValueError, TypeError):
-                # fallback sizes if parsing fails
-                self._dimensions.width = 100
-                self._dimensions.height = 100
-
-            # extract viewBox if present
-            self.svg_data["viewBox"] = None
-            if "viewBox" in root.attrib:
-                try:
-                    viewBox = [float(x) for x in root.attrib["viewBox"].split()]
-                    if len(viewBox) == 4:
-                        self.svg_data["viewBox"] = tuple(viewBox)
-                except (ValueError, TypeError):
-                    pass
-
-            # extract path data
-            self.svg_data["paths"] = []
-            for path in root.findall(".//{http://www.w3.org/2000/svg}path"):
-                path_data = {
-                    "d": path.attrib.get("d", ""),
-                    "fill": path.attrib.get("fill", "none"),
-                    "stroke": path.attrib.get("stroke", "none"),
-                    "stroke_width": float(path.attrib.get("stroke-width", 1.0)),
-                }
-
-                # track color attributes for later customization
-                if path_data["fill"] == "#0000FF":
-                    path_data["is_main_color"] = True
-                elif path_data["fill"] == "#00FF00":
-                    path_data["is_secondary_color"] = True
-
-                self.svg_data["paths"].append(path_data)
-
-            # calculate transformed aabb
-            self._transformed_aabb = self.compute_transformed_aabb()
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to load SVG file at {self.file_path}: {e}")
-
-    def measure(self, renderer=None) -> Size:
-        """return the natural size of the svg"""
-        self._transformed_aabb = self.compute_transformed_aabb()
-        return self._dimensions
-
-    def render(self, renderer, context, matrix: np.ndarray):
-        """render svg using the provided renderer"""
-        renderer.render_svg(context, self, matrix)
-
-        if self.debug:
-            renderer.render_debug(context, self, matrix)
-
-
-class Text(Component):
-    """text component rendered via svg path conversion"""
-
-    text: str
-    font_name: Optional[str] = None  # use default font when None
-    font_size: float = 12.0  # in data units
-    font_weight: Literal["normal", "bold"] = "normal"
-    font_style: Literal["normal", "italic"] = "normal"
-    color: str = "black"
-    align: Literal["left", "center", "right"] = "left"
-    vertical_align: Literal["top", "middle", "bottom"] = "top"
-
-    # cache for text path data
-    _text_cache: Dict[str, Any] = PrivateAttr(default_factory=dict)
-
-    def measure(self, renderer=None) -> Size:
-        """measure text dimensions using renderer"""
-        if not self.text:
-            self._dimensions = Size(width=0, height=0)
-            self._transformed_aabb = Size(width=0, height=0)
-            return self._dimensions
-
-        if renderer and hasattr(renderer, "measure_text"):
-            # use renderer's measurement capability for exact dimensions
-            measured_size = renderer.measure_text(self)
-            self._dimensions = Size(
-                width=max(self.min_dimensions.width, measured_size.width),
-                height=max(self.min_dimensions.height, measured_size.height),
-            )
-        else:
-            # if no renderer is available, use minimum dimensions
-            self._dimensions = Size(
-                width=self.min_dimensions.width, height=self.min_dimensions.height
-            )
-
-        # apply max constraints
-        self._dimensions = Size(
-            width=min(self._dimensions.width, self.max_dimensions.width),
-            height=min(self._dimensions.height, self.max_dimensions.height),
-        )
-
-        self._transformed_aabb = self.compute_transformed_aabb()
-
-        return self._dimensions
-
-    def render(self, renderer, context, matrix: np.ndarray):
-        """render text component using renderer"""
-        renderer.render_text(context, self, matrix)
-
-        if self.debug:
-            renderer.render_debug(context, self, matrix)
+    def add_child(self, child: Component):
+        """add a child component to this container"""
+        self.children.append(child)
+        if hasattr(child, "parent"):
+            child.parent = self
