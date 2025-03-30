@@ -1,5 +1,4 @@
-# file: jeanplot/container.py
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import Field, model_validator
 from .component import Component
 import numpy as np
 from .models import Size, LayoutConstraints
@@ -19,11 +18,10 @@ class Container(Component):
         return self
 
     def _log_debug(self, message: str, data=None):
-        """helper to log debug messages with component id"""
         debug_print(self.id or "Container", message, data)
 
     def measure(self, renderer=None) -> Size:
-        """measure container based on children's bounds (excluding overlays)"""
+        """measure container based on children's bounds"""
         self._log_debug("Measuring container")
         for child in self.children:
             child.parent = self
@@ -43,20 +41,16 @@ class Container(Component):
             return self._dimensions
 
         is_row = self.layout.direction == "row"
-        main = 0  # main axis
-        cross = 0  # cross axis
+        main = 0  # main axis size
+        cross = 0  # cross axis size
 
         for child in layout_children:
             # use measured dims if available, else min dims
-            child_dim = child._dimensions if hasattr(child, "_dimensions") else child.min_dimensions
+            child_dim = getattr(child, "_dimensions", child.min_dimensions)
             # use transformed aabb if available, else basic dims
-            child_aabb = (
-                child._transformed_aabb if hasattr(child, "_transformed_aabb") else child_dim
-            )
+            child_aabb = getattr(child, "_transformed_aabb", child_dim)
 
-            w = child_aabb.width
-            h = child_aabb.height
-
+            w, h = child_aabb.width, child_aabb.height
             if hasattr(child, "style") and hasattr(child.style, "margin"):
                 w += child.style.margin_left + child.style.margin_right
                 h += child.style.margin_top + child.style.margin_bottom
@@ -68,17 +62,19 @@ class Container(Component):
                 main += h
                 cross = max(cross, w)
 
-        if layout_children:
+        # add gap space
+        if len(layout_children) > 1:
             main += self.layout.gap * (len(layout_children) - 1)
 
-        width = main if is_row else cross
-        height = cross if is_row else main
+        # set width/height based on layout direction
+        width, height = (main, cross) if is_row else (cross, main)
 
         # add insets and apply constraints
         insets = self.style.content_inset()
         width += insets[1] + insets[3]  # right + left
         height += insets[0] + insets[2]  # top + bottom
 
+        # apply min/max constraints
         self._dimensions = Size(
             width=min(max(self.min_dimensions.width, width), self.max_dimensions.width),
             height=min(max(self.min_dimensions.height, height), self.max_dimensions.height),
@@ -112,9 +108,7 @@ class Container(Component):
         self._log_debug("Layout applied")
 
         # finally measure overlays (connections, etc.)
-        overlay_children = [c for c in self.children if c.is_overlay]
-        for overlay in overlay_children:
-            # overlays might depend on final positions, so measure them last
+        for overlay in [c for c in self.children if c.is_overlay]:
             overlay.measure(renderer)
             self._log_debug(
                 f"Overlay {overlay.id} measured",
@@ -144,15 +138,14 @@ class Container(Component):
         self._layout_children(content_x, content_y, content_w, content_h, is_row, layout_children)
 
         # check if stretch alignment needs a remeasure/relayout cycle
-        # this is a simplified approach; complex cases might need more iterations
         stretched = self._apply_stretch_alignment(content_w, content_h)
         if stretched:
             # remeasure container based on stretched children
             self.measure()
-            # potentially relayout nested containers if they were stretched
+            # potentially relayout nested containers
             for container in stretched:
                 if isinstance(container, Container) and container.children:
-                    container.apply_layout()  # relayout children within stretched container
+                    container.apply_layout()
 
     def _apply_stretch_alignment(self, content_w, content_h):
         """stretch children if needed based on 'stretch' alignment"""
@@ -172,18 +165,16 @@ class Container(Component):
                     else child.style.margin_left + child.style.margin_right
                 )
 
-            # available space in cross axis
-            avail_cross_size = (content_h - margins) if is_row else (content_w - margins)
-            # current size in cross axis
-            current_cross_size = child._dimensions.height if is_row else child._dimensions.width
-            # max size constraint in cross axis
-            max_cross_size = child.max_dimensions.height if is_row else child.max_dimensions.width
+            # available and current cross axis sizes
+            avail_cross = (content_h - margins) if is_row else (content_w - margins)
+            current_cross = child._dimensions.height if is_row else child._dimensions.width
+            max_cross = child.max_dimensions.height if is_row else child.max_dimensions.width
 
-            if current_cross_size < avail_cross_size and current_cross_size < max_cross_size:
+            if current_cross < avail_cross and current_cross < max_cross:
                 # calculate new size, respecting max constraint
-                new_size = min(avail_cross_size, max_cross_size)
-                # apply if different
-                if abs(current_cross_size - new_size) > 1e-6:  # floating point comparison
+                new_size = min(avail_cross, max_cross)
+                # apply if significantly different
+                if abs(current_cross - new_size) > 1e-6:
                     if is_row:
                         child._dimensions.height = new_size
                     else:
@@ -194,9 +185,9 @@ class Container(Component):
         return stretched
 
     def _layout_children(self, content_x, content_y, content_w, content_h, is_row, layout_children):
-        """position children in row or column layout (skip overlays)"""
+        """position children in row or column layout"""
         size_attr = "width" if is_row else "height"
-        # filter out children with zero size in the main layout direction to avoid division by zero later
+        # filter out zero-size children
         valid_children = [c for c in layout_children if getattr(c._transformed_aabb, size_attr) > 0]
 
         if not valid_children:  # handle case with only zero-sized children
@@ -211,11 +202,12 @@ class Container(Component):
                 )
             return
 
-        # calculate total size needed by valid children along main axis
-        total_main_axis_size = 0
+        # calculate total size needed by valid children
+        total_main, total_gap = 0, self.layout.gap * (len(valid_children) - 1)
+
         for child in valid_children:
             size = getattr(child._transformed_aabb, size_attr)
-            # include margins in total size calculation
+            # include margins
             if hasattr(child, "style") and hasattr(child.style, "margin"):
                 margins = (
                     child.style.margin_left + child.style.margin_right
@@ -223,112 +215,131 @@ class Container(Component):
                     else child.style.margin_top + child.style.margin_bottom
                 )
                 size += margins
-            total_main_axis_size += size
+            total_main += size
 
-        # total gap space
-        total_gap_space = self.layout.gap * (len(valid_children) - 1)
-        # total required space along main axis
-        required_main_axis_space = total_main_axis_size + total_gap_space
+        required_space = total_main + total_gap
+        available_space = content_w if is_row else content_h
+        extra_space = max(0, available_space - required_space)
 
-        # available space along main axis
-        available_main_axis_space = content_w if is_row else content_h
-        # calculate extra space
-        extra_space = max(0, available_main_axis_space - required_main_axis_space)
-
-        # starting position along main axis
+        # starting position calculation
         current_pos = content_x if is_row else content_y
-        if self.layout.justify_content == "center":
+        justify = self.layout.justify_content
+
+        if justify == "center":
             current_pos += extra_space / 2
-        elif self.layout.justify_content == "end":
+        elif justify == "end":
             current_pos += extra_space
+        elif justify in ("space-between", "space-around", "space-evenly"):
+            spacing = 0
+            if justify == "space-between" and len(valid_children) > 1:
+                spacing = extra_space / (len(valid_children) - 1)
+            elif justify == "space-around" and len(valid_children) > 0:
+                spacing = extra_space / len(valid_children)
+                current_pos += spacing / 2  # half at start
+            elif justify == "space-evenly" and len(valid_children) + 1 > 0:
+                spacing = extra_space / (len(valid_children) + 1)
+                current_pos += spacing  # full at start
 
-        # spacing between elements (for space-between, space-around, space-evenly)
-        inter_element_spacing = 0
-        num_gaps = len(valid_children) - 1
-        num_spaces_around = len(valid_children)
-        num_spaces_evenly = len(valid_children) + 1
+            # position children with spacing
+            cross_pos = content_y if is_row else content_x
 
-        if num_gaps > 0 and self.layout.justify_content == "space-between":
-            inter_element_spacing = extra_space / num_gaps
-        elif num_spaces_around > 0 and self.layout.justify_content == "space-around":
-            inter_element_spacing = extra_space / num_spaces_around
-            current_pos += inter_element_spacing  # initial offset for space-around
-        elif num_spaces_evenly > 0 and self.layout.justify_content == "space-evenly":
-            inter_element_spacing = extra_space / num_spaces_evenly
-            current_pos += inter_element_spacing  # initial offset for space-evenly
+            for i, child in enumerate(valid_children):
+                self._position_child(
+                    child,
+                    current_pos if is_row else cross_pos,
+                    cross_pos if is_row else current_pos,
+                    content_h if is_row else None,
+                    None if is_row else content_w,
+                )
 
-        # fixed position along cross axis
-        cross_axis_pos = content_y if is_row else content_x
+                # advance position
+                size = getattr(child._transformed_aabb, size_attr)
+                margins = 0
+                if hasattr(child, "style") and hasattr(child.style, "margin"):
+                    margins = (
+                        child.style.margin_left + child.style.margin_right
+                        if is_row
+                        else child.style.margin_top + child.style.margin_bottom
+                    )
 
-        # position valid children
-        for i, child in enumerate(valid_children):
-            # determine cross-axis arguments for _position_child
-            cross_avail_h = content_h if is_row else None
-            cross_avail_w = None if is_row else content_w
+                current_pos += size + margins + self.layout.gap
+                if i < len(valid_children) - 1:
+                    current_pos += spacing
 
-            # position the child
+            # position any remaining zero-sized children at start
+            start_pos = content_x if is_row else content_y
+            if justify == "center":
+                start_pos += extra_space / 2
+            elif justify == "end":
+                start_pos += extra_space
+            elif justify == "space-around":
+                start_pos += spacing / 2 if len(valid_children) > 0 else 0
+            elif justify == "space-evenly":
+                start_pos += spacing if len(valid_children) + 1 > 0 else 0
+
+            for child in layout_children:
+                if getattr(child._transformed_aabb, size_attr) <= 0:
+                    self._position_child(
+                        child,
+                        start_pos if is_row else cross_pos,
+                        cross_pos if is_row else start_pos,
+                        content_h if is_row else None,
+                        None if is_row else content_w,
+                    )
+
+            return  # early return since we already positioned all children
+
+        # for start, center, end justifications
+        cross_pos = content_y if is_row else content_x
+
+        for child in valid_children:
             self._position_child(
                 child,
-                current_pos if is_row else cross_axis_pos,  # main axis position
-                cross_axis_pos if is_row else current_pos,  # cross axis position
-                cross_avail_h,  # available height for vertical alignment (if row)
-                cross_avail_w,  # available width for horizontal alignment (if col)
+                current_pos if is_row else cross_pos,
+                cross_pos if is_row else current_pos,
+                content_h if is_row else None,
+                None if is_row else content_w,
             )
 
-            # advance position for next child
-            child_margins = 0
+            # advance position
+            size = getattr(child._transformed_aabb, size_attr)
+            margins = 0
             if hasattr(child, "style") and hasattr(child.style, "margin"):
-                child_margins = (
+                margins = (
                     child.style.margin_left + child.style.margin_right
                     if is_row
                     else child.style.margin_top + child.style.margin_bottom
                 )
 
-            child_size = getattr(child._transformed_aabb, size_attr)
-            current_pos += child_size + child_margins
+            current_pos += size + margins + self.layout.gap
 
-            # add gap and spacing
-            if i < len(valid_children) - 1:  # not the last element
-                current_pos += self.layout.gap
-                if self.layout.justify_content in ["space-between", "space-around", "space-evenly"]:
-                    current_pos += inter_element_spacing
-            elif (
-                self.layout.justify_content == "space-around"
-            ):  # add trailing space for space-around
-                current_pos += inter_element_spacing
-
-        # position zero-sized children at the calculated start position
+        # position zero-sized children at start
         start_pos = content_x if is_row else content_y
-        if self.layout.justify_content == "center":
+        if justify == "center":
             start_pos += extra_space / 2
-        elif self.layout.justify_content == "end":
+        elif justify == "end":
             start_pos += extra_space
-        elif self.layout.justify_content == "space-around":
-            start_pos += inter_element_spacing if num_spaces_around > 0 else 0
-        elif self.layout.justify_content == "space-evenly":
-            start_pos += inter_element_spacing if num_spaces_evenly > 0 else 0
 
         for child in layout_children:
             if getattr(child._transformed_aabb, size_attr) <= 0:
                 self._position_child(
                     child,
-                    start_pos if is_row else cross_axis_pos,
-                    cross_axis_pos if is_row else start_pos,
+                    start_pos if is_row else cross_pos,
+                    cross_pos if is_row else start_pos,
                     content_h if is_row else None,
                     None if is_row else content_w,
                 )
 
     def _position_child(self, child, pos_x, pos_y, avail_h=None, avail_w=None):
         """position child with alignment, respecting margins"""
-        # start with base position provided by layout
         x, y = pos_x, pos_y
 
-        # adjust for child's top and left margins
+        # adjust for child's margins
         if hasattr(child, "style") and hasattr(child.style, "margin"):
             x += child.style.margin_left
             y += child.style.margin_top
 
-        # --- cross-axis alignment ---
+        # cross-axis alignment
         is_text = hasattr(child, "vertical_align") and hasattr(child, "align")
         is_row = self.layout.direction == "row"
 
@@ -337,101 +348,84 @@ class Container(Component):
             child_margins_v = 0
             if hasattr(child, "style") and hasattr(child.style, "margin"):
                 child_margins_v = child.style.margin_top + child.style.margin_bottom
-            # effective available height after subtracting margins
+
+            # effective available height after margins
             effective_h = avail_h - child_margins_v
             child_h = child._transformed_aabb.height
 
             # get alignment setting
-            align_setting = self.layout.align_items
-            if is_text:  # text might have its own alignment property
-                align_setting = child.vertical_align  # assumes Text uses 'top', 'middle', 'bottom'
+            align = is_text and child.vertical_align or self.layout.align_items
 
-            # apply alignment (relative to effective height)
-            if align_setting == "center" or align_setting == "middle":
+            # apply alignment
+            if align in ("center", "middle"):
                 y = pos_y + (effective_h - child_h) / 2
                 if hasattr(child, "style") and hasattr(child.style, "margin"):
-                    y += child.style.margin_top  # re-add top margin
-            elif align_setting == "end" or align_setting == "bottom":
-                y = pos_y + effective_h - child_h
+                    y += child.style.margin_top
+            elif align in ("end", "bottom"):
                 if hasattr(child, "style") and hasattr(child.style, "margin"):
-                    # position is bottom edge, adjust by bottom margin is tricky, easier to calculate from top
                     y = pos_y + avail_h - child.style.margin_bottom - child_h
-            # 'start' or 'top' alignment is handled by the initial pos_y + margin_top
+                else:
+                    y = pos_y + effective_h - child_h
 
         # horizontal alignment (cross axis for column layout)
         elif not is_row and avail_w is not None:
             child_margins_h = 0
             if hasattr(child, "style") and hasattr(child.style, "margin"):
                 child_margins_h = child.style.margin_left + child.style.margin_right
-            # effective available width after subtracting margins
+
+            # effective available width after margins
             effective_w = avail_w - child_margins_h
             child_w = child._transformed_aabb.width
 
             # get alignment setting
-            align_setting = self.layout.align_items
-            if is_text:  # text might have its own alignment property
-                align_setting = child.align  # assumes Text uses 'left', 'center', 'right'
+            align = is_text and child.align or self.layout.align_items
 
-            # apply alignment (relative to effective width)
-            if align_setting == "center":
+            # apply alignment
+            if align == "center":
                 x = pos_x + (effective_w - child_w) / 2
                 if hasattr(child, "style") and hasattr(child.style, "margin"):
-                    x += child.style.margin_left  # re-add left margin
-            elif align_setting == "end" or align_setting == "right":
-                x = pos_x + effective_w - child_w
+                    x += child.style.margin_left
+            elif align in ("end", "right"):
                 if hasattr(child, "style") and hasattr(child.style, "margin"):
-                    # position is right edge, adjust by right margin is tricky, easier to calculate from left
                     x = pos_x + avail_w - child.style.margin_right - child_w
-            # 'start' or 'left' alignment is handled by the initial pos_x + margin_left
+                else:
+                    x = pos_x + effective_w - child_w
 
-        # set final translation transform for the child
+        # set final translation
         child.transform.translate = (x, y)
         self._log_debug(f"Positioned child {child.id}", {"pos": (x, y)})
 
-    # REMOVED compute_world_matrix override - use inherited version
-
     def render(self, renderer, context, matrix: np.ndarray):
-        """render container and children, with overlays on top"""
+        """render container and children"""
         # draw container background and border
         if self.style.background_color or self.style.border_color:
-            renderer.render_rectangle(
-                context,
-                self._dimensions,
-                self.style,
-                matrix,
-                component=self,
-            )
+            renderer.render_rectangle(context, self._dimensions, self.style, matrix, component=self)
 
         if self.debug:
             renderer.render_debug(context, self, matrix)
-            self._log_debug("Rendering container", {"matrix": matrix.tolist()})  # log as list
+            self._log_debug("Rendering container", {"matrix": matrix.tolist()})
 
-        regular_children = [c for c in self.children if not c.is_overlay]
-        overlay_children = [c for c in self.children if c.is_overlay]
+        # separate regular children and overlays
+        regular = [c for c in self.children if not c.is_overlay]
+        overlays = [c for c in self.children if c.is_overlay]
 
         # render regular children first
-        for child in regular_children:
-            # child matrix is relative to this container
-            child_matrix = child.compute_local_matrix()
-            # world matrix combines parent's world matrix with child's local
-            world_matrix = matrix @ child_matrix
+        for child in regular:
+            child_matrix = matrix @ child.compute_local_matrix()
             if self.debug:
                 self._log_debug(
-                    f"Rendering regular child {child.id}", {"world_matrix": world_matrix.tolist()}
+                    f"Rendering regular child {child.id}", {"world_matrix": child_matrix.tolist()}
                 )
-            child.render(renderer, context, world_matrix)
+            child.render(renderer, context, child_matrix)
 
         # render overlays on top
-        for overlay in overlay_children:
-            # overlay matrix is relative to this container
-            overlay_matrix = overlay.compute_local_matrix()
-            # world matrix combines parent's world matrix with overlay's local
-            world_matrix = matrix @ overlay_matrix
+        for overlay in overlays:
+            overlay_matrix = matrix @ overlay.compute_local_matrix()
             if self.debug:
                 self._log_debug(
-                    f"Rendering overlay {overlay.id}", {"world_matrix": world_matrix.tolist()}
+                    f"Rendering overlay {overlay.id}", {"world_matrix": overlay_matrix.tolist()}
                 )
-            overlay.render(renderer, context, world_matrix)
+            overlay.render(renderer, context, overlay_matrix)
 
     def add_child(self, child: Component):
         """add child component and set parent link"""

@@ -353,7 +353,7 @@ def test_svg_integration():
             offset=Offset(relative=(i, 0)),
             main_color="purple",
             min_dimensions=Size(width=40, height=40),
-            transform=Transform(scale=(5, 5), rotate=90),
+            transform=Transform(scale=(5, 5), rotate=-70),
         )
         for i in range(2)
     )

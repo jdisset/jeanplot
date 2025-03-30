@@ -265,11 +265,9 @@ class MatplotlibRenderer(BaseRenderer):
                 print(f"Error rendering SVG path: {e}")
 
     def render_debug(self, context, comp, matrix):
-        """renders a red box around the component + origin marker and name"""
+        """render debug box around component"""
         debug_width = 0.5
         w, h = comp._dimensions.width, comp._dimensions.height
-        comp_id = comp.id or "unnamed"
-
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
 
         # draw rectangle
@@ -297,7 +295,7 @@ class MatplotlibRenderer(BaseRenderer):
         context.text(
             world_coords[0],
             world_coords[1] + 2,
-            f"{comp_id} ({w:.1f}x{h:.1f})",
+            f"{comp.id or 'unnamed'} ({w:.1f}x{h:.1f})",
             color="red",
             fontsize=6,
             ha="left",
@@ -306,12 +304,11 @@ class MatplotlibRenderer(BaseRenderer):
 
     def _render_text_paths(self, ctx, text_elem, matrix):
         """render cached text paths"""
+        svg_content = None
         if hasattr(text_elem, "_svg_cache"):
             svg_content = text_elem._svg_cache
         elif hasattr(text_elem, "svg_content"):
             svg_content = text_elem.svg_content
-        else:
-            return
 
         if not svg_content or not hasattr(svg_content, "text_paths") or not svg_content.text_paths:
             return
@@ -322,11 +319,10 @@ class MatplotlibRenderer(BaseRenderer):
         transform = mtransforms.Affine2D(matrix=final_matrix) + ctx.transData
 
         for path_info in svg_content.text_paths:
+            color = text_elem.main_color if hasattr(text_elem, "main_color") else text_elem.color
             patch = mpatches.PathPatch(
                 path_info["path"],
-                facecolor=text_elem.main_color
-                if hasattr(text_elem, "main_color")
-                else text_elem.color,
+                facecolor=color,
                 edgecolor="none",
                 transform=transform,
             )

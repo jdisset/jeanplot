@@ -20,15 +20,12 @@ from .svg import (
 from .debug import debug_print
 
 
+# Base curve types
 class CurveDefinition(BaseModel):
-    """base class for different curve types"""
-
     pass
 
 
 class StraightCurve(CurveDefinition):
-    """straight line between points"""
-
     pass
 
 
@@ -49,9 +46,11 @@ class OrthogonalCurve(CurveDefinition):
     """path with orthogonal segments (right angles)"""
 
     start_direction: Literal["up", "down", "left", "right"] = "right"
-    start_length: float = 10  # minimum length of the start segment
-    end_direction: Literal["up", "down", "left", "right"] = "left"
-    end_length: float = 10  # minimum length of the end segment
+    end_direction: Literal["up", "down", "left", "right"] = "right"
+
+    start_length: float = 10  # minimum length of start segment
+    end_length: float = 10  # minimum length of end segment
+
     corner_radius: float = 10.0
 
 
@@ -60,22 +59,16 @@ class Connection(Component):
 
     start_component: Component
     end_component: Component
-
-    # default to center of components
     start_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     end_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
-
     color: str = "#000000"
-    width: float = 1.0  # aka thickness
-
+    width: float = 1.0
     curve_type: CurveDefinition = Field(default_factory=StraightCurve)
     line_style: LineStyle = "solid"
     dash_array: Optional[tuple[float, ...]] = None
     dash_offset: float = 0.0
-
     start_cap: Optional[LineEndType] = None
     end_cap: Optional[LineEndType] = None
-
     is_overlay: bool = True
 
     _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
@@ -85,20 +78,17 @@ class Connection(Component):
     _world_end: Optional[tuple[float, float]] = PrivateAttr(default=None)
 
     def _log_debug(self, message: str, data: Any = None):
-        """helper to log debug messages with component id"""
         debug_print(self.id or "Connection", message, data)
 
     def measure(self, renderer=None) -> Size:
         """calculate dimensions based on connected components positions"""
-        # get component identifier for debug
-        comp_id = self.id or "Connection"
         self._log_debug("Measuring connection")
 
         # need parent container to position properly
         if self.parent is None:
             self._log_debug("No parent for connection, skipping measurement")
-            self._dimensions = Size(width=0, height=0)
-            self._transformed_aabb = Size(width=0, height=0)
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
             return self._dimensions
 
         # Check if both components exist and have dimensions
@@ -112,8 +102,8 @@ class Connection(Component):
                     "end_has_dims": hasattr(self.end_component, "_dimensions"),
                 },
             )
-            self._dimensions = Size(width=0, height=0)
-            self._transformed_aabb = Size(width=0, height=0)
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
             return self._dimensions
 
         # get world coordinates of connection points
@@ -140,10 +130,7 @@ class Connection(Component):
         start_parent = (start_parent_coords[0], start_parent_coords[1])
         end_parent = (end_parent_coords[0], end_parent_coords[1])
 
-        self._log_debug(
-            "Parent space connection points",
-            {"start_parent": start_parent, "end_parent": end_parent},
-        )
+        self._log_debug("Parent space points", {"start": start_parent, "end": end_parent})
 
         # calculate bounds that contain both points with buffer
         min_x = min(start_parent[0], end_parent[0])
@@ -174,10 +161,7 @@ class Connection(Component):
         self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
         self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
 
-        self._log_debug(
-            "Local connection points",
-            {"local_start": self._local_start, "local_end": self._local_end},
-        )
+        self._log_debug("Local points", {"start": self._local_start, "end": self._local_end})
 
         # create SVG content
         self._create_svg_content()
@@ -195,28 +179,20 @@ class Connection(Component):
         ox, oy = offset.compute(dims)
         local_point = np.array([ox, oy, 1])
 
-        # get world matrix directly (includes all parent transforms)
+        # transform to world space
         world_matrix = component.compute_world_matrix()
-
-        # transform local point to world space
         world_point = world_matrix @ local_point
         pos = (world_point[0], world_point[1])
 
         self._log_debug(
-            f"From connector.py, world position for component calculations for {component.id}",
-            {"offset": (ox, oy), "world_point": pos},
+            f"World position for {component.id}", {"offset": (ox, oy), "world_point": pos}
         )
-
         return pos
 
     def _calculate_world_connection_points(self):
-        """calculate start and end points in world coordinates using explicit parent traversal"""
+        """calculate connection points in world coordinates"""
         start_world = self._get_component_world_position(self.start_component, self.start_offset)
         end_world = self._get_component_world_position(self.end_component, self.end_offset)
-
-        self._log_debug(
-            "Final world connection points", {"start_world": start_world, "end_world": end_world}
-        )
 
         if start_world == end_world:
             self._log_debug("Warning: Identical start and end points", {"point": start_world})
@@ -225,7 +201,6 @@ class Connection(Component):
 
     def _create_svg_content(self):
         """create SVG content based on connection points and curve type"""
-        # ensure we have valid local points
         if not self._local_start or not self._local_end:
             self._log_debug("Missing local points for SVG creation")
             return
@@ -235,30 +210,21 @@ class Connection(Component):
         width = max(self._dimensions.width, 1.0)
         height = max(self._dimensions.height, 1.0)
 
-        self._log_debug(
-            "Creating SVG with dimensions",
-            {"width": width, "height": height, "start": start, "end": end},
-        )
-
         # create path based on curve type
         path_str = ""
         control_points = []
 
+        # Generate path based on curve type
         if isinstance(self.curve_type, StraightCurve):
             path_str = f"M {start[0]} {start[1]} L {end[0]} {end[1]}"
-            self._log_debug("Created straight line path", path_str)
-
         elif isinstance(self.curve_type, SimpleBezierCurve):
             # calculate control points from vectors
             start_vec = self.curve_type.start_vec
             end_vec = self.curve_type.end_vec
-
             ctrl1 = (start[0] + start_vec[0], start[1] + start_vec[1])
             ctrl2 = (end[0] + end_vec[0], end[1] + end_vec[1])
-
             path_str = f"M {start[0]} {start[1]} C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end[0]} {end[1]}"
             control_points = [ctrl1, ctrl2]
-
         elif isinstance(self.curve_type, AdvancedBezierCurve):
             # use explicit control points
             cps = self.curve_type.control_points
@@ -271,18 +237,15 @@ class Connection(Component):
                 ctrl2 = cps[1] if len(cps) > 1 else end
                 path_str = f"M {start[0]} {start[1]} C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end[0]} {end[1]}"
             control_points = cps
-
         elif isinstance(self.curve_type, OrthogonalCurve):
             # calculate orthogonal path
             points = self._calculate_orthogonal_path(start, end)
-
             if self.curve_type.corner_radius > 0:
                 path_str = self._create_rounded_orthogonal_path(points)
             else:
                 path_str = f"M {points[0][0]} {points[0][1]}"
                 for p in points[1:]:
                     path_str += f" L {p[0]} {p[1]}"
-
         else:  # default to straight
             path_str = f"M {start[0]} {start[1]} L {end[0]} {end[1]}"
 
@@ -304,15 +267,12 @@ class Connection(Component):
         svg_content = SVGContent(
             width=width, height=height, viewBox=(0, 0, width, height), paths=paths
         )
-
         self._svg_element = SVGElement(svg_content=svg_content)
-        self._log_debug("Created SVG element with paths", len(paths))
 
     def _calculate_orthogonal_path(self, start, end):
         """calculate points for orthogonal path"""
-        # get direction vectors
+        # direction vectors
         direction_map = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
-
         start_dir = direction_map[self.curve_type.start_direction]
         end_dir = direction_map[self.curve_type.end_direction]
 
@@ -328,7 +288,7 @@ class Connection(Component):
 
         # determine if we need a middle segment
         if (start_dir[0] == 0 and end_dir[0] == 0) or (start_dir[1] == 0 and end_dir[1] == 0):
-            # parallel directions, need a middle segment
+            # parallel directions need a middle segment
             mid_x = (first_segment_end[0] + last_segment_start[0]) / 2
             mid_y = (first_segment_end[1] + last_segment_start[1]) / 2
 
@@ -351,12 +311,12 @@ class Connection(Component):
                     end,
                 ]
         else:
-            # perpendicular directions, connect with single corner
-            if start_dir[0] == 0:  # vertical start
-                corner = (first_segment_end[0], last_segment_start[1])
-            else:  # horizontal start
-                corner = (last_segment_start[0], first_segment_end[1])
-
+            # perpendicular directions - connect with single corner
+            corner = (
+                (first_segment_end[0], last_segment_start[1])
+                if start_dir[0] == 0
+                else (last_segment_start[0], first_segment_end[1])
+            )
             return [start, first_segment_end, corner, last_segment_start, end]
 
     def _create_rounded_orthogonal_path(self, points):
@@ -375,7 +335,6 @@ class Connection(Component):
             # check if this is a corner (90° turn)
             v1 = (curr[0] - prev[0], curr[1] - prev[1])
             v2 = (next_pt[0] - curr[0], next_pt[1] - curr[1])
-
             is_corner = (v1[0] == 0 and v2[0] != 0) or (v1[0] != 0 and v2[0] == 0)
 
             if is_corner:
@@ -394,7 +353,7 @@ class Connection(Component):
                     arc_start = (curr[0] - v1_norm[0] * r, curr[1] - v1_norm[1] * r)
                     arc_end = (curr[0] + v2_norm[0] * r, curr[1] + v2_norm[1] * r)
 
-                    # determine sweep flag (0 or 1) based on turn direction
+                    # determine sweep flag based on turn direction
                     cross_z = v1_norm[0] * v2_norm[1] - v1_norm[1] * v2_norm[0]
                     sweep = 0 if cross_z < 0 else 1
 
@@ -426,7 +385,6 @@ class Connection(Component):
                 end_dir = direction
             else:
                 return  # can't determine direction
-
         elif isinstance(self.curve_type, (SimpleBezierCurve, AdvancedBezierCurve)):
             # bezier curve - use control points for direction
             if control_points:
@@ -455,15 +413,13 @@ class Connection(Component):
                     end_dir = direction
                 else:
                     return
-
         elif isinstance(self.curve_type, OrthogonalCurve):
             # get from direction map
             direction_map = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
             start_dir = direction_map[self.curve_type.start_direction]
             end_dir = direction_map[self.curve_type.end_direction]
-            # flip directions
+            # flip start direction
             start_dir = (-start_dir[0], -start_dir[1])
-
         else:
             # default to straight line
             dx, dy = end[0] - start[0], end[1] - start[1]
@@ -475,6 +431,7 @@ class Connection(Component):
             else:
                 return
 
+        # add start cap
         if self.start_cap:
             if isinstance(self.start_cap, LineEndArrow):
                 paths.append(create_arrow_cap(start, start_dir, self.start_cap))
@@ -483,6 +440,7 @@ class Connection(Component):
             elif isinstance(self.start_cap, LineEndFlat):
                 paths.append(create_flat_cap(start, start_dir, self.start_cap))
 
+        # add end cap
         if self.end_cap:
             if isinstance(self.end_cap, LineEndArrow):
                 paths.append(create_arrow_cap(end, end_dir, self.end_cap))
@@ -498,10 +456,12 @@ class Connection(Component):
         # recalculate world coordinates to get latest positions
         start_world, end_world = self._calculate_world_connection_points()
 
-        # check if positions have changed and update SVG if needed
-        if start_world != getattr(self, "_last_start_world", None) or end_world != getattr(
-            self, "_last_end_world", None
-        ):
+        # check if positions have changed
+        positions_changed = start_world != getattr(
+            self, "_last_start_world", None
+        ) or end_world != getattr(self, "_last_end_world", None)
+
+        if positions_changed:
             self._log_debug("World points changed, updating connection")
             self._last_start_world = start_world
             self._last_end_world = end_world
@@ -517,7 +477,6 @@ class Connection(Component):
                 # transform world points to parent space
                 start_parent_coords = np.dot(parent_inv, [start_world[0], start_world[1], 1])
                 end_parent_coords = np.dot(parent_inv, [end_world[0], end_world[1], 1])
-
                 start_parent = (start_parent_coords[0], start_parent_coords[1])
                 end_parent = (end_parent_coords[0], end_parent_coords[1])
 
@@ -594,5 +553,4 @@ class Connection(Component):
         self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
         self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
 
-        # create SVG content
         self._create_svg_content()

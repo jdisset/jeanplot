@@ -75,19 +75,19 @@ class LineEndFlat(BaseModel):
 LineEndType = Union[LineEndArrow, LineEndCircle, LineEndFlat]
 
 
+def _normalize_vector(v, default=(1, 0)):
+    """normalize a 2D vector, with fallback"""
+    length = np.sqrt(v[0] ** 2 + v[1] ** 2)
+    return (v[0] / length, v[1] / length) if length > 0 else default
+
+
 def create_arrow_cap(
-    point: Tuple[float, float], direction_vector: Tuple[float, float], arrow: LineEndArrow
+    point: Tuple[float, float], direction: Tuple[float, float], arrow: LineEndArrow
 ) -> SVGPathData:
     """create arrow end cap"""
     # normalize direction vector
-    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
-    if length > 0:
-        dx, dy = direction_vector[0] / length, direction_vector[1] / length
-    else:
-        dx, dy = 1, 0  # default horizontal direction if vector is zero
-
-    # perpendicular vector
-    perp_x, perp_y = -dy, dx
+    dx, dy = _normalize_vector(direction)
+    perp_x, perp_y = -dy, dx  # perpendicular vector
 
     # arrow points
     size = arrow.size
@@ -119,11 +119,7 @@ def create_arrow_cap(
 def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGPathData:
     """create circle end cap"""
     r = circle.radius
-    path = (
-        f"M {point[0] - r} {point[1]} "
-        f"A {r} {r} 0 1 1 {point[0] + r} {point[1]} "
-        f"A {r} {r} 0 1 1 {point[0] - r} {point[1]} Z"
-    )
+    path = f"M {point[0] - r} {point[1]} A {r} {r} 0 1 1 {point[0] + r} {point[1]} A {r} {r} 0 1 1 {point[0] - r} {point[1]} Z"
 
     return SVGPathData(
         d=path,
@@ -137,18 +133,12 @@ def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGP
 
 
 def create_flat_cap(
-    point: Tuple[float, float], direction_vector: Tuple[float, float], flat: LineEndFlat
+    point: Tuple[float, float], direction: Tuple[float, float], flat: LineEndFlat
 ) -> SVGPathData:
     """create flat end cap"""
     # normalize direction vector
-    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
-    if length > 0:
-        dx, dy = direction_vector[0] / length, direction_vector[1] / length
-    else:
-        dx, dy = 0, 1  # default vertical direction if vector is zero
-
-    # perpendicular vector
-    perp_x, perp_y = -dy, dx
+    dx, dy = _normalize_vector(direction, (0, 1))
+    perp_x, perp_y = -dy, dx  # perpendicular vector
 
     # endpoints
     half_len = flat.length / 2
@@ -157,10 +147,8 @@ def create_flat_cap(
     p2_x = point[0] - perp_x * half_len
     p2_y = point[1] - perp_y * half_len
 
-    path = f"M {p1_x} {p1_y} L {p2_x} {p2_y}"
-
     return SVGPathData(
-        d=path,
+        d=f"M {p1_x} {p1_y} L {p2_x} {p2_y}",
         fill="none",
         stroke=flat.stroke_color,
         stroke_width=flat.stroke_width,
@@ -214,6 +202,35 @@ def make_svg_line(
     )
 
 
+def _get_curve_directions(start_point, end_point, control_points):
+    """calculate direction vectors for a curve"""
+    if control_points:
+        # start direction
+        start_dir = (control_points[0][0] - start_point[0], control_points[0][1] - start_point[1])
+        if start_dir[0] == 0 and start_dir[1] == 0:
+            start_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
+
+        # end direction
+        if len(control_points) > 1:
+            end_dir = (end_point[0] - control_points[-1][0], end_point[1] - control_points[-1][1])
+        else:
+            end_dir = (end_point[0] - control_points[0][0], end_point[1] - control_points[0][1])
+
+        if end_dir[0] == 0 and end_dir[1] == 0:
+            end_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
+    else:
+        # straight line
+        line_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
+        start_dir = (-line_dir[0], -line_dir[1])
+        end_dir = line_dir
+
+    # normalize
+    start_dir = _normalize_vector(start_dir, (1, 0))
+    end_dir = _normalize_vector(end_dir, (1, 0))
+
+    return start_dir, end_dir
+
+
 def make_svg_bezier(
     start_point: Tuple[float, float],
     end_point: Tuple[float, float],
@@ -238,7 +255,6 @@ def make_svg_bezier(
         dash_array = (line_width, line_width)
 
     # create main bezier path
-    path_str = ""
     if len(control_points) == 0:
         # straight line
         path_str = f"M {start_point[0]} {start_point[1]} L {end_point[0]} {end_point[1]}"
@@ -261,46 +277,10 @@ def make_svg_bezier(
         )
     )
 
-    # calculate direction vectors for caps
+    # add caps if needed
     if start_cap or end_cap:
-        # calculate direction vectors based on control points or direct line
-        if control_points:
-            # direction at start
-            start_dir = (
-                control_points[0][0] - start_point[0],
-                control_points[0][1] - start_point[1],
-            )
-            # use a small distance if vector is zero
-            if start_dir[0] == 0 and start_dir[1] == 0:
-                start_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
-                # still zero? use default
-                if start_dir[0] == 0 and start_dir[1] == 0:
-                    start_dir = (1, 0)
+        start_dir, end_dir = _get_curve_directions(start_point, end_point, control_points)
 
-            # direction at end
-            if len(control_points) > 1:
-                end_dir = (
-                    end_point[0] - control_points[-1][0],
-                    end_point[1] - control_points[-1][1],
-                )
-            else:
-                end_dir = (end_point[0] - control_points[0][0], end_point[1] - control_points[0][1])
-            # use a small distance if vector is zero
-            if end_dir[0] == 0 and end_dir[1] == 0:
-                end_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
-                # still zero? use default
-                if end_dir[0] == 0 and end_dir[1] == 0:
-                    end_dir = (1, 0)
-        else:
-            # straight line
-            line_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
-            # if points are identical, use horizontal direction
-            if line_dir[0] == 0 and line_dir[1] == 0:
-                line_dir = (1, 0)
-            start_dir = (-line_dir[0], -line_dir[1])
-            end_dir = line_dir
-
-        # add start cap
         if start_cap:
             if isinstance(start_cap, LineEndArrow):
                 paths.append(create_arrow_cap(start_point, start_dir, start_cap))
@@ -309,7 +289,6 @@ def make_svg_bezier(
             elif isinstance(start_cap, LineEndFlat):
                 paths.append(create_flat_cap(start_point, start_dir, start_cap))
 
-        # add end cap
         if end_cap:
             if isinstance(end_cap, LineEndArrow):
                 paths.append(create_arrow_cap(end_point, end_dir, end_cap))
@@ -331,10 +310,9 @@ def get_svg_data_from_string(
     try:
         root = etree.fromstring(svg_content.encode("utf-8"))
 
+        # extract dimensions
         width_str = root.attrib.get("width", "100")
         height_str = root.attrib.get("height", "100")
-
-        # extract dimensions
         width = float(re.match(r"[\d\.]+", width_str).group()) / ppi
         height = float(re.match(r"[\d\.]+", height_str).group()) / ppi
 
@@ -355,7 +333,7 @@ def get_svg_data_from_string(
                 stroke_width = float(elem.attrib.get("stroke-width", 1.0))
                 transform = elem.attrib.get("transform")
 
-                # extract dash array if present
+                # parse dash array and offset
                 line_style = "solid"
                 dash_array = None
                 dash_offset = 0.0
@@ -433,7 +411,7 @@ class SVGElement(Component):
     main_color: str = "black"
     secondary_color: str = "gray"
     svg_content: Optional[Union[str, Path, SVGContent]] = None
-    line_width_mode: LineWidthMode = "data"  # 'data' scales with zoom, 'point' stays fixed
+    line_width_mode: LineWidthMode = "data"
 
     @model_validator(mode="after")
     def load_svg_data(self):
@@ -467,8 +445,6 @@ class SVGElement(Component):
     def render(self, renderer, context, matrix: np.ndarray):
         """render svg using renderer"""
         self.add_renderer_option(renderer.RENDERER_NAME, "line_width_mode", self.line_width_mode)
-
         renderer.render_svg(context, self, matrix)
-
         if self.debug:
             renderer.render_debug(context, self, matrix)
