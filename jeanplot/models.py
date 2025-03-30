@@ -1,7 +1,9 @@
-from typing import Tuple, Optional, Literal, Dict, Any
+# jeanplot/models.py
+from typing import Tuple, Optional, Literal, Dict, Any, Union
 from pydantic import BaseModel, Field
 import numpy as np
 
+# --- Other models remain the same ---
 LayoutDirection = Literal["row", "column"]
 PositionType = Literal["relative", "absolute"]
 LineStyleType = Literal["solid", "dashed", "dotted", "custom"]
@@ -18,7 +20,6 @@ class Size(BaseModel):
         if data and not all(k in ["width", "height"] for k in data.keys()):
             super().__init__(width=width, height=height, **data)
         else:
-            # use positional args
             super().__init__(width=width, height=height)
 
     def union(self, other: "Size") -> "Size":
@@ -35,21 +36,39 @@ class Size(BaseModel):
         """maximum of two sizes"""
         return Size(width=max(size1.width, size2.width), height=max(size1.height, size2.height))
 
+    # add a gt lt eq method for size comparison
+    def __gt__(self, other: Union["Size", float]) -> bool:
+        if isinstance(other, Size):
+            return self.width > other.width and self.height > other.height
+        elif isinstance(other, float):
+            return self.width > other and self.height > other
+        return False
+
+    def __lt__(self, other: Union["Size", float]) -> bool:
+        if isinstance(other, Size):
+            return self.width < other.width and self.height < other.height
+        elif isinstance(other, float):
+            return self.width < other and self.height < other
+        return False
+
 
 class Offset(BaseModel):
-    """unified offset with both relative and absolute components"""
+    """
+    Unified offset specifying a shift applied *after* layout positioning.
+    Both relative and absolute components are added together.
+    """
 
-    relative: Tuple[float, float] = (0.0, 0.0)  # proportion of dimensions (0-1)
-    absolute: Tuple[float, float] = (0.0, 0.0)  # in data units
+    relative: Tuple[float, float] = (0.0, 0.0)  # proportion of component dimensions (width, height)
+    absolute: Tuple[float, float] = (0.0, 0.0)  # absolute units
 
     def compute(self, dimensions: Size) -> Tuple[float, float]:
-        """compute the combined offset based on dimensions"""
-        # The negative sign for relative offset is because we want to
-        # shift the drawing origin relative to the component's position
-        # For example, relative=(0.5, 0.5) means "center the origin"
+        """
+        Compute the combined offset shift based on component dimensions.
+        Positive values shift right/down.
+        """
         return (
-            -dimensions.width * self.relative[0] + self.absolute[0],
-            -dimensions.height * self.relative[1] + self.absolute[1],
+            dimensions.width * self.relative[0] + self.absolute[0],
+            dimensions.height * self.relative[1] + self.absolute[1],
         )
 
 
@@ -88,6 +107,7 @@ class Transform(BaseModel):
             t = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
 
             # combine: translation * scale * rotate_back * rotation * rotate_center
+            # note: transforms apply right to left: first center, then rotate, then uncenter, then scale, then translate
             return t @ s @ t_rot_back @ r @ t_rot_center
         else:
             # simple case: no dimensions available or no rotation
@@ -107,6 +127,7 @@ class Transform(BaseModel):
 
             s = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
 
+            # note: transforms apply right to left: first scale, then rotate, then translate
             return t @ r @ s
 
 
@@ -122,14 +143,40 @@ class VisualStyle(BaseModel):
     dash_offset: float = 0.0
     corner_radius: float = 0.0
 
+    @property
+    def margin_top(self) -> float:
+        return self.margin[0]
+
+    @property
+    def margin_right(self) -> float:
+        return self.margin[1]
+
+    @property
+    def margin_bottom(self) -> float:
+        return self.margin[2]
+
+    @property
+    def margin_left(self) -> float:
+        return self.margin[3]
+
+    @property
+    def padding_top(self) -> float:
+        return self.padding[0]
+
+    @property
+    def padding_right(self) -> float:
+        return self.padding[1]
+
+    @property
+    def padding_bottom(self) -> float:
+        return self.padding[2]
+
+    @property
+    def padding_left(self) -> float:
+        return self.padding[3]
+
     def content_inset(self) -> Tuple[float, float, float, float]:
-        """return the total inset (margin + padding) for each side"""
-        return (
-            self.margin[0] + self.padding[0],  # top
-            self.margin[1] + self.padding[1],  # right
-            self.margin[2] + self.padding[2],  # bottom
-            self.margin[3] + self.padding[3],  # left
-        )
+        return self.padding
 
     def content_box(self, bounds: Size) -> Tuple[float, float]:
         """return the size of the content box after insets"""

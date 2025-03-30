@@ -10,28 +10,22 @@ from jeanplot.svg import SVGElement
 
 def test_simple_container():
     """test a simple container with a single child"""
-    # create a container
     container = Container(
         id="root",
         min_dimensions=Size(width=200, height=100),
         style=VisualStyle(background_color="white", border_color="black", border_width=1),
     )
 
-    # create a child rectangle
     rect = Container(
         id="rect",
         min_dimensions=Size(width=50, height=50),
         style=VisualStyle(background_color="blue", corner_radius=5),
     )
 
-    # add child to container
     container.children = [rect]
 
-    # create renderer and context
     renderer = MatplotlibRenderer()
     ax = renderer.create_context(width=300, height=200)
-
-    # measure and render
     container.measure(renderer)
     renderer.render_component(ax, container)
 
@@ -282,7 +276,16 @@ def test_interdependent_layout():
                 style=VisualStyle(
                     background_color="lightblue", border_color="blue", border_width=1
                 ),
-                children=[Text(text=f"Item {i+1}")],  # add text to each child
+                layout=LayoutConstraints(
+                    direction="column",  # Changed from row to column
+                    justify_content="start",  # Center vertically
+                ),
+                children=[
+                    Text(
+                        text=f"Item {i+1}",
+                        align="center",
+                    )
+                ],
             )
         )
 
@@ -294,7 +297,7 @@ def test_interdependent_layout():
     ax = renderer.create_context(width=600, height=400)
 
     # measure and render
-    parent.measure(renderer)
+    parent.measure_and_layout(renderer)  # Using measure_and_layout to ensure proper layout
     renderer.render_component(ax, parent)
 
     # display
@@ -308,9 +311,9 @@ def test_svg_integration():
     """test SVG elements with layout"""
     # paths to SVG assets
     test_circle_path = "test_circle.svg"
-    aggregation_path = "jeanplot/resources/symbols/aggregation.svg"
-    color_path = "jeanplot/resources/symbols/color.svg"
-    l2_path = "jeanplot/resources/symbols/l2.svg"
+    aggregation_path = "jeanplot/resources/parts/aggregation.svg"
+    color_path = "jeanplot/resources/aprts/color.svg"
+    l2_path = "jeanplot/resources/parts/l2.svg"
 
     # create a container with row layout
     container = Container(

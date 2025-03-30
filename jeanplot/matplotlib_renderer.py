@@ -1,50 +1,56 @@
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict, Tuple, Union
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtransforms
+import matplotlib.font_manager as fm
+from matplotlib.textpath import TextPath
+from pydantic import Field, BaseModel
+
 from .component import Component
-from .models import Size
+from .models import Size, VisualStyle
 from .renderer import BaseRenderer
+from .svg import SVGElement, SVGContent
+
+
+class SVGTextContent(SVGContent):
+    """svg content for text"""
+
+    text_paths: List[Dict[str, Any]] = Field(default_factory=list)
+    measured_width: float = 0
+    measured_height: float = 0
 
 
 def linewidth_from_data_units(linewidth, axis, reference="y"):
     """convert linewidth in data units to points"""
     fig = axis.get_figure()
+
     if reference == "x":
         length = fig.bbox_inches.width * axis.get_position().width
         value_range = np.diff(axis.get_xlim())
     elif reference == "y":
         length = fig.bbox_inches.height * axis.get_position().height
         value_range = np.diff(axis.get_ylim())
+    else:
+        # avg of x and y scales
+        length_x = fig.bbox_inches.width * axis.get_position().width
+        value_range_x = np.diff(axis.get_xlim())
+        length_y = fig.bbox_inches.height * axis.get_position().height
+        value_range_y = np.diff(axis.get_ylim())
+
+        if value_range_x <= 0 or value_range_y <= 0:
+            return 1.0
+
+        scale_x = length_x / value_range_x
+        scale_y = length_y / value_range_y
+        return linewidth * ((scale_x + scale_y) / 2) * 72
+
     length *= 72
-    # scale linewidth to value range
-    assert value_range > 0, "value_range must be positive"
-    result = linewidth * (length / value_range)
-    return result
-
-
-class DataWidthPatch:
-    """wrapper to track patches that use data units for line width"""
-
-    def __init__(self, patch, data_width, axis):
-        self.patch = patch
-        self.data_width = data_width
-        self.axis = axis
-        # update initially
-        self.update_linewidth()
-
-    def update_linewidth(self):
-        """update line width based on current axis state"""
-        new_width = linewidth_from_data_units(self.data_width, self.axis)
-        if hasattr(self.patch, "set_linewidth"):
-            self.patch.set_linewidth(new_width)
+    return linewidth * (length / value_range) if value_range > 0 else 1.0
 
 
 class MatplotlibRenderer(BaseRenderer):
-    """renderer that uses matplotlib for visualization"""
-
     RENDERER_NAME = "matplotlib"
 
     def __init__(self, debug=False):
@@ -52,240 +58,165 @@ class MatplotlibRenderer(BaseRenderer):
         self.data_width_patches = []
         self.debug = debug
 
-    def debug_print(self, message):
-        """print debug information if debug is enabled"""
+    def debug_print(self, msg):
         if self.debug:
-            print(f"[MatplotlibRenderer] {message}")
+            print(f"[MatplotlibRenderer] {msg}")
 
-    def refresh_linewidths(self, context):
-        """update all line widths for data-unit elements"""
-        self.debug_print(f"Refreshing {len(self.data_width_patches)} tracked patches")
-        for patch_wrapper in self.data_width_patches:
-            patch_wrapper.update_linewidth()
+    def refresh_linewidths(self, ctx):
+        """update linewidths for data-unit elements"""
+        for patch, width in self.data_width_patches:
+            if hasattr(patch, "set_linewidth"):
+                new_width = linewidth_from_data_units(width, ctx, "avg")
+                patch.set_linewidth(new_width)
 
-    def track_data_width_patch(self, patch, data_width, context):
-        """track a patch that uses data units for linewidth"""
-        wrapper = DataWidthPatch(patch, data_width, context)
-        self.data_width_patches.append(wrapper)
-        self.debug_print(f"Now tracking {len(self.data_width_patches)} patches")
+    def track_patch(self, patch, width, ctx):
+        """track a patch with data-unit width"""
+        self.data_width_patches.append((patch, width))
         return patch
 
-    def create_context(self, width=None, height=None, dpi: int = 100, ax=None, **kwargs):
-        """create a matplotlib figure and axes context"""
-        if ax is not None:
+    def create_context(self, width=None, height=None, dpi=100, ax=None, **kwargs):
+        """create matplotlib figure and axes"""
+        if ax:
             return ax
-
-        if width is None or height is None:
-            raise ValueError("width and height must be provided when creating a new figure")
+        if not (width and height):
+            raise ValueError("width and height required for new figure")
 
         fig, ax = plt.subplots(figsize=(width / dpi, height / dpi), dpi=dpi, **kwargs)
-        ax.set_aspect("equal")
-
-        # clear tracking when creating a new context
         self.data_width_patches = []
-        self.debug_print("Created new context and cleared tracking")
-
         return ax
 
-    def render_component(
-        self,
-        context,
-        component: Component,
-        parent_matrix: Optional[np.ndarray] = None,
-        adjust_lims: bool = True,
-    ):
-        """render a component to the context, optionally adjusting limits"""
-        # ensure measurement and layout are current before rendering
+    def render_component(self, context, component, parent_matrix=None, adjust_lims=True):
+        """render component to context"""
         component.measure_and_layout(self)
-
         if adjust_lims:
             self.adjust_limits(context, component)
 
-        # run pre-render callbacks after limits are set but before rendering
-        for callback in self.pre_render_callbacks:
-            callback(context)
+        for cb in self.pre_render_callbacks:
+            cb(context)
 
-        # clear tracking before rendering to avoid duplicates
         self.data_width_patches = []
 
-        # render the component
-        matrix = component.compute_world_matrix(parent_matrix)
-        component.render(self, context, matrix)
+        # flip matrix for the whole render pass, since matplotlib uses "inverted" y-axis
+        flip = np.array(
+            [
+                [1, 0, 0],
+                [0, -1, component._dimensions.height],
+                [0, 0, 1],
+            ]
+        )
+        world = component.compute_world_matrix(parent_matrix)
+        final = flip @ world
 
-        # refresh line widths after component is rendered
-        self.debug_print("Refreshing line widths after component render")
+        component.render(self, context, final)
         self.refresh_linewidths(context)
 
-        # run post-render callbacks
-        for callback in self.post_render_callbacks:
-            callback(context)
+        for cb in self.post_render_callbacks:
+            cb(context)
 
-    def adjust_limits(self, context: Axes, root_component: Component, padding: float = 0.05):
-        """adjust plot limits to fit all components with padding"""
-        # calculate the world bounds of all components
-        min_x, min_y, max_x, max_y = self._calculate_world_bounds(root_component)
+    def adjust_limits(self, ctx, root, padding=0.05):
+        """adjust plot limits to fit components"""
+        min_x, min_y, max_x, max_y = self._calculate_world_bounds(root)
 
-        # add padding
-        width = max_x - min_x
-        height = max_y - min_y
-        pad_x = width * padding if width > 0 else 1.0
-        pad_y = height * padding if height > 0 else 1.0
+        width = max(max_x - min_x, 1.0)
+        height = max(max_y - min_y, 1.0)
 
-        # set the plot limits
-        context.set_xlim(min_x - pad_x, max_x + pad_x)
-        context.set_ylim(min_y - pad_y, max_y + pad_y)
+        pad_x, pad_y = width * padding, height * padding
 
-        self.debug_print(
-            f"Set limits: x=[{min_x-pad_x:.1f}, {max_x+pad_x:.1f}], y=[{min_y-pad_y:.1f}, {max_y+pad_y:.1f}]"
-        )
+        ctx.set_xlim(min_x - pad_x, max_x + pad_x)
+        ctx.set_ylim(min_y - pad_y, max_y + pad_y)
 
-    def _calculate_world_bounds(
-        self, component: Component, parent_matrix: Optional[np.ndarray] = None
-    ):
-        """recursively calculate the world bounds of all components"""
-        # compute the world matrix for this component
-        world_matrix = component.compute_world_matrix(parent_matrix)
+    def _calculate_world_bounds(self, comp, parent_matrix=None):
+        """calculate world bounds recursively"""
+        world = comp.compute_world_matrix(parent_matrix)
+        w, h = comp._dimensions.width, comp._dimensions.height
 
-        # get the component's dimensions
-        width = component._dimensions.width
-        height = component._dimensions.height
-
-        # define the corners of the component in local space
         corners = np.array(
             [
-                [0, 0, 1],  # bottom left
-                [width, 0, 1],  # bottom right
-                [0, height, 1],  # top left
-                [width, height, 1],  # top right
+                [0, 0, 1],
+                [w, 0, 1],
+                [0, h, 1],
+                [w, h, 1],
             ]
         )
 
-        # transform the corners to world space
-        world_corners = (world_matrix @ corners.T).T
+        world_corners = (world @ corners.T).T
 
-        # initialize min/max coordinates
-        min_x = float("inf")
-        min_y = float("inf")
-        max_x = float("-inf")
-        max_y = float("-inf")
+        if world_corners.shape[0] > 0:
+            min_x = np.min(world_corners[:, 0])
+            min_y = np.min(world_corners[:, 1])
+            max_x = np.max(world_corners[:, 0])
+            max_y = np.max(world_corners[:, 1])
+        else:
+            min_x = min_y = max_x = max_y = 0
 
-        # update min/max coordinates based on corners
-        for corner in world_corners:
-            min_x = min(min_x, corner[0])
-            min_y = min(min_y, corner[1])
-            max_x = max(max_x, corner[0])
-            max_y = max(max_y, corner[1])
-
-        # if this is a container, recursively process its children
-        if hasattr(component, "children") and component.children:
-            for child in component.children:
-                child_min_x, child_min_y, child_max_x, child_max_y = self._calculate_world_bounds(
-                    child, world_matrix
-                )
-                min_x = min(min_x, child_min_x)
-                min_y = min(min_y, child_min_y)
-                max_x = max(max_x, child_max_x)
-                max_y = max(max_y, child_max_y)
+        if hasattr(comp, "children") and comp.children:
+            for child in comp.children:
+                cx, cy, cX, cY = self._calculate_world_bounds(child, world)
+                min_x, min_y = min(min_x, cx), min(min_y, cy)
+                max_x, max_y = max(max_x, cX), max(max_y, cY)
 
         return min_x, min_y, max_x, max_y
 
-    def render_rectangle(
-        self,
-        context: Axes,
-        bounds: Size,
-        style: dict[str, Any],
-        matrix: np.ndarray,
-        component=None,
-    ):
-        """render a rectangle to the matplotlib axes"""
-        facecolor = style.get("background_color", "none")
-        edgecolor = style.get("border_color", "none")
-        corner_radius = style.get("corner_radius", 0.0)
+    def render_rectangle(self, ctx, bounds, style, matrix, component=None):
+        """render a rectangle"""
+        facecolor = style.background_color or "none"
+        edgecolor = style.border_color or "none"
+        width_val = style.border_width
+        width_mode = style.border_width_mode
 
-        # map border style to matplotlib line style
-        border_style = style.get("border_style", "solid")
-        linestyle_map = {
-            "solid": "-",
-            "dashed": "--",
-            "dotted": ":",
-            "custom": "-",  # we'll handle custom dash patterns separately
-        }
-        linestyle = linestyle_map.get(border_style, "-")
+        linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
+        linestyle = linestyle_map.get(style.border_style, "-")
 
-        # get the line width and mode
-        width_value = style.get("width", 1.0)
-        width_mode = style.get("border_width_mode", "point")
+        transform = mtransforms.Affine2D(matrix=matrix) + ctx.transData
 
-        comp_id = component.id if component and component.id else "unknown"
+        patch = mpatches.FancyBboxPatch(
+            (0, 0),
+            bounds.width,
+            bounds.height,
+            boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=style.corner_radius),
+            facecolor=facecolor,
+            edgecolor=edgecolor,
+            linewidth=1.0 if width_mode == "data" else width_val,
+            linestyle=linestyle,
+            transform=transform,
+        )
 
         if width_mode == "data":
-            self.debug_print(
-                f"Creating data-width rectangle for {comp_id} with width={width_value}"
-            )
+            self.track_patch(patch, width_val, ctx)
 
-            # create with dummy linewidth - we'll update it later
-            patch = mpatches.FancyBboxPatch(
-                (0, 0),
-                bounds.width,
-                bounds.height,
-                boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=corner_radius),
-                facecolor=facecolor,
-                edgecolor=edgecolor,
-                linewidth=1.0,  # temporary value
-                linestyle=linestyle,
-                transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
-            )
+        if style.border_style == "custom" and style.dash_sequence and hasattr(patch, "set_dashes"):
+            dash = style.dash_sequence
+            if width_mode == "data":
+                avg_lw = linewidth_from_data_units(1.0, ctx, "avg")
+                dash = tuple(d * avg_lw for d in dash) if avg_lw > 0 else dash
+            patch.set_dashes(dash)
 
-            # track for updating
-            self.track_data_width_patch(patch, width_value, context)
-        else:
-            # regular point-based line width
-            self.debug_print(
-                f"Creating point-width rectangle for {comp_id} with width={width_value}"
-            )
+        ctx.add_patch(patch)
 
-            patch = mpatches.FancyBboxPatch(
-                (0, 0),
-                bounds.width,
-                bounds.height,
-                boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=corner_radius),
-                facecolor=facecolor,
-                edgecolor=edgecolor,
-                linewidth=width_value,
-                linestyle=linestyle,
-                transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
-            )
+    def render_svg(self, context, svg_elem, matrix):
+        """render an svg element"""
+        # handle text paths
+        if hasattr(svg_elem, "svg_content") and isinstance(svg_elem.svg_content, SVGTextContent):
+            self._render_text_paths(context, svg_elem, matrix)
+            return
 
-        # apply custom dash pattern if needed
-        if border_style == "custom" and style.get("dash_sequence") and hasattr(patch, "set_dashes"):
-            dash_sequence = style.get("dash_sequence")
-            dash_offset = style.get("dash_offset", 0)
-            patch.set_dashes(dash_offset, dash_sequence)
-
-        context.add_patch(patch)
-
-    def render_svg(self, context: Axes, svg_element, matrix: np.ndarray):
-        """render an svg element to the matplotlib axes"""
         try:
             from svgpath2mpl import parse_path
         except ImportError:
             print("svgpath2mpl is required for SVG rendering")
             return
 
-        paths_data = svg_element.svg_content.paths
-        viewBox = svg_element.svg_content.viewBox
+        paths = svg_elem.svg_content.paths
+        if not paths:
+            return
 
-        if not paths_data:
-            return  # nothing to render
+        svg_dims = svg_elem._dimensions
+        viewBox = svg_elem.svg_content.viewBox
 
-        scale_x = svg_element._dimensions.width
-        scale_y = svg_element._dimensions.height
-
+        # calculate scaling matrix
         if viewBox:
-            scale_x = scale_x / viewBox[2]
-            scale_y = scale_y / viewBox[3]
-
-            # create a combined transform matrix
+            vb_w, vb_h = max(viewBox[2], 1.0), max(viewBox[3], 1.0)
+            scale_x, scale_y = svg_dims.width / vb_w, svg_dims.height / vb_h
             svg_matrix = np.array(
                 [
                     [scale_x, 0, -viewBox[0] * scale_x],
@@ -294,247 +225,232 @@ class MatplotlibRenderer(BaseRenderer):
                 ]
             )
         else:
-            # if no viewBox, just scale to bounds
+            content_w = max(svg_elem.svg_content.width, 1.0)
+            content_h = max(svg_elem.svg_content.height, 1.0)
+            scale_x, scale_y = svg_dims.width / content_w, svg_dims.height / content_h
             svg_matrix = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]])
 
-        # combine with component transform
-        combined_matrix = matrix @ svg_matrix
+        final_matrix = matrix @ svg_matrix
+        transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
-        svg_width_mode = svg_element.get_renderer_options(self.RENDERER_NAME).get(
-            "line_width_mode", "point"
-        )
+        width_mode = svg_elem.get_renderer_options(self.RENDERER_NAME).get("line_width_mode", "")
 
-        self.debug_print(
-            f"Rendering SVG '{svg_element.id}' with {len(paths_data)} paths in {svg_width_mode} mode"
-        )
-
-        # render each path individually to avoid array dimension issues
-        for i, path_data in enumerate(paths_data):
+        for path_data in paths:
             try:
                 path = parse_path(path_data.d)
 
-                # determine colors
                 fill = path_data.fill
                 if path_data.is_main_color:
-                    fill = svg_element.main_color
+                    fill = svg_elem.main_color
                 elif path_data.is_secondary_color:
-                    fill = svg_element.secondary_color
+                    fill = svg_elem.secondary_color
 
-                stroke = path_data.stroke
+                stroke = path_data.stroke if path_data.stroke != "none" else "none"
+                linewidth = path_data.stroke_width
+                use_data_width = width_mode == "data" and stroke != "none" and linewidth > 0
 
-                # get the raw line width
-                raw_linewidth = path_data.stroke_width
+                patch = mpatches.PathPatch(
+                    path,
+                    facecolor=fill,
+                    edgecolor=stroke,
+                    linewidth=1.0 if use_data_width else linewidth,
+                    transform=transform,
+                )
 
-                if svg_width_mode == "data":
-                    self.debug_print(f"  Path {i}: data width = {raw_linewidth}")
-
-                    # create patch with dummy width
-                    patch = mpatches.PathPatch(
-                        path,
-                        facecolor=fill if fill != "none" else "none",
-                        edgecolor=stroke if stroke != "none" else "none",
-                        linewidth=1.0,  # temporary
-                        transform=mtransforms.Affine2D(matrix=combined_matrix) + context.transData,
-                    )
-
-                    # track for updating
-                    self.track_data_width_patch(patch, raw_linewidth, context)
-                else:
-                    # point mode - use raw value
-                    self.debug_print(f"  Path {i}: point width = {raw_linewidth}")
-
-                    patch = mpatches.PathPatch(
-                        path,
-                        facecolor=fill if fill != "none" else "none",
-                        edgecolor=stroke if stroke != "none" else "none",
-                        linewidth=raw_linewidth,
-                        transform=mtransforms.Affine2D(matrix=combined_matrix) + context.transData,
-                    )
+                if use_data_width:
+                    self.track_patch(patch, linewidth, context)
 
                 context.add_patch(patch)
-
             except Exception as e:
                 print(f"Error rendering SVG path: {e}")
 
-    def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
-        """render debug visuals for a component, showing origin and bounds"""
-        # debug line width in data units (0.5)
+    def render_debug(self, context, comp, matrix):
+        """renders a red box around the component + origin marker and name"""
         debug_width = 0.5
+        w, h = comp._dimensions.width, comp._dimensions.height
+        comp_id = comp.id or "unnamed"
 
-        # draw bounds rectangle with initial thin width
+        transform = mtransforms.Affine2D(matrix=matrix) + context.transData
+
+        # draw rectangle
         rect = mpatches.Rectangle(
             (0, 0),
-            component._dimensions.width,
-            component._dimensions.height,
+            w,
+            h,
             fill=False,
             edgecolor="red",
             linestyle="--",
-            linewidth=1.0,  # temporary
-            transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
+            linewidth=1.0,
+            transform=transform,
         )
-
-        # track for updating
-        self.track_data_width_patch(rect, debug_width, context)
+        self.track_patch(rect, debug_width, context)
         context.add_patch(rect)
 
-        # calculate origin point based on relative offset
-        origin_x = component.offset.relative[0] * component._dimensions.width
-        origin_y = component.offset.relative[1] * component._dimensions.height
-
         # draw origin marker
-        component_id = component.id or "unnamed"
-        origin_marker = plt.Line2D(
-            [origin_x],
-            [origin_y],
-            marker="+",
-            color="red",
-            markersize=6,
-            linestyle="",
-            transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
+        marker = plt.Line2D(
+            [0], [0], marker="+", color="red", markersize=6, linestyle="", transform=transform
         )
-        context.add_line(origin_marker)
+        context.add_line(marker)
 
-        # add id text above the component
-        world_coords = matrix @ np.array([0, component._dimensions.height, 1])
+        # add label
+        world_coords = matrix @ np.array([0, 0, 1])
         context.text(
             world_coords[0],
-            world_coords[1] + 2,  # slight offset
-            f"{component_id} ({component._dimensions.width:.1f}x{component._dimensions.height:.1f})",
+            world_coords[1] + 2,
+            f"{comp_id} ({w:.1f}x{h:.1f})",
             color="red",
             fontsize=6,
             ha="left",
             va="bottom",
         )
 
-    def render_to_output(self, context, output=None, **kwargs):
-        """render the matplotlib figure to output"""
-        # refresh line widths before output
-        self.debug_print("Refreshing line widths before output")
-        self.refresh_linewidths(context)
-
-        if output is None:
-            context.figure.show()
+    def _render_text_paths(self, ctx, text_elem, matrix):
+        """render cached text paths"""
+        if hasattr(text_elem, "_svg_cache"):
+            svg_content = text_elem._svg_cache
+        elif hasattr(text_elem, "svg_content"):
+            svg_content = text_elem.svg_content
         else:
+            return
+
+        if not svg_content or not hasattr(svg_content, "text_paths") or not svg_content.text_paths:
+            return
+
+        text_h = text_elem._dimensions.height
+        unflip_y = np.array([[1, 0, 0], [0, -1, text_h], [0, 0, 1]])
+        final_matrix = matrix @ unflip_y
+        transform = mtransforms.Affine2D(matrix=final_matrix) + ctx.transData
+
+        for path_info in svg_content.text_paths:
+            patch = mpatches.PathPatch(
+                path_info["path"],
+                facecolor=text_elem.main_color
+                if hasattr(text_elem, "main_color")
+                else text_elem.color,
+                edgecolor="none",
+                transform=transform,
+            )
+            ctx.add_patch(patch)
+
+    def render_to_output(self, context, output=None, **kwargs):
+        self.refresh_linewidths(context)
+        if output:
             context.figure.savefig(output, **kwargs)
         return context.figure
 
-    def measure_text(self, text_component) -> Size:
-        """measure text dimensions and create SVG paths for rendering"""
-        from matplotlib.textpath import TextPath
-        import matplotlib.font_manager as fm
-        import numpy as np
+    def measure_text(self, text_comp) -> Size:
+        if not text_comp.text:
+            text_comp._svg_cache = None
+            return Size(0, 0)
 
-        # create font properties object
         font_props = fm.FontProperties(
-            family=text_component.font_name if text_component.font_name else "sans-serif",
-            weight=text_component.font_weight,
-            style=text_component.font_style,
+            family=text_comp.font_name or "sans-serif",
+            weight=text_comp.font_weight,
+            style=text_comp.font_style,
         )
 
-        # split text into lines
-        lines = text_component.text.split("\n")
+        lines = text_comp.text.split("\n")
+        max_width = 0
+        paths_info = []
 
-        # estimated line height based on font size
-        line_height = text_component.font_size * 1.2
-
-        # we'll store all rendered paths and their positions
-        paths = []
-        line_widths = []
-
-        # process each line
-        for i, line in enumerate(lines):
-            if not line:  # skip empty lines
+        for line in lines:
+            if not line.strip():
                 continue
 
-            # create path for the current line
-            path = TextPath((0, 0), line, size=text_component.font_size, prop=font_props)
+            path = TextPath((0, 0), line, size=text_comp.font_size, prop=font_props)
+            try:
+                bbox = path.get_extents()
+                path_info = {
+                    "text": line,
+                    "path": path,
+                    "width": bbox.width,
+                    "height": bbox.height,
+                    "x0": bbox.x0,
+                    "y0": bbox.y0,
+                    "x1": bbox.x1,
+                    "y1": bbox.y1,
+                }
+                max_width = max(max_width, bbox.width)
+            except Exception:
+                # fallback estimation
+                est_w = len(line) * text_comp.font_size * 0.6
+                est_h = text_comp.font_size
+                path_info = {
+                    "text": line,
+                    "path": path,
+                    "width": est_w,
+                    "height": est_h,
+                    "x0": 0,
+                    "y0": -est_h * 0.2,
+                    "x1": est_w,
+                    "y1": est_h * 0.8,
+                }
+                max_width = max(max_width, est_w)
 
-            # get path bounds
-            path_vertices = path.vertices
-            if len(path_vertices) > 0:
-                x_min = np.min(path_vertices[:, 0])
-                x_max = np.max(path_vertices[:, 0])
-                line_width = x_max - x_min
-            else:
-                line_width = 0
+            paths_info.append(path_info)
 
-            line_widths.append(line_width)
+        line_height = text_comp.font_size * 1.2
+        if paths_info:
+            line_height = sum(p["height"] for p in paths_info) / len(paths_info) * 1.2
 
-            # store path for later use
-            paths.append({"path": path, "width": line_width, "index": i})
+        # position paths from top to bottom
+        y_pos = 0
+        final_paths = []
 
-        # calculate max width and total height
-        max_width = max(line_widths) if line_widths else 0
-        total_height = len(lines) * line_height
+        for i, line in enumerate(lines):
+            if not line.strip():
+                y_pos += line_height
+                continue
 
-        # store the paths and measurements for rendering
-        text_component._text_cache = {
-            "paths": paths,
-            "line_widths": line_widths,
-            "max_width": max_width,
-            "total_height": total_height,
-            "line_height": line_height,
-            "line_count": len(lines),
-        }
+            path_info = next((p for p in paths_info if p["text"] == line), None)
+            if not path_info:
+                y_pos += line_height
+                continue
 
-        return Size(width=max_width, height=total_height)
+            new_path = TextPath((0, y_pos), line, size=text_comp.font_size, prop=font_props)
+            final_paths.append(
+                {
+                    "path": new_path,
+                    "width": path_info["width"],
+                    "height": path_info["height"],
+                    "y_pos": y_pos,
+                    "line_index": i,
+                }
+            )
+            y_pos += line_height
+
+        total_height = y_pos
+
+        # store paths in svg cache
+        svg_content = SVGTextContent(
+            width=max_width,
+            height=total_height,
+            viewBox=(0, 0, max_width, total_height),
+            paths=[],
+            text_paths=final_paths,
+            measured_width=max_width,
+            measured_height=total_height,
+        )
+        text_comp._svg_cache = svg_content
+
+        measured = Size(width=max_width, height=total_height)
+        size = Size(
+            width=max(text_comp.min_dimensions.width, measured.width),
+            height=max(text_comp.min_dimensions.height, measured.height),
+        )
+        return Size(
+            width=min(size.width, text_comp.max_dimensions.width),
+            height=min(size.height, text_comp.max_dimensions.height),
+        )
 
     def render_text(self, context, text_component, matrix):
-        """render pre-created text paths with proper alignment"""
-        import matplotlib.transforms as mtransforms
-        import matplotlib.patches as mpatches
-
-        # measure if not already measured
-        if not hasattr(text_component, "_text_cache") or not text_component._text_cache:
+        """render text using cached svg paths"""
+        if not hasattr(text_component, "_svg_cache") or not text_component._svg_cache:
             self.measure_text(text_component)
+            if not text_component._svg_cache:
+                return
 
-        cache = text_component._text_cache
-        paths = cache["paths"]
-        line_widths = cache["line_widths"]
-        max_width = cache["max_width"]
-        total_height = cache["total_height"]
-        line_height = cache["line_height"]
-        line_count = cache["line_count"]
+        self._render_text_paths(context, text_component, matrix)
 
-        # calculate vertical starting position based on alignment
-        if text_component.vertical_align == "top":
-            # align to top - first line starting at top of bounding box
-            y_start = text_component._dimensions.height
-        elif text_component.vertical_align == "middle":
-            # center vertically - center of text block at center of bounding box
-            y_start = text_component._dimensions.height / 2 + total_height / 2
-        else:  # bottom
-            # align to bottom - last line ending at bottom of bounding box
-            y_start = total_height
-
-        # render each line
-        for path_info in paths:
-            path = path_info["path"]
-            line_width = path_info["width"]
-            line_index = path_info["index"]
-
-            # calculate horizontal offset for this specific line
-            if text_component.align == "left":
-                x_offset = 0  # aligned to left
-            elif text_component.align == "center":
-                x_offset = (text_component._dimensions.width - line_width) / 2  # centered
-            else:  # right
-                x_offset = text_component._dimensions.width - line_width  # aligned to right
-
-            # vertical position - each line is positioned below the previous
-            y_position = y_start - (line_index + 1) * line_height
-
-            # create position transform
-            position_transform = mtransforms.Affine2D().translate(x_offset, y_position)
-
-            # combine with component matrix and data transform
-            combined_transform = (
-                position_transform + mtransforms.Affine2D(matrix=matrix) + context.transData
-            )
-
-            # create and add path patch
-            patch = mpatches.PathPatch(
-                path, facecolor=text_component.color, edgecolor="none", transform=combined_transform
-            )
-
-            context.add_patch(patch)
+        if text_component.debug:
+            self.render_debug(context, text_component, matrix)

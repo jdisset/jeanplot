@@ -2,14 +2,15 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator, PrivateAttr, computed_field
 from jeanplot.utils import load_file_if_exists
 from pathlib import Path
+from functools import partial
 import numpy as np
 
-from jeanplot.svg import SVGElement, get_svg_data_from_string
+from jeanplot.svg import SVGElement, get_svg_data_from_string, make_svg_line, SVGContent
 from jeanplot.container import Container
+from jeanplot.component import Component
 from jeanplot.text import Text
 from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset
 
-# color definitions for markers
 BASE_FLUO_COLORS = {
     "red": {"base": "#ef957d", "light": "#ffe5de", "dark": "#840137"},
     "green": {"base": "#6CCB83", "light": "#EFFFDD", "dark": "#0E633A"},
@@ -19,7 +20,6 @@ BASE_FLUO_COLORS = {
     "maroon": {"base": "#D3A888", "light": "#F4DECD", "dark": "#734727"},
 }
 
-# mapping of marker names to color schemes
 MARKER_COLORS = {
     "NeonGreen": BASE_FLUO_COLORS["green"],
     "eYFP": BASE_FLUO_COLORS["yellow"],
@@ -36,7 +36,6 @@ MARKER_COLORS = {
     "mMaroon1": BASE_FLUO_COLORS["maroon"],
 }
 
-# display name aliases for markers
 MARKER_ALIAS = {
     "NeonGreen": "mNeonGreen",
     "L0.G_mNeonGreen": "mNeonGreen",
@@ -44,14 +43,40 @@ MARKER_ALIAS = {
     "eBFP": "eBFP2",
 }
 
-# ern type colors
 ERN_COLORS = {
     "Csy4": "#AAAAAA",
     "CasE": "#CCCCCC",
     "PgU": "#EEEEEE",
 }
 
+BORDER_COLOR = "#222222"
+TEXT_COLOR = BORDER_COLOR
+
 DEFAULT_RESOURCE_PATH = "pkg:jeanplot:resources"
+
+
+class TranscriptionUnit(Container):
+    """render an SVG line representing the transcription unit, in the middle"""
+
+    line_thickness: float = 1
+    layout: LayoutConstraints = Field(
+        default_factory=lambda: LayoutConstraints(
+            direction="row", align_items="center", justify_content="space-between", gap=5
+        )
+    )
+
+    def render(self, renderer, context, matrix: np.ndarray):
+        svg_line_content = make_svg_line(self._dimensions.width, self.line_thickness, "#000000")
+        svg_line = SVGElement(
+            svg_content=svg_line_content,
+            transform=Transform(translate=(0, (self._dimensions.height - self.line_thickness) / 2)),
+        )
+        svg_line._dimensions = Size(width=self._dimensions.width, height=2)
+
+        svg_line_matrix = svg_line.compute_world_matrix(matrix)
+        svg_line.render(renderer, context, svg_line_matrix)
+
+        Container.render(self, renderer, context, matrix)
 
 
 class GeneticPart(SVGElement, Container):
@@ -60,48 +85,86 @@ class GeneticPart(SVGElement, Container):
 
     part_type: str
     part_name: Optional[str] = None
-    main_color: str = "#EEEEEE"
-    secondary_color: str = "#EEEEEE"
-    label: Optional[str] = None
+    label: Optional[Text] = None
+    main_color: str = BORDER_COLOR
+    secondary_color: str = BORDER_COLOR
 
+    layout: LayoutConstraints = Field(
+        default_factory=lambda: LayoutConstraints(justify_content="center", align_items="start")
+    )
     auto_resource_path: str = DEFAULT_RESOURCE_PATH
 
-    @model_validator(mode="before")
-    def find_svg_path(cls, values):
-        part_type = values.get("part_type")
-        part_name = values.get("part_name")
+    # init can take part name as positional argument
+    def __init__(self, part_name: Optional[str] = None, **kwargs):
+        BaseModel.__init__(self, part_name=part_name, **kwargs)
 
-        if "svg_content" in values:
-            return values
-
-        # try to find the SVG file based on part_name or part_type
-        if part_name:
-            svg_path = f"{DEFAULT_RESOURCE_PATH}/parts/{part_type}.{part_name}.svg"
-            svg_content = load_file_if_exists(svg_path)
-            if svg_content:
-                values["svg_content"] = get_svg_data_from_string(svg_content)
-                return values
-
-        if part_type:
-            svg_path = f"{DEFAULT_RESOURCE_PATH}/parts/{part_type}.svg"
-            svg_content = load_file_if_exists(svg_path)
-            if svg_content:
-                values["svg_content"] = get_svg_data_from_string(svg_content)
-                return values
-
-        raise ValueError(
-            f"No SVG content found for part_type '{part_type}' or part_name '{part_name}'"
-        )
+    def model_post_init(self, *args, **kwargs):
+        # load SVG content from file if not already provided
+        if self.svg_content is None:
+            if self.part_name:
+                svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.{self.part_name}.svg"
+                svg_content = load_file_if_exists(svg_path)
+                if svg_content:
+                    self.svg_content = get_svg_data_from_string(svg_content)
+            else:
+                svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
+                svg_content = load_file_if_exists(svg_path)
+                if svg_content:
+                    self.svg_content = get_svg_data_from_string(svg_content)
 
     @model_validator(mode="after")
     def set_label(self):
         """set label text if provided"""
-        if self.label:
-            self.add_child(Text(text=self.label))
+        if self.label and not len(self.children):
+            self.add_child(self.label)
         return self
 
     def render(self, renderer, context, matrix: np.ndarray):
         """render genetic part and optional label"""
-        # super(SVGElement, self).render(renderer, context, matrix)
-        # super(Container, self).render(renderer, context, matrix)
-        super().render(renderer, context, matrix)
+        SVGElement.render(self, renderer, context, matrix)
+        Container.render(self, renderer, context, matrix)
+
+
+class ERN(GeneticPart):
+    part_type: str = "ERN"
+    main_color: str = "#AAAAAA"
+    secondary_color: str = "#111111"
+
+    @model_validator(mode="before")
+    def preset_colors(cls, values):
+        """set main and secondary colors based on part_type"""
+        if values.get("part_type") in ERN_COLORS:
+            values["main_color"] = ERN_COLORS[values["part_type"]]
+            values["secondary_color"] = BORDER_COLOR
+        return values
+
+    @model_validator(mode="before")
+    def set_label_to_name(cls, values):
+        """set label to part_name if no label is provided"""
+        if not values.get("label") and values.get("part_name"):
+            values["label"] = Text(
+                text=values["part_name"],
+                align="center",
+                vertical_align="middle",
+                color=TEXT_COLOR,
+                font_size=9,
+                offset=Offset(relative=(0.35, -0.1)),
+            )
+        return values
+
+
+class Promoter(GeneticPart):
+    part_type: str = "Promoter"
+    offset: Offset = Offset(relative=(0, -0.5))
+
+
+class Terminator(GeneticPart):
+    part_type: str = "Terminator"
+    offset: Offset = Offset(relative=(-0.5, -0.5))
+    style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
+
+
+class UorfGroup(GeneticPart):
+    part_type: str = "uORF_group"
+    style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
+    offset: Offset = Offset(relative=(0, -0.1))

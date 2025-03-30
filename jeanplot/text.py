@@ -17,11 +17,7 @@ class Text(Component):
     align: Literal["left", "center", "right"] = "left"
     vertical_align: Literal["top", "middle", "bottom"] = "top"
 
-    # cache for text path data
-    _text_cache: Dict[str, Any] = PrivateAttr(default_factory=dict)
-
     def measure(self, renderer=None) -> Size:
-        """measure text dimensions using renderer"""
         if not self.text:
             self._dimensions = Size(width=0, height=0)
             self._transformed_aabb = Size(width=0, height=0)
@@ -40,7 +36,6 @@ class Text(Component):
                 width=self.min_dimensions.width, height=self.min_dimensions.height
             )
 
-        # apply max constraints
         self._dimensions = Size(
             width=min(self._dimensions.width, self.max_dimensions.width),
             height=min(self._dimensions.height, self.max_dimensions.height),
@@ -51,7 +46,6 @@ class Text(Component):
         return self._dimensions
 
     def render(self, renderer, context, matrix: np.ndarray):
-        """render text component using renderer"""
         renderer.render_text(context, self, matrix)
 
         if self.debug:
