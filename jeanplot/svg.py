@@ -5,7 +5,7 @@ import numpy as np
 import re
 from lxml import etree
 from .component import Component
-from .models import Size
+from .models import Size, LineWidthMode
 
 # line style enum
 LineStyle = Literal["solid", "dashed", "dotted", "custom"]
@@ -33,6 +33,141 @@ class SVGContent(BaseModel):
     height: float = 100
     viewBox: Optional[Tuple[float, float, float, float]] = None
     paths: List[SVGPathData] = Field(default_factory=list)
+
+
+class LineEndArrow(BaseModel):
+    """arrow end cap for lines"""
+
+    stroke_color: str = "#000000"
+    stroke_width: float = 1.0
+    fill_color: str = "#FFFFFF"
+    size: float = 8.0
+    angle: float = 30.0
+    closed: bool = True
+    line_style: LineStyle = "solid"
+    dash_array: Optional[Tuple[float, ...]] = None
+    dash_offset: float = 0.0
+
+
+class LineEndCircle(BaseModel):
+    """circle end cap for lines"""
+
+    stroke_color: str = "#000000"
+    stroke_width: float = 1.0
+    fill_color: str = "#FFFFFF"
+    radius: float = 4.0
+    line_style: LineStyle = "solid"
+    dash_array: Optional[Tuple[float, ...]] = None
+    dash_offset: float = 0.0
+
+
+class LineEndFlat(BaseModel):
+    """flat end cap for lines"""
+
+    stroke_color: str = "#000000"
+    stroke_width: float = 1.0
+    length: float = 6.0
+    line_style: LineStyle = "solid"
+    dash_array: Optional[Tuple[float, ...]] = None
+    dash_offset: float = 0.0
+
+
+LineEndType = Union[LineEndArrow, LineEndCircle, LineEndFlat]
+
+
+def create_arrow_cap(
+    point: Tuple[float, float], direction_vector: Tuple[float, float], arrow: LineEndArrow
+) -> SVGPathData:
+    """create arrow end cap"""
+    # normalize direction vector
+    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
+    if length > 0:
+        dx, dy = direction_vector[0] / length, direction_vector[1] / length
+    else:
+        dx, dy = 1, 0  # default horizontal direction if vector is zero
+
+    # perpendicular vector
+    perp_x, perp_y = -dy, dx
+
+    # arrow points
+    size = arrow.size
+    angle_rad = np.radians(arrow.angle)
+    back_x = np.cos(angle_rad) * size
+    back_y = np.sin(angle_rad) * size
+
+    left_x = point[0] - dx * back_x + perp_x * back_y
+    left_y = point[1] - dy * back_x + perp_y * back_y
+    right_x = point[0] - dx * back_x - perp_x * back_y
+    right_y = point[1] - dy * back_x - perp_y * back_y
+
+    # create path
+    path = f"M {point[0]} {point[1]} L {left_x} {left_y} L {right_x} {right_y}"
+    if arrow.closed:
+        path += " Z"
+
+    return SVGPathData(
+        d=path,
+        fill=arrow.fill_color if arrow.closed else "none",
+        stroke=arrow.stroke_color,
+        stroke_width=arrow.stroke_width,
+        line_style=arrow.line_style,
+        dash_array=arrow.dash_array,
+        dash_offset=arrow.dash_offset,
+    )
+
+
+def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGPathData:
+    """create circle end cap"""
+    r = circle.radius
+    path = (
+        f"M {point[0] - r} {point[1]} "
+        f"A {r} {r} 0 1 1 {point[0] + r} {point[1]} "
+        f"A {r} {r} 0 1 1 {point[0] - r} {point[1]} Z"
+    )
+
+    return SVGPathData(
+        d=path,
+        fill=circle.fill_color,
+        stroke=circle.stroke_color,
+        stroke_width=circle.stroke_width,
+        line_style=circle.line_style,
+        dash_array=circle.dash_array,
+        dash_offset=circle.dash_offset,
+    )
+
+
+def create_flat_cap(
+    point: Tuple[float, float], direction_vector: Tuple[float, float], flat: LineEndFlat
+) -> SVGPathData:
+    """create flat end cap"""
+    # normalize direction vector
+    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
+    if length > 0:
+        dx, dy = direction_vector[0] / length, direction_vector[1] / length
+    else:
+        dx, dy = 0, 1  # default vertical direction if vector is zero
+
+    # perpendicular vector
+    perp_x, perp_y = -dy, dx
+
+    # endpoints
+    half_len = flat.length / 2
+    p1_x = point[0] + perp_x * half_len
+    p1_y = point[1] + perp_y * half_len
+    p2_x = point[0] - perp_x * half_len
+    p2_y = point[1] - perp_y * half_len
+
+    path = f"M {p1_x} {p1_y} L {p2_x} {p2_y}"
+
+    return SVGPathData(
+        d=path,
+        fill="none",
+        stroke=flat.stroke_color,
+        stroke_width=flat.stroke_width,
+        line_style=flat.line_style,
+        dash_array=flat.dash_array,
+        dash_offset=flat.dash_offset,
+    )
 
 
 def svg_line_path(
@@ -79,123 +214,6 @@ def make_svg_line(
     )
 
 
-class LineEndArrow(BaseModel):
-    """arrow end cap for lines"""
-
-    stroke_color: str = "#000000"
-    stroke_width: float = 1.0
-    fill_color: str = "#FFFFFF"
-    size: float = 1.0
-    angle: float = 30.0
-    closed: bool = True
-    line_style: LineStyle = "solid"
-    dash_array: Optional[Tuple[float, ...]] = None
-    dash_offset: float = 0.0
-
-
-class LineEndCircle(BaseModel):
-    """circle end cap for lines"""
-
-    stroke_color: str = "#000000"
-    stroke_width: float = 1.0
-    fill_color: str = "#FFFFFF"
-    radius: float = 1.0
-    line_style: LineStyle = "solid"
-    dash_array: Optional[Tuple[float, ...]] = None
-    dash_offset: float = 0.0
-
-
-class LineEndFlat(BaseModel):
-    """flat end cap for lines"""
-
-    stroke_color: str = "#000000"
-    stroke_width: float = 1.0
-    length: float = 1.0
-    line_style: LineStyle = "solid"
-    dash_array: Optional[Tuple[float, ...]] = None
-    dash_offset: float = 0.0
-
-
-LineEndType = Union[LineEndArrow, LineEndCircle, LineEndFlat]
-
-
-def create_bezier_path_string(
-    start_point: Tuple[float, float],
-    end_point: Tuple[float, float],
-    control_points: List[Tuple[float, float]],
-) -> str:
-    """create svg path string for a bezier curve"""
-    path = f"M {start_point[0]} {start_point[1]}"
-
-    if not control_points:
-        path += f" L {end_point[0]} {end_point[1]}"
-    elif len(control_points) == 1:
-        ctrl = control_points[0]
-        path += f" Q {ctrl[0]} {ctrl[1]}, {end_point[0]} {end_point[1]}"
-    elif len(control_points) == 2:
-        ctrl1, ctrl2 = control_points
-        path += f" C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end_point[0]} {end_point[1]}"
-    else:
-        ctrl1, ctrl2 = control_points[:2]
-        path += f" C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end_point[0]} {end_point[1]}"
-
-    return path
-
-
-def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGPathData:
-    """create circle end cap"""
-    r = circle.radius
-    path = (
-        f"M {point[0] - r} {point[1]} "
-        f"A {r} {r} 0 1 1 {point[0] + r} {point[1]} "
-        f"A {r} {r} 0 1 1 {point[0] - r} {point[1]} Z"
-    )
-
-    return SVGPathData(
-        d=path,
-        fill=circle.fill_color,
-        stroke=circle.stroke_color,
-        stroke_width=circle.stroke_width,
-        line_style=circle.line_style,
-        dash_array=circle.dash_array,
-        dash_offset=circle.dash_offset,
-    )
-
-
-def create_flat_cap(
-    point: Tuple[float, float], direction_vector: Tuple[float, float], flat: LineEndFlat
-) -> SVGPathData:
-    """create flat end cap"""
-    # normalize direction
-    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
-    if length > 0:
-        dx, dy = direction_vector[0] / length, direction_vector[1] / length
-    else:
-        dx, dy = 0, 1
-
-    # perpendicular vector
-    perp_x, perp_y = -dy, dx
-
-    # endpoints
-    half_len = flat.length / 2
-    p1_x = point[0] + perp_x * half_len
-    p1_y = point[1] + perp_y * half_len
-    p2_x = point[0] - perp_x * half_len
-    p2_y = point[1] - perp_y * half_len
-
-    path = f"M {p1_x} {p1_y} L {p2_x} {p2_y}"
-
-    return SVGPathData(
-        d=path,
-        fill="none",
-        stroke=flat.stroke_color,
-        stroke_width=flat.stroke_width,
-        line_style=flat.line_style,
-        dash_array=flat.dash_array,
-        dash_offset=flat.dash_offset,
-    )
-
-
 def make_svg_bezier(
     start_point: Tuple[float, float],
     end_point: Tuple[float, float],
@@ -220,10 +238,20 @@ def make_svg_bezier(
         dash_array = (line_width, line_width)
 
     # create main bezier path
-    bezier_path = create_bezier_path_string(start_point, end_point, control_points)
+    path_str = ""
+    if len(control_points) == 0:
+        # straight line
+        path_str = f"M {start_point[0]} {start_point[1]} L {end_point[0]} {end_point[1]}"
+    elif len(control_points) == 1:
+        # quadratic bezier
+        path_str = f"M {start_point[0]} {start_point[1]} Q {control_points[0][0]} {control_points[0][1]}, {end_point[0]} {end_point[1]}"
+    else:
+        # cubic bezier
+        path_str = f"M {start_point[0]} {start_point[1]} C {control_points[0][0]} {control_points[0][1]}, {control_points[1][0]} {control_points[1][1]}, {end_point[0]} {end_point[1]}"
+
     paths.append(
         SVGPathData(
-            d=bezier_path,
+            d=path_str,
             stroke=color,
             stroke_width=line_width,
             fill="none",
@@ -269,20 +297,17 @@ def make_svg_bezier(
             # if points are identical, use horizontal direction
             if line_dir[0] == 0 and line_dir[1] == 0:
                 line_dir = (1, 0)
-            start_dir = line_dir
+            start_dir = (-line_dir[0], -line_dir[1])
             end_dir = line_dir
 
         # add start cap
         if start_cap:
             if isinstance(start_cap, LineEndArrow):
-                # reverse direction for start arrow
-                rev_dir = (-start_dir[0], -start_dir[1])
-                paths.append(create_arrow_cap(start_point, rev_dir, start_cap))
+                paths.append(create_arrow_cap(start_point, start_dir, start_cap))
             elif isinstance(start_cap, LineEndCircle):
                 paths.append(create_circle_cap(start_point, start_cap))
             elif isinstance(start_cap, LineEndFlat):
-                rev_dir = (-start_dir[0], -start_dir[1])
-                paths.append(create_flat_cap(start_point, rev_dir, start_cap))
+                paths.append(create_flat_cap(start_point, start_dir, start_cap))
 
         # add end cap
         if end_cap:
@@ -293,50 +318,7 @@ def make_svg_bezier(
             elif isinstance(end_cap, LineEndFlat):
                 paths.append(create_flat_cap(end_point, end_dir, end_cap))
 
-    # Create SVG content with viewBox matching the provided dimensions
     return SVGContent(width=width, height=height, viewBox=(0, 0, width, height), paths=paths)
-
-
-def create_arrow_cap(
-    point: Tuple[float, float], direction_vector: Tuple[float, float], arrow: LineEndArrow
-) -> SVGPathData:
-    """create arrow end cap"""
-    # normalize direction vector
-    length = np.sqrt(direction_vector[0] ** 2 + direction_vector[1] ** 2)
-    if length > 0:
-        dx, dy = direction_vector[0] / length, direction_vector[1] / length
-    else:
-        dx, dy = 1, 0  # default horizontal direction if vector is zero
-
-    # perpendicular vector
-    perp_x, perp_y = -dy, dx
-
-    # arrow points
-    size = arrow.size
-    angle_rad = np.radians(arrow.angle)
-    back_x = np.cos(angle_rad) * size
-    back_y = np.sin(angle_rad) * size
-
-    left_x = point[0] - dx * back_x + perp_x * back_y
-    left_y = point[1] - dy * back_x + perp_y * back_y
-    right_x = point[0] - dx * back_x - perp_x * back_y
-    right_y = point[1] - dy * back_x - perp_y * back_y
-
-    # create path
-    if arrow.closed:
-        path = f"M {point[0]} {point[1]} L {left_x} {left_y} L {right_x} {right_y} Z"
-    else:
-        path = f"M {left_x} {left_y} L {point[0]} {point[1]} L {right_x} {right_y}"
-
-    return SVGPathData(
-        d=path,
-        fill=arrow.fill_color if arrow.closed else "none",
-        stroke=arrow.stroke_color,
-        stroke_width=arrow.stroke_width,
-        line_style=arrow.line_style,
-        dash_array=arrow.dash_array,
-        dash_offset=arrow.dash_offset,
-    )
 
 
 def get_svg_data_from_string(
@@ -451,18 +433,24 @@ class SVGElement(Component):
     main_color: str = "black"
     secondary_color: str = "gray"
     svg_content: Optional[Union[str, Path, SVGContent]] = None
+    line_width_mode: LineWidthMode = "data"  # 'data' scales with zoom, 'point' stays fixed
 
     @model_validator(mode="after")
     def load_svg_data(self):
         """load svg data from file or string"""
         if isinstance(self.svg_content, (str, Path)):
             try:
-                self.svg_content = get_svg_data_from_file(self.svg_content)
+                self.svg_content = get_svg_data_from_file(
+                    self.svg_content,
+                    main_color=self.main_color,
+                    secondary_color=self.secondary_color,
+                )
             except Exception as e:
                 print(f"Error loading SVG: {e}")
                 self.svg_content = SVGContent()
 
-        assert isinstance(self.svg_content, SVGContent), "Invalid SVG data"
+        if not isinstance(self.svg_content, SVGContent):
+            self.svg_content = SVGContent()
 
         self._dimensions = Size(
             width=self.svg_content.width,
@@ -478,6 +466,8 @@ class SVGElement(Component):
 
     def render(self, renderer, context, matrix: np.ndarray):
         """render svg using renderer"""
+        self.add_renderer_option(renderer.RENDERER_NAME, "line_width_mode", self.line_width_mode)
+
         renderer.render_svg(context, self, matrix)
 
         if self.debug:

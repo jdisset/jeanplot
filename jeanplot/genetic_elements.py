@@ -148,23 +148,23 @@ class ERN(GeneticPart):
                 vertical_align="middle",
                 color=TEXT_COLOR,
                 font_size=9,
-                offset=Offset(relative=(0.35, -0.1)),
+                offset=Offset(relative=(-0.35, -0.1)),
             )
         return values
 
 
 class Promoter(GeneticPart):
     part_type: str = "Promoter"
-    offset: Offset = Offset(relative=(0, -0.5))
+    offset: Offset = Offset(relative=(0, -0.5), absolute=(0, 1))
 
 
 class Terminator(GeneticPart):
     part_type: str = "Terminator"
-    offset: Offset = Offset(relative=(-0.5, -0.5))
+    offset: Offset = Offset(relative=(0.5, -0.5), absolute=(0, 1))
     style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
 
 
 class UorfGroup(GeneticPart):
     part_type: str = "uORF_group"
     style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
-    offset: Offset = Offset(relative=(0, -0.1))
+    offset: Offset = Offset(relative=(0, 0.1))
