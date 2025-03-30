@@ -5,6 +5,7 @@ from collections import defaultdict
 from functools import partial
 
 from .models import Transform, Size, VisualStyle, Offset
+from .debug import debug_print
 
 
 class Component(BaseModel):
@@ -30,6 +31,10 @@ class Component(BaseModel):
     _dimensions: Size = PrivateAttr(default_factory=Size)
     _transformed_aabb: Size = PrivateAttr(default_factory=Size)
 
+    def _log_debug(self, message: str, data=None):
+        """helper to log debug messages with component id"""
+        debug_print(self.id or "Component", message, data)
+
     @model_validator(mode="after")
     def validate_dimensions(self):
         if self.min_dimensions.width > self.max_dimensions.width:
@@ -47,14 +52,41 @@ class Component(BaseModel):
         transform_matrix = self.transform.to_matrix(self._dimensions)
         ox, oy = self.offset.compute(self._dimensions)
         offset_matrix = np.array([[1, 0, ox], [0, 1, oy], [0, 0, 1]])
-        return offset_matrix @ transform_matrix
+        result = offset_matrix @ transform_matrix
+
+        if self.debug:
+            self._log_debug(
+                "compute_local_matrix",
+                {"transform": transform_matrix, "offset": (ox, oy), "result": result},
+            )
+
+        return result
 
     def compute_world_matrix(self, parent_matrix: Optional[np.ndarray] = None) -> np.ndarray:
         """compute world transform by combining with parent's"""
         local = self.compute_local_matrix()
+
+        if parent_matrix is None and self.parent is not None:
+            parent_matrix = self.parent.compute_world_matrix()
+
         if parent_matrix is not None:
-            return parent_matrix @ local
-        return local
+            result = parent_matrix @ local
+        else:
+            result = local
+
+        if self.debug:
+            self._log_debug(
+                "compute_world_matrix",
+                {
+                    "local": local,
+                    "parent_matrix": parent_matrix.tolist()
+                    if parent_matrix is not None
+                    else "None",
+                    "result": result,
+                },
+            )
+
+        return result
 
     def compute_transformed_aabb(self) -> Size:
         """compute axis-aligned bounding box (width/height) after local transform"""
@@ -72,7 +104,20 @@ class Component(BaseModel):
         max_x = np.max(transformed[:, 0])
         min_y = np.min(transformed[:, 1])
         max_y = np.max(transformed[:, 1])
-        return Size(width=max_x - min_x, height=max_y - min_y)
+
+        result = Size(width=max_x - min_x, height=max_y - min_y)
+
+        if self.debug:
+            self._log_debug(
+                "compute_transformed_aabb",
+                {
+                    "dimensions": (self._dimensions.width, self._dimensions.height),
+                    "result": (result.width, result.height),
+                    "bounds": (min_x, min_y, max_x, max_y),
+                },
+            )
+
+        return result
 
     def get_local_bounds(self) -> tuple[float, float, float, float]:
         """(min_x, min_y, max_x, max_y) in parent coords"""
@@ -90,11 +135,27 @@ class Component(BaseModel):
         max_x = np.max(transformed[:, 0])
         min_y = np.min(transformed[:, 1])
         max_y = np.max(transformed[:, 1])
-        return (min_x, min_y, max_x, max_y)
+
+        result = (min_x, min_y, max_x, max_y)
+
+        if self.debug:
+            self._log_debug("get_local_bounds", {"matrix": matrix, "result": result})
+
+        return result
 
     def measure(self, renderer=None) -> Size:
         """measure intrinsic size if needed"""
+        if self.debug:
+            self._log_debug("Measuring component")
+
         self._transformed_aabb = self.compute_transformed_aabb()
+
+        if self.debug:
+            self._log_debug(
+                "Measured dimensions",
+                {"dimensions": (self._dimensions.width, self._dimensions.height)},
+            )
+
         return self._dimensions
 
     def apply_layout(self):
@@ -103,6 +164,9 @@ class Component(BaseModel):
 
     def measure_and_layout(self, renderer=None) -> Size:
         """unified method for measurement and layout"""
+        if self.debug:
+            self._log_debug("measure_and_layout")
+
         self.measure(renderer)
         return self._dimensions
 

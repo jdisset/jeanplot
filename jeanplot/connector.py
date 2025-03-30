@@ -17,6 +17,7 @@ from .svg import (
     create_circle_cap,
     create_flat_cap,
 )
+from .debug import debug_print
 
 
 class CurveDefinition(BaseModel):
@@ -47,10 +48,10 @@ class AdvancedBezierCurve(CurveDefinition):
 class OrthogonalCurve(CurveDefinition):
     """path with orthogonal segments (right angles)"""
 
-    start_direction: Literal["up", "down", "left", "right"]
-    start_length: float  # minimum length of the start segment
-    end_direction: Literal["up", "down", "left", "right"]
-    end_length: float  # minimum length of the end segment
+    start_direction: Literal["up", "down", "left", "right"] = "right"
+    start_length: float = 10  # minimum length of the start segment
+    end_direction: Literal["up", "down", "left", "right"] = "left"
+    end_length: float = 10  # minimum length of the end segment
     corner_radius: float = 10.0
 
 
@@ -60,8 +61,9 @@ class Connection(Component):
     start_component: Component
     end_component: Component
 
-    start_offset: Offset = Field(default_factory=Offset)  # offset from start component's origin
-    end_offset: Offset = Field(default_factory=Offset)  # offset from end component's origin
+    # default to center of components
+    start_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
+    end_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
 
     color: str = "#000000"
     width: float = 1.0  # aka thickness
@@ -79,31 +81,71 @@ class Connection(Component):
     _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
     _local_start: Optional[tuple[float, float]] = PrivateAttr(default=None)
     _local_end: Optional[tuple[float, float]] = PrivateAttr(default=None)
+    _world_start: Optional[tuple[float, float]] = PrivateAttr(default=None)
+    _world_end: Optional[tuple[float, float]] = PrivateAttr(default=None)
+
+    def _log_debug(self, message: str, data: Any = None):
+        """helper to log debug messages with component id"""
+        debug_print(self.id or "Connection", message, data)
 
     def measure(self, renderer=None) -> Size:
         """calculate dimensions based on connected components positions"""
+        # get component identifier for debug
+        comp_id = self.id or "Connection"
+        self._log_debug("Measuring connection")
+
         # need parent container to position properly
         if self.parent is None:
+            self._log_debug("No parent for connection, skipping measurement")
+            self._dimensions = Size(width=0, height=0)
+            self._transformed_aabb = Size(width=0, height=0)
+            return self._dimensions
+
+        # Check if both components exist and have dimensions
+        if not hasattr(self.start_component, "_dimensions") or not hasattr(
+            self.end_component, "_dimensions"
+        ):
+            self._log_debug(
+                "Components missing dimensions",
+                {
+                    "start_has_dims": hasattr(self.start_component, "_dimensions"),
+                    "end_has_dims": hasattr(self.end_component, "_dimensions"),
+                },
+            )
             self._dimensions = Size(width=0, height=0)
             self._transformed_aabb = Size(width=0, height=0)
             return self._dimensions
 
         # get world coordinates of connection points
-        start_world, end_world = self._calculate_world_connection_points()
+        self._world_start, self._world_end = self._calculate_world_connection_points()
+        self._log_debug(
+            "World connection points", {"start": self._world_start, "end": self._world_end}
+        )
 
         # transform to parent's coordinate system
         parent_matrix = self.parent.compute_world_matrix()
-        if np.linalg.det(parent_matrix) == 0:  # avoid singular matrix
-            self._dimensions = Size(width=0, height=0)
-            self._transformed_aabb = Size(width=0, height=0)
-            return self._dimensions
+        self._log_debug("Parent matrix", parent_matrix)
 
-        parent_inv = np.linalg.inv(parent_matrix)
+        # avoid singular matrix - use identity if needed
+        try:
+            parent_inv = np.linalg.inv(parent_matrix)
+        except np.linalg.LinAlgError:
+            self._log_debug("Singular parent matrix, using identity")
+            parent_inv = np.eye(3)
 
-        start_parent = parent_inv @ np.array([start_world[0], start_world[1], 1])
-        end_parent = parent_inv @ np.array([end_world[0], end_world[1], 1])
+        # Transform world points to parent space
+        start_parent_coords = np.dot(parent_inv, [self._world_start[0], self._world_start[1], 1])
+        end_parent_coords = np.dot(parent_inv, [self._world_end[0], self._world_end[1], 1])
 
-        # calculate bounds with buffer
+        start_parent = (start_parent_coords[0], start_parent_coords[1])
+        end_parent = (end_parent_coords[0], end_parent_coords[1])
+
+        self._log_debug(
+            "Parent space connection points",
+            {"start_parent": start_parent, "end_parent": end_parent},
+        )
+
+        # calculate bounds that contain both points with buffer
         min_x = min(start_parent[0], end_parent[0])
         max_x = max(start_parent[0], end_parent[0])
         min_y = min(start_parent[1], end_parent[1])
@@ -116,13 +158,26 @@ class Connection(Component):
         max_x += buffer
         max_y += buffer
 
+        # ensure positive dimensions
+        width = max(max_x - min_x, 1.0)
+        height = max(max_y - min_y, 1.0)
+
+        self._log_debug(
+            "Connection dimensions", {"width": width, "height": height, "position": (min_x, min_y)}
+        )
+
         # set dimensions and position
-        self._dimensions = Size(width=max_x - min_x, height=max_y - min_y)
+        self._dimensions = Size(width=width, height=height)
         self.transform.translate = (min_x, min_y)
 
-        # store local points for SVG
+        # convert world points to local coordinates
         self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
         self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
+
+        self._log_debug(
+            "Local connection points",
+            {"local_start": self._local_start, "local_end": self._local_end},
+        )
 
         # create SVG content
         self._create_svg_content()
@@ -130,40 +185,60 @@ class Connection(Component):
         self._transformed_aabb = self.compute_transformed_aabb()
         return self._dimensions
 
+    def _get_component_world_position(self, component, offset):
+        """get world position using component's world matrix"""
+        if component is None:
+            return (0, 0)
+
+        # calculate offset point in local component space
+        dims = getattr(component, "_dimensions", Size(width=1, height=1))
+        ox, oy = offset.compute(dims)
+        local_point = np.array([ox, oy, 1])
+
+        # get world matrix directly (includes all parent transforms)
+        world_matrix = component.compute_world_matrix()
+
+        # transform local point to world space
+        world_point = world_matrix @ local_point
+        pos = (world_point[0], world_point[1])
+
+        self._log_debug(
+            f"From connector.py, world position for component calculations for {component.id}",
+            {"offset": (ox, oy), "world_point": pos},
+        )
+
+        return pos
+
     def _calculate_world_connection_points(self):
-        """calculate start and end points in world coordinates"""
-        # get world matrices
-        start_world_matrix = self.start_component.compute_world_matrix()
-        end_world_matrix = self.end_component.compute_world_matrix()
+        """calculate start and end points in world coordinates using explicit parent traversal"""
+        start_world = self._get_component_world_position(self.start_component, self.start_offset)
+        end_world = self._get_component_world_position(self.end_component, self.end_offset)
 
-        # calculate dimensions
-        start_dims = self.start_component._dimensions
-        end_dims = self.end_component._dimensions
+        self._log_debug(
+            "Final world connection points", {"start_world": start_world, "end_world": end_world}
+        )
 
-        # apply offsets from origins
-        start_ox, start_oy = self.start_offset.compute(start_dims)
-        end_ox, end_oy = self.end_offset.compute(end_dims)
+        if start_world == end_world:
+            self._log_debug("Warning: Identical start and end points", {"point": start_world})
 
-        # create points in local space with offset
-        start_local = np.array([start_ox, start_oy, 1])
-        end_local = np.array([end_ox, end_oy, 1])
-
-        # transform to world space
-        start_world = start_world_matrix @ start_local
-        end_world = end_world_matrix @ end_local
-
-        return (start_world[0], start_world[1]), (end_world[0], end_world[1])
+        return start_world, end_world
 
     def _create_svg_content(self):
         """create SVG content based on connection points and curve type"""
-        if not hasattr(self, "_local_start") or not hasattr(self, "_local_end"):
+        # ensure we have valid local points
+        if not self._local_start or not self._local_end:
+            self._log_debug("Missing local points for SVG creation")
             return
 
         start = self._local_start
-        assert start is not None
         end = self._local_end
-        assert end is not None
-        width, height = self._dimensions.width, self._dimensions.height
+        width = max(self._dimensions.width, 1.0)
+        height = max(self._dimensions.height, 1.0)
+
+        self._log_debug(
+            "Creating SVG with dimensions",
+            {"width": width, "height": height, "start": start, "end": end},
+        )
 
         # create path based on curve type
         path_str = ""
@@ -171,6 +246,7 @@ class Connection(Component):
 
         if isinstance(self.curve_type, StraightCurve):
             path_str = f"M {start[0]} {start[1]} L {end[0]} {end[1]}"
+            self._log_debug("Created straight line path", path_str)
 
         elif isinstance(self.curve_type, SimpleBezierCurve):
             # calculate control points from vectors
@@ -230,6 +306,7 @@ class Connection(Component):
         )
 
         self._svg_element = SVGElement(svg_content=svg_content)
+        self._log_debug("Created SVG element with paths", len(paths))
 
     def _calculate_orthogonal_path(self, start, end):
         """calculate points for orthogonal path"""
@@ -416,13 +493,106 @@ class Connection(Component):
 
     def render(self, renderer, context, matrix: np.ndarray):
         """render connection as SVG element"""
-        if not self._svg_element:
-            self._create_svg_content()
+        self._log_debug("Rendering connection")
+
+        # recalculate world coordinates to get latest positions
+        start_world, end_world = self._calculate_world_connection_points()
+
+        # check if positions have changed and update SVG if needed
+        if start_world != getattr(self, "_last_start_world", None) or end_world != getattr(
+            self, "_last_end_world", None
+        ):
+            self._log_debug("World points changed, updating connection")
+            self._last_start_world = start_world
+            self._last_end_world = end_world
+
+            # transform world points to scene space
+            if self.parent:
+                parent_matrix = self.parent.compute_world_matrix()
+                try:
+                    parent_inv = np.linalg.inv(parent_matrix)
+                except np.linalg.LinAlgError:
+                    parent_inv = np.eye(3)
+
+                # transform world points to parent space
+                start_parent_coords = np.dot(parent_inv, [start_world[0], start_world[1], 1])
+                end_parent_coords = np.dot(parent_inv, [end_world[0], end_world[1], 1])
+
+                start_parent = (start_parent_coords[0], start_parent_coords[1])
+                end_parent = (end_parent_coords[0], end_parent_coords[1])
+
+                # update dimensions and create SVG
+                self._update_connection_geometry(start_parent, end_parent)
 
         if self._svg_element:
             self._svg_element._dimensions = self._dimensions
-
             self._svg_element.render(renderer, context, matrix)
+        else:
+            self._log_debug("No SVG element to render")
 
         if self.debug:
             renderer.render_debug(context, self, matrix)
+            # also render connection points when debugging
+            if hasattr(self, "_local_start") and hasattr(self, "_local_end") and renderer:
+                try:
+                    # Draw marker at connection points for debugging
+                    import matplotlib.pyplot as plt
+                    import matplotlib.transforms as mtransforms
+
+                    transform = mtransforms.Affine2D(matrix=matrix) + context.transData
+
+                    context.plot(
+                        [self._local_start[0]],
+                        [self._local_start[1]],
+                        "ro",
+                        markersize=8,
+                        transform=transform,
+                    )
+
+                    context.plot(
+                        [self._local_end[0]],
+                        [self._local_end[1]],
+                        "bo",
+                        markersize=8,
+                        transform=transform,
+                    )
+
+                    context.plot(
+                        [self._local_start[0], self._local_end[0]],
+                        [self._local_start[1], self._local_end[1]],
+                        "g--",
+                        linewidth=1,
+                        transform=transform,
+                    )
+                except Exception as e:
+                    self._log_debug(f"Error rendering debug points: {e}")
+
+    def _update_connection_geometry(self, start_parent, end_parent):
+        """update connection geometry based on parent-space points"""
+        # calculate bounds
+        min_x = min(start_parent[0], end_parent[0])
+        max_x = max(start_parent[0], end_parent[0])
+        min_y = min(start_parent[1], end_parent[1])
+        max_y = max(start_parent[1], end_parent[1])
+
+        # add buffer
+        buffer = max(self.width * 3, 20)
+        min_x -= buffer
+        min_y -= buffer
+        max_x += buffer
+        max_y += buffer
+
+        # ensure positive dimensions
+        width = max(max_x - min_x, 1.0)
+        height = max(max_y - min_y, 1.0)
+
+        # update dimensions and position
+        self._dimensions = Size(width=width, height=height)
+        self.transform.translate = (min_x, min_y)
+
+        # update local points
+        self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
+        self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
+
+        # create SVG content
+        self._create_svg_content()
