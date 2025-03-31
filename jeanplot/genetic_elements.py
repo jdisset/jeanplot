@@ -9,7 +9,8 @@ from jeanplot.svg import SVGElement, get_svg_data_from_string, make_svg_line, SV
 from jeanplot.container import Container
 from jeanplot.component import Component
 from jeanplot.text import Text
-from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset
+from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset, AnchorPoint
+
 
 BASE_FLUO_COLORS = {
     "red": {"base": "#ef957d", "light": "#ffe5de", "dark": "#840137"},
@@ -136,7 +137,9 @@ class Source(Container):
                     txt += f"  {ratios_txt}"
                 svgpath = AGGREGATION_LOGO if isinstance(mtype, CoTX) else PLASMID_LOGO
                 svgtransform = (
-                    Transform(scale=(0.7, 0.7)) if isinstance(mtype, Plasmid) else Transform(scale=(0.9, 0.9))
+                    Transform(scale=(0.7, 0.7))
+                    if isinstance(mtype, Plasmid)
+                    else Transform(scale=(0.9, 0.9))
                 )
 
                 values["label"] = Container(
@@ -232,11 +235,17 @@ class ERN(GeneticPart):
     main_color: str = "#AAAAAA"
     secondary_color: str = "#111111"
 
+    anchor_points: list[AnchorPoint] = [
+        AnchorPoint(offset=Offset(relative=(0.77, -0.1)), direction=(0, -1)),
+        AnchorPoint(offset=Offset(relative=(0.77, 1.1)), direction=(0, 1)),
+    ]
+
     @model_validator(mode="before")
     def preset_colors(cls, values):
         """set main and secondary colors based on part_type"""
-        if values.get("part_type") in ERN_COLORS:
-            values["main_color"] = ERN_COLORS[values["part_type"]]
+        pname = values.get("part_name").upper()
+        if pname in ERN_COLORS:
+            values["main_color"] = ERN_COLORS[pname]
             values["secondary_color"] = BORDER_COLOR
         return values
 
@@ -250,7 +259,7 @@ class ERN(GeneticPart):
                 vertical_align="middle",
                 color=TEXT_COLOR,
                 font_size=9,
-                offset=Offset(relative=(-0.35, -0.1)),
+                offset=Offset(relative=(-0.35, 0)),
             )
         return values
 
@@ -270,3 +279,22 @@ class UorfGroup(GeneticPart):
     part_type: str = "uORF_group"
     style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
     offset: Offset = Offset(relative=(0, 0.1))
+
+
+class ERN5pRecog(GeneticPart):
+    part_type: str = "ERN_recog_site_5p"
+    offset: Offset = Offset(relative=(0, -0.4), absolute=(0, 0.5))
+
+    anchor_points: list[AnchorPoint] = [
+        AnchorPoint(offset=Offset(relative=(0.5, -0.1)), direction=(0, 1), min_segment=12),
+        AnchorPoint(offset=Offset(relative=(0.5, 1.1)), direction=(0, -1), min_segment=20),
+    ]
+
+    @model_validator(mode="before")
+    def preset_colors(cls, values):
+        """set main and secondary colors based on part_type"""
+        pname = values.get("part_name").upper().split("_")[0]
+        if pname in ERN_COLORS:
+            values["main_color"] = ERN_COLORS[pname]
+            values["secondary_color"] = BORDER_COLOR
+        return values

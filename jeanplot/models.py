@@ -1,6 +1,7 @@
 from typing import Tuple, Optional, Literal, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import numpy as np
+import math
 
 # type definitions
 LayoutDirection = Literal["row", "column"]
@@ -155,3 +156,33 @@ class LayoutConstraints(BaseModel):
     justify_content: DistributeType = "start"
     gap: float = 0.0
     wrap: bool = False
+
+
+class AnchorPoint(BaseModel):
+    """connection point with direction and min segment"""
+
+    offset: Offset
+    direction: tuple[float, float] = (0, 1)  # outward-pointing vector
+    min_segment: float = 10.0  # min segment length or control point distance
+
+    @model_validator(mode="after")
+    def normalize_direction(self):
+        """normalize direction vector"""
+        dx, dy = self.direction
+        length = math.sqrt(dx * dx + dy * dy)
+        if length > 0:
+            self.direction = (dx / length, dy / length)
+        return self
+
+    def get_position(self, component):
+        """get local position"""
+        dims = getattr(component, "_dimensions", Size(width=1, height=1))
+        return self.offset.compute(dims)
+
+    def get_world_position(self, component):
+        """get world position"""
+        ox, oy = self.get_position(component)
+        local_point = np.array([ox, oy, 1])
+        world_matrix = component.compute_world_matrix()
+        world_point = world_matrix @ local_point
+        return (world_point[0], world_point[1])

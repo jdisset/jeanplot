@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field, model_validator, PrivateAttr
 import numpy as np
 from collections import defaultdict
 from functools import partial
-
-from .models import Transform, Size, VisualStyle, Offset
+import math
+from .models import Transform, Size, VisualStyle, Offset, AnchorPoint
 from .debug import debug_print
 
 
@@ -14,6 +14,7 @@ class Component(BaseModel):
     id: Optional[str] = None
     transform: Transform = Field(default_factory=Transform)
     offset: Offset = Field(default_factory=Offset)
+    anchor_points: list[AnchorPoint] = Field(default_factory=list)
 
     min_dimensions: Size = Field(default_factory=Size)
     max_dimensions: Size = Field(
@@ -42,6 +43,54 @@ class Component(BaseModel):
         if self.min_dimensions.height > self.max_dimensions.height:
             raise ValueError("min_dimensions.height cannot exceed max_dimensions.height")
         return self
+
+    def find_best_anchor_point(self, other_component) -> Optional[AnchorPoint]:
+        """find best anchor point to connect to another component"""
+        if not self.anchor_points:
+            return None
+
+        # get world centers
+        my_dims = getattr(self, "_dimensions", Size(width=1, height=1))
+        my_matrix = self.compute_world_matrix()
+        my_center = my_matrix @ np.array([my_dims.width / 2, my_dims.height / 2, 1])
+
+        other_dims = getattr(other_component, "_dimensions", Size(width=1, height=1))
+        other_matrix = other_component.compute_world_matrix()
+        other_center = other_matrix @ np.array([other_dims.width / 2, other_dims.height / 2, 1])
+
+        # ideal direction would point from my center toward other center
+        dx = other_center[0] - my_center[0]
+        dy = other_center[1] - my_center[1]
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist > 0:
+            ideal_dir = (dx / dist, dy / dist)
+        else:
+            ideal_dir = (0, 1)
+
+        # score each anchor by alignment with ideal direction and distance
+        best_score = float("-inf")
+        best_anchor = None
+
+        for anchor in self.anchor_points:
+            anchor_pos = anchor.get_world_position(self)
+
+            # calculate distance from anchor to other center
+            ax, ay = anchor_pos
+            a_dx = other_center[0] - ax
+            a_dy = other_center[1] - ay
+            anchor_dist = math.sqrt(a_dx * a_dx + a_dy * a_dy)
+
+            # score combines alignment and inverse distance
+            # alignment = anchor.direction[0] * ideal_dir[0] + anchor.direction[1] * ideal_dir[1]
+            # score = alignment - (anchor_dist / 1000)
+            score = anchor_dist
+
+            if score > best_score:
+                best_score = score
+                best_anchor = anchor
+
+        return best_anchor
 
     def compute_layout_matrix(self) -> np.ndarray:
         """compute transform matrix for layout only (no offset)"""

@@ -1,6 +1,9 @@
 from typing import Optional, Literal, Union, Dict, Any, List, Tuple
-from pydantic import Field, PrivateAttr, BaseModel
+from pydantic import Field, BeforeValidator, model_validator, PrivateAttr, BaseModel, AfterValidator
+from typing_extensions import Annotated
+from .path_utils import resolve_component_ref
 import numpy as np
+import math
 
 from .container import Overlay
 from .component import Component
@@ -32,8 +35,8 @@ class StraightCurve(CurveDefinition):
 class SimpleBezierCurve(CurveDefinition):
     """bezier curve with vectors from start and end points"""
 
-    start_vector: tuple[float, float]  # vector from start point
-    end_vector: tuple[float, float]  # vector from end point
+    start_vector: tuple[float, float] = (0, 1)  # vector from start point
+    end_vector: tuple[float, float] = (0, 1)  # vector from end point
 
 
 class AdvancedBezierCurve(CurveDefinition):
@@ -50,15 +53,28 @@ class OrthogonalCurve(CurveDefinition):
     end_direction: Literal["up", "down", "left", "right"] = "down"
     end_length: float = 5.0  # minimum length of end segment
     corner_radius: float = 10.0
-    checkpoints: List[Tuple[float, float]] = Field(default_factory=list)  # now in world coordinates
-    auto_simplify: bool = True  # try to reduce turns when possible
+    checkpoints: List[Tuple[float, float]] = Field(default_factory=list)
+    auto_simplify: bool = True
+
+    def _get_flow_direction(self, position_direction: str, is_start: bool) -> Tuple[float, float]:
+        # map anchor position to the direction vector the connection should flow
+        direction_map = {
+            "up": (0, 1 if is_start else -1),
+            "down": (0, -1 if is_start else 1),
+            "left": (1 if is_start else -1, 0),
+            "right": (-1 if is_start else 1, 0),
+        }
+        return direction_map.get(position_direction, (0, 1 if is_start else -1))
+
+
+ComponentRef = Annotated[Union[Component, str], AfterValidator(resolve_component_ref)]
 
 
 class Connection(Overlay):
     """connects two components with a styled line/curve"""
 
-    start_component: Component
-    end_component: Component
+    start_component: ComponentRef
+    end_component: ComponentRef
     start_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     end_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     color: str = "#000000"
@@ -69,6 +85,7 @@ class Connection(Overlay):
     dash_offset: float = 0.0
     start_cap: Optional[LineEndType] = None
     end_cap: Optional[LineEndType] = None
+    auto_route: bool = True  # whether to use anchor points
 
     _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
     _local_start: Optional[tuple[float, float]] = PrivateAttr(default=None)
@@ -81,9 +98,30 @@ class Connection(Overlay):
         """log debug messages with connection id"""
         debug_print(self.id or "Connection", message, data)
 
+    def _resolve_components(self):
+        """resolve string path components to actual references"""
+        from .path_utils import find_component_by_path
+
+        root = self
+        while root.parent is not None:
+            root = root.parent
+
+        if isinstance(self.start_component, str):
+            print(f"start_component: {self.start_component}")
+            comp = find_component_by_path(root, self.start_component)
+            print(f"comp: {comp}")
+            if comp is not None:
+                self.start_component = comp
+
+        if isinstance(self.end_component, str):
+            comp = find_component_by_path(root, self.end_component)
+            if comp is not None:
+                self.end_component = comp
+
     def measure(self, renderer=None) -> Size:
         """calculate dimensions based on connected components positions"""
         self._log_debug("Measuring connection")
+        self._resolve_components()
 
         # need parent container to position properly
         if self.parent is None:
@@ -220,16 +258,6 @@ class Connection(Overlay):
         )
         return pos
 
-    def _calculate_world_connection_points(self):
-        """calculate connection points in world coordinates"""
-        start_world = self._get_component_world_position(self.start_component, self.start_offset)
-        end_world = self._get_component_world_position(self.end_component, self.end_offset)
-
-        if start_world == end_world:
-            self._log_debug("Warning: Identical start and end points", {"point": start_world})
-
-        return start_world, end_world
-
     def _create_svg_content(self):
         """create SVG content based on connection points and curve type"""
         if not self._local_start or not self._local_end:
@@ -300,21 +328,28 @@ class Connection(Overlay):
         self._svg_element = SVGElement(svg_content=svg_content)
 
     def _calculate_orthogonal_path(self, start, end):
-        """Calculate optimal orthogonal path with minimal turns"""
-        direction_map = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
-        start_dir = direction_map[self.curve_type.start_direction]
-        end_dir = direction_map[self.curve_type.end_direction]
-        end_dir_inv = (-end_dir[0], -end_dir[1])  # invert for calculation
+        """calculate orthogonal path with minimal turns"""
+        # convert string directions to vectors
+        dir_to_vector = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+        # get direction vectors
+        start_dir = dir_to_vector[self.curve_type.start_direction]
+        end_dir = dir_to_vector[self.curve_type.end_direction]
+
+        # for orthogonal paths, we need to go outward from start and inward to end
+        # so we flip the end direction
+        end_dir = (-end_dir[0], -end_dir[1])
 
         if self._local_checkpoints:
-            return self._path_with_checkpoints(start, end, start_dir, end_dir_inv)
+            return self._path_with_checkpoints(start, end, start_dir, end_dir)
 
-        # try a simple path first if auto-simplify is enabled
-        if getattr(self.curve_type, "auto_simplify", True):
-            simple_path = self._find_simple_path(start, end, start_dir, end_dir_inv)
+        # try simple path first
+        if self.curve_type.auto_simplify:
+            simple_path = self._find_simple_path(start, end, start_dir, end_dir)
             if simple_path:
                 return simple_path
 
+        # calculate segment points
         start_len = self.curve_type.start_length
         end_len = self.curve_type.end_length
 
@@ -324,11 +359,10 @@ class Connection(Overlay):
         )
 
         last_segment_start = (
-            end[0] + end_dir_inv[0] * end_len,
-            end[1] + end_dir_inv[1] * end_len,
+            end[0] + end_dir[0] * end_len,  # end_dir already flipped
+            end[1] + end_dir[1] * end_len,
         )
 
-        # Connect with minimum possible turns
         return self._connect_segments(start, first_segment_end, last_segment_start, end)
 
     def _find_simple_path(self, start, end, start_dir, end_dir):
@@ -420,7 +454,7 @@ class Connection(Overlay):
         # choose the first valid corner (both should be valid in this context)
         return [start, first_end, corner1, last_start, end]
 
-    def _path_with_checkpoints(self, start, end, start_dir, end_dir_inv):
+    def _path_with_checkpoints(self, start, end, start_dir, end_dir):
         """Create path from start to end through checkpoints"""
         # use local checkpoints that have been transformed from world space
         checkpoints = self._local_checkpoints
@@ -434,8 +468,8 @@ class Connection(Overlay):
         )
 
         last_segment_start = (
-            end[0] + end_dir_inv[0] * end_len,
-            end[1] + end_dir_inv[1] * end_len,
+            end[0] - end_dir[0] * end_len,
+            end[1] - end_dir[1] * end_len,
         )
 
         path = [start, first_segment_end]
@@ -444,7 +478,7 @@ class Connection(Overlay):
         current = first_segment_end
         for cp in checkpoints:
             segments = self._connect_points(current, cp)
-            path.extend(segments[1:])  # Skip first point (already in path)
+            path.extend(segments[1:])  # skip first point (already in path)
             current = cp
 
         # connect last checkpoint to end segment
@@ -598,6 +632,7 @@ class Connection(Overlay):
     def render(self, renderer, context, matrix: np.ndarray):
         """render connection as SVG element"""
         self._log_debug("Rendering connection")
+        self._resolve_components()
 
         # recalculate world coordinates to get latest positions
         start_world, end_world = self._calculate_world_connection_points()
@@ -751,3 +786,92 @@ class Connection(Overlay):
         self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in self._local_checkpoints]
 
         self._create_svg_content()
+
+    def _find_best_anchor_pair(self):
+        """find best pair of anchor points with shortest distance"""
+        start_anchors = getattr(self.start_component, "anchor_points", [])
+        end_anchors = getattr(self.end_component, "anchor_points", [])
+
+        if not start_anchors or not end_anchors:
+            return None
+
+        min_distance = float("inf")
+        best_pair = None
+
+        # find pair with shortest distance
+        for start_anchor in start_anchors:
+            start_pos = start_anchor.get_world_position(self.start_component)
+
+            for end_anchor in end_anchors:
+                end_pos = end_anchor.get_world_position(self.end_component)
+
+                dx = end_pos[0] - start_pos[0]
+                dy = end_pos[1] - start_pos[1]
+                distance = math.sqrt(dx * dx + dy * dy)
+
+                if distance < min_distance:
+                    min_distance = distance
+                    best_pair = (start_anchor, end_anchor)
+
+        return best_pair
+
+    def _calculate_world_connection_points(self):
+        """calculate endpoints and update curve settings"""
+        start_anchor = None
+        end_anchor = None
+
+        if (
+            self.auto_route
+            and hasattr(self.start_component, "anchor_points")
+            and hasattr(self.end_component, "anchor_points")
+        ):
+            # find best anchor pair
+            best_pair = self._find_best_anchor_pair()
+            if best_pair:
+                start_anchor, end_anchor = best_pair
+
+                # apply anchor settings
+                if start_anchor:
+                    self.start_offset = start_anchor.offset
+
+                    if isinstance(self.curve_type, OrthogonalCurve):
+                        # convert vector to cardinal direction
+                        dir_x, dir_y = start_anchor.direction
+                        if abs(dir_x) > abs(dir_y):
+                            self.curve_type.start_direction = "right" if dir_x > 0 else "left"
+                        else:
+                            self.curve_type.start_direction = "down" if dir_y > 0 else "up"
+                        self.curve_type.start_length = start_anchor.min_segment
+
+                    elif isinstance(self.curve_type, SimpleBezierCurve):
+                        dir_x, dir_y = start_anchor.direction
+                        self.curve_type.start_vector = (
+                            dir_x * start_anchor.min_segment,
+                            dir_y * start_anchor.min_segment,
+                        )
+
+                if end_anchor:
+                    self.end_offset = end_anchor.offset
+
+                    if isinstance(self.curve_type, OrthogonalCurve):
+                        # convert vector to cardinal direction
+                        dir_x, dir_y = end_anchor.direction
+                        if abs(dir_x) > abs(dir_y):
+                            self.curve_type.end_direction = "right" if dir_x > 0 else "left"
+                        else:
+                            self.curve_type.end_direction = "down" if dir_y > 0 else "up"
+                        self.curve_type.end_length = end_anchor.min_segment
+
+                    elif isinstance(self.curve_type, SimpleBezierCurve):
+                        dir_x, dir_y = end_anchor.direction
+                        # invert direction for end point
+                        self.curve_type.end_vector = (
+                            -dir_x * end_anchor.min_segment,
+                            -dir_y * end_anchor.min_segment,
+                        )
+
+        # calculate world coordinates
+        start_world = self._get_component_world_position(self.start_component, self.start_offset)
+        end_world = self._get_component_world_position(self.end_component, self.end_offset)
+
+        return start_world, end_world
