@@ -107,9 +107,7 @@ class Connection(Overlay):
             root = root.parent
 
         if isinstance(self.start_component, str):
-            print(f"start_component: {self.start_component}")
             comp = find_component_by_path(root, self.start_component)
-            print(f"comp: {comp}")
             if comp is not None:
                 self.start_component = comp
 

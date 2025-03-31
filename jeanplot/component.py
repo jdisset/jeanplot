@@ -6,6 +6,7 @@ from functools import partial
 import math
 from .models import Transform, Size, VisualStyle, Offset, AnchorPoint
 from .debug import debug_print
+from .style import jstyle
 
 
 class Component(BaseModel):
@@ -23,6 +24,8 @@ class Component(BaseModel):
 
     style: VisualStyle = Field(default_factory=VisualStyle)
 
+    style_class: Optional[str] = None  # can be useful for styling selection (similar to css class)
+
     renderer_options: Dict[str, Dict[str, Any]] = Field(default_factory=lambda: defaultdict(dict))
     debug: bool = False
 
@@ -31,6 +34,19 @@ class Component(BaseModel):
 
     _dimensions: Size = PrivateAttr(default_factory=Size)
     _transformed_aabb: Size = PrivateAttr(default_factory=Size)
+
+    @model_validator(mode="after")
+    def apply_styles(self):
+        """apply global styles after model creation"""
+        jstyle.apply(self)
+        return self
+
+    def _get_path(self):
+        """get component path in hierarchy for styling"""
+        path = self.id or self.__class__.__name__
+        if self.parent:
+            return f"{self.parent._get_path()}/{path}"
+        return path
 
     def _log_debug(self, message: str, data=None):
         """helper to log debug messages with component id"""
@@ -218,9 +234,11 @@ class Component(BaseModel):
         pass
 
     def measure_and_layout(self, renderer=None) -> Size:
-        """unified method for measurement and layout"""
+        """unified method for measurement and layout with styling"""
         if self.debug:
             self._log_debug("measure_and_layout")
+
+        jstyle.apply(self)
 
         self.measure(renderer)
         return self._dimensions

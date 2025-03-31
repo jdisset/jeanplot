@@ -5,6 +5,8 @@ import numpy as np
 from .models import Size, LayoutConstraints
 from .debug import debug_print
 
+from .style import jstyle
+
 
 def is_true(value):
     if not value:
@@ -25,6 +27,7 @@ class Container(Component):
     def set_parent_for_children(self):
         for child in self.children:
             child.parent = self
+            jstyle.apply(child)
         return self
 
     def _log_debug(self, message: str, data=None):
@@ -98,8 +101,11 @@ class Container(Component):
         return self._dimensions
 
     def measure_and_layout(self, renderer=None) -> Size:
-        """process layout bottom-up"""
+        """process layout bottom-up with styling"""
         self._log_debug("Starting measure_and_layout")
+
+        # reapply styles before layout to ensure updates are applied
+        jstyle.apply(self)
 
         # first measure non-overlay children
         layout_children = [c for c in self.children if not c.is_overlay]
@@ -110,16 +116,13 @@ class Container(Component):
                 {"dims": (child._dimensions.width, child._dimensions.height)},
             )
 
-        # then measure this container
         self.measure(renderer)
 
-        # then apply layout to position children
         self.apply_layout()
         self._log_debug("Layout applied")
 
-        # finally measure and layout overlays (connections, etc.)
+        # measure and layout overlays (connections, etc.)
         for overlay in [c for c in self.children if c.is_overlay]:
-            # Call measure_and_layout instead of just measure to properly process overlay's children
             overlay.measure_and_layout(renderer)
             self._log_debug(
                 f"Overlay {overlay.id} measured",
@@ -443,6 +446,7 @@ class Container(Component):
         if child not in self.children:
             self.children.append(child)
             child.parent = self
+            jstyle.apply(child)
             self._log_debug(f"Added child {child.id or 'Unnamed'}")
 
     def add_children(self, children: list[Component]):

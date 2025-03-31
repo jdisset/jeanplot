@@ -176,6 +176,10 @@ class Source(Container):
                     ],
                 )
 
+                # Make sure children exists before appending
+                if "children" not in values:
+                    values["children"] = []
+
                 values["children"].append(values["label"])
 
         return values

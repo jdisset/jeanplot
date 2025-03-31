@@ -11,10 +11,8 @@ def find_component_by_path(root: Component, path: str) -> Optional[Component]:
     parts = path.split("/")
     current = root
 
-    print(f"parts: {parts}")
-
     for part in parts:
-        if part == "":  # skip empty parts (e.g., from leading slash)
+        if part == "":
             continue
 
         if not hasattr(current, "children"):
@@ -23,13 +21,13 @@ def find_component_by_path(root: Component, path: str) -> Optional[Component]:
         found = False
         for child in current.children:
             if getattr(child, "id", None) == part:
-                print(f"found: {child}")
                 current = child
                 found = True
                 break
 
         if not found:
-            return None
+            allids = [getattr(child, "id", None) for child in current.children]
+            raise ValueError(f"Component {part} not found in {allids} at path {path}")
 
     return current
 
