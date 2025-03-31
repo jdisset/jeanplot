@@ -11,6 +11,9 @@ from jeanplot.genetic_elements import (
     TranscriptionUnit,
     Terminator,
     UorfGroup,
+    Source,
+    CoTX,
+    Plasmid,
 )
 from jeanplot.svg import LineEndFlat
 from jeanplot.debug import set_debug
@@ -34,6 +37,10 @@ uorf1 = UorfGroup(id="uorf1")
 term1 = Terminator(id="term1")
 tu1.children = [promoter1, uorf1, ern0, term1]
 
+src1 = Source(
+    children=[tu1], id="src1", debug=False, multi_type=CoTX(marker="eBFP2", ratios=[1, 1])
+)
+
 tu2 = TranscriptionUnit(id="tu2", debug=False)
 ern1 = ERN(part_name="CasE", id="ern1", debug=False)
 promoter2 = Promoter(id="promoter2")
@@ -41,28 +48,25 @@ uorf2 = UorfGroup(id="uorf2")
 term2 = Terminator(id="term2")
 tu2.children = [promoter2, uorf2, ern1, term2]
 
+src2 = Source(children=[tu2], id="src2", debug=False, multi_type=Plasmid(marker="mKate"))
+
 arrow_conn = Connection(
     start_component=ern0,
     end_component=uorf2,
     start_offset=Offset(relative=(0.77, 0.9)),
     end_offset=Offset(relative=(0.5, -0.2)),
-    # curve_type=StraightCurve(),
-    # curve_type=SimpleBezierCurve(
-    #     start_vector=(0, 20),
-    #     end_vector=(0, -20),
-    # ),
     curve_type=OrthogonalCurve(
         start_direction="down",
         end_direction="down",
-        end_length=15,
+        end_length=20,
         corner_radius=4.0,
     ),
-    color="red",
-    line_width=1,
-    end_cap=LineEndFlat(stroke_width=1, stroke_color="red"),
+    # color="green",
+    line_width=0.8,
+    end_cap=LineEndFlat(stroke_width=0.8, stroke_color="black", length=8),
 )
 
-scene.add_children([tu1, tu2, arrow_conn])
+scene.add_children([src1, src2, arrow_conn])
 scene.measure_and_layout(renderer)
 renderer.render_component(ax, scene, adjust_lims=True)
 

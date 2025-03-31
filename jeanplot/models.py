@@ -43,15 +43,25 @@ class Size(BaseModel):
 class Offset(BaseModel):
     """Unified offset with relative and absolute components"""
 
-    relative: Tuple[float, float] = (0.0, 0.0)
-    absolute: Tuple[float, float] = (0.0, 0.0)
+    relative: Tuple[float, float] = (0.0, 0.0)  # relative to self dimensions
+    parent_relative: Tuple[float, float] = (0.0, 0.0)  # relative to parent dimensions
+    absolute: Tuple[float, float] = (0.0, 0.0)  # absolute offset
 
-    def compute(self, dimensions: Size) -> Tuple[float, float]:
-        """Compute final offset based on dimensions"""
-        return (
-            dimensions.width * self.relative[0] + self.absolute[0],
-            dimensions.height * self.relative[1] + self.absolute[1],
-        )
+    def compute(
+        self, dimensions: Size, parent_dimensions: Optional[Size] = None
+    ) -> Tuple[float, float]:
+        """Compute final offset based on dimensions and parent dimensions"""
+        x = dimensions.width * self.relative[0]
+        y = dimensions.height * self.relative[1]
+
+        if parent_dimensions and (self.parent_relative[0] != 0 or self.parent_relative[1] != 0):
+            x += parent_dimensions.width * self.parent_relative[0]
+            y += parent_dimensions.height * self.parent_relative[1]
+
+        x += self.absolute[0]
+        y += self.absolute[1]
+
+        return (x, y)
 
 
 class Transform(BaseModel):

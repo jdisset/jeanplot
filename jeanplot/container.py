@@ -1,8 +1,18 @@
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, BaseModel, PrivateAttr, BeforeValidator
+from typing import Annotated
 from .component import Component
 import numpy as np
 from .models import Size, LayoutConstraints
 from .debug import debug_print
+
+
+def is_true(value):
+    if not value:
+        raise ValueError("Value must be True")
+
+
+class Overlay(Component):
+    is_overlay: Annotated[bool, BeforeValidator(is_true)] = True
 
 
 class Container(Component):
@@ -107,9 +117,10 @@ class Container(Component):
         self.apply_layout()
         self._log_debug("Layout applied")
 
-        # finally measure overlays (connections, etc.)
+        # finally measure and layout overlays (connections, etc.)
         for overlay in [c for c in self.children if c.is_overlay]:
-            overlay.measure(renderer)
+            # Call measure_and_layout instead of just measure to properly process overlay's children
+            overlay.measure_and_layout(renderer)
             self._log_debug(
                 f"Overlay {overlay.id} measured",
                 {

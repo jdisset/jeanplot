@@ -1,4 +1,5 @@
 from typing import Optional, Union, Any, List, Tuple, Literal, Sequence
+from jeanplot.utils import load_file_if_exists, load_file
 from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 import numpy as np
@@ -392,14 +393,7 @@ def get_svg_data_from_file(
 ) -> SVGContent:
     """extract SVG data from file"""
     try:
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"SVG file not found: {path.absolute()}")
-
-        with open(path, "r") as f:
-            svg_content = f.read()
-
-        return get_svg_data_from_string(svg_content, ppi, main_color, secondary_color)
+        return get_svg_data_from_string(load_file(file_path), ppi, main_color, secondary_color)
     except Exception as e:
         print(f"Failed to load SVG file: {e}")
         return SVGContent()
@@ -420,9 +414,8 @@ class SVGElement(Component):
             try:
                 self.svg_content = get_svg_data_from_file(
                     self.svg_content,
-                    main_color=self.main_color,
-                    secondary_color=self.secondary_color,
                 )
+
             except Exception as e:
                 print(f"Error loading SVG: {e}")
                 self.svg_content = SVGContent()

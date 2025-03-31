@@ -2,6 +2,7 @@ from typing import Optional, Literal, Union, Dict, Any, List, Tuple
 from pydantic import Field, PrivateAttr, BaseModel
 import numpy as np
 
+from .container import Overlay
 from .component import Component
 from .models import Size, Offset, Transform
 from .svg import (
@@ -53,7 +54,7 @@ class OrthogonalCurve(CurveDefinition):
     auto_simplify: bool = True  # try to reduce turns when possible
 
 
-class Connection(Component):
+class Connection(Overlay):
     """connects two components with a styled line/curve"""
 
     start_component: Component
@@ -68,7 +69,6 @@ class Connection(Component):
     dash_offset: float = 0.0
     start_cap: Optional[LineEndType] = None
     end_cap: Optional[LineEndType] = None
-    is_overlay: bool = True
 
     _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
     _local_start: Optional[tuple[float, float]] = PrivateAttr(default=None)

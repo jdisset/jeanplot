@@ -38,13 +38,13 @@ def read_from_pkg(path: str, pkg: Optional[str] = "jeanplot"):
         Available subdirs:
         - {resources_str}"""
 
-    # logger.debug(msg)
-
     raise FileNotFoundError(msg)
 
 
-def load_file(path: str):
+def load_file(path: str | Path):
     """reads a file that can be in a package or in the filesystem. if in a package it'll start with pkg:"""
+    if isinstance(path, Path):
+        path = path.as_posix()
     if path.startswith("pkg:"):
         return read_from_pkg(path[4:])
     else:
@@ -52,7 +52,7 @@ def load_file(path: str):
             return f.read()
 
 
-def load_file_if_exists(path: str):
+def load_file_if_exists(path: str | Path):
     """reads a file that can be in a package or in the filesystem. if in a package it'll start with pkg:"""
     try:
         return load_file(path)

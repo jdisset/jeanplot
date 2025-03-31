@@ -50,7 +50,13 @@ class Component(BaseModel):
     def compute_local_matrix(self) -> np.ndarray:
         """convert local transform to matrix with offset applied after transform"""
         transform_matrix = self.transform.to_matrix(self._dimensions)
-        ox, oy = self.offset.compute(self._dimensions)
+
+        # Get parent dimensions for parent_relative offset
+        parent_dims = None
+        if self.parent is not None:
+            parent_dims = getattr(self.parent, "_dimensions", None)
+
+        ox, oy = self.offset.compute(self._dimensions, parent_dims)
         offset_matrix = np.array([[1, 0, ox], [0, 1, oy], [0, 0, 1]])
         result = offset_matrix @ transform_matrix
 

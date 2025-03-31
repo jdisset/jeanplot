@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, Literal
 from pydantic import BaseModel, Field, model_validator, PrivateAttr, computed_field
 from jeanplot.utils import load_file_if_exists
 from pathlib import Path
@@ -21,20 +21,25 @@ BASE_FLUO_COLORS = {
 }
 
 MARKER_COLORS = {
-    "NeonGreen": BASE_FLUO_COLORS["green"],
+    "eYFPG5A": BASE_FLUO_COLORS["yellow"],
     "eYFP": BASE_FLUO_COLORS["yellow"],
+    "NeonGreen": BASE_FLUO_COLORS["green"],
+    "mNeonGreen": BASE_FLUO_COLORS["green"],
+    "L0.G_mNeonGreen": BASE_FLUO_COLORS["green"],
     "eBFP": BASE_FLUO_COLORS["blue"],
+    "eBFP2": BASE_FLUO_COLORS["blue"],
+    "tagBFP": BASE_FLUO_COLORS["blue"],
     "mKate": BASE_FLUO_COLORS["red"],
+    "mKO2": BASE_FLUO_COLORS["red"],
+    "tdTomato": BASE_FLUO_COLORS["red"],
     "iRFP720": BASE_FLUO_COLORS["ir"],
     "1xiRFP720": BASE_FLUO_COLORS["ir"],
-    "L0.G_mNeonGreen": BASE_FLUO_COLORS["green"],
     "L0.G_iRFPmystery": BASE_FLUO_COLORS["ir"],
-    "eYFPG5A": BASE_FLUO_COLORS["yellow"],
-    "tagBFP": BASE_FLUO_COLORS["blue"],
-    "tdTomato": BASE_FLUO_COLORS["red"],
-    "mKO2": BASE_FLUO_COLORS["red"],
+    "iRFP": BASE_FLUO_COLORS["ir"],
+    "mMaroon": BASE_FLUO_COLORS["maroon"],
     "mMaroon1": BASE_FLUO_COLORS["maroon"],
 }
+MARKER_COLORS = {k.upper(): v for k, v in MARKER_COLORS.items()}
 
 MARKER_ALIAS = {
     "NeonGreen": "mNeonGreen",
@@ -42,17 +47,22 @@ MARKER_ALIAS = {
     "L0.G_iRFPmystery": "iRFPmystery",
     "eBFP": "eBFP2",
 }
+MARKER_ALIAS = {k.upper(): v for k, v in MARKER_ALIAS.items()}
 
 ERN_COLORS = {
     "Csy4": "#AAAAAA",
     "CasE": "#CCCCCC",
     "PgU": "#EEEEEE",
 }
+ERN_COLORS = {k.upper(): v for k, v in ERN_COLORS.items()}
 
 BORDER_COLOR = "#222222"
 TEXT_COLOR = BORDER_COLOR
 
 DEFAULT_RESOURCE_PATH = "pkg:jeanplot:resources"
+
+AGGREGATION_LOGO = DEFAULT_RESOURCE_PATH + "/parts/aggregation.svg"
+PLASMID_LOGO = DEFAULT_RESOURCE_PATH + "/parts/l2.svg"
 
 
 class TranscriptionUnit(Container):
@@ -76,6 +86,98 @@ class TranscriptionUnit(Container):
         svg_line_matrix = svg_line.compute_world_matrix(matrix)
         svg_line.render(renderer, context, svg_line_matrix)
 
+        Container.render(self, renderer, context, matrix)
+
+
+class CoTX(BaseModel):
+    marker: Optional[str] = None
+    ratios: list[float] = []
+
+
+class Plasmid(BaseModel):
+    marker: Optional[str] = None
+
+
+class Source(Container):
+    multi_type: Optional[CoTX | Plasmid] = None
+    layout: LayoutConstraints = Field(
+        default_factory=lambda: LayoutConstraints(
+            direction="column", align_items="center", justify_content="center", gap=5
+        )
+    )
+
+    label: Optional[Container] = None
+
+    @model_validator(mode="before")
+    def style_source(cls, values):
+        # if no style is provided, set auto style
+        mtype = values.get("multi_type")
+        if not mtype:
+            return values
+        if not values.get("style"):
+            if mtype.marker:
+                values["style"] = VisualStyle(
+                    border_color=MARKER_COLORS.get(mtype.marker.upper(), {}).get(
+                        "base", BORDER_COLOR
+                    ),
+                    border_width=0.5,
+                    corner_radius=5,
+                    border_style="dashed",
+                    padding=(10, 10, 10, 10),
+                )
+
+        if not values.get("label"):
+            if mtype.marker:
+                bgcol = MARKER_COLORS.get(mtype.marker.upper(), {}).get("light", "#DDDDDD")
+                maincol = MARKER_COLORS.get(mtype.marker.upper(), {}).get("dark", BORDER_COLOR)
+                txt = MARKER_ALIAS.get(mtype.marker.upper(), mtype.marker)
+                if isinstance(mtype, CoTX):
+                    ratios_txt = ":".join([f"{r:.2g}" for r in mtype.ratios])
+                    txt += f"  {ratios_txt}"
+                svgpath = AGGREGATION_LOGO if isinstance(mtype, CoTX) else PLASMID_LOGO
+                svgtransform = (
+                    Transform(scale=(0.7, 0.7)) if isinstance(mtype, Plasmid) else Transform(scale=(0.9, 0.9))
+                )
+
+                values["label"] = Container(
+                    style=VisualStyle(
+                        background_color=bgcol,
+                        border_color=maincol,
+                        border_width=0.5,
+                        corner_radius=50,
+                        padding=(1.25, 5, 1.25, 2),
+                    ),
+                    is_overlay=True,
+                    offset=Offset(
+                        relative=(0, -0.5),
+                        parent_relative=(0.1, 1),
+                    ),
+                    layout=LayoutConstraints(
+                        direction="row",
+                        align_items="center",
+                        justify_content="start",
+                        gap=3,
+                    ),
+                    children=[
+                        SVGElement(
+                            svg_content=svgpath,
+                            transform=svgtransform,
+                            main_color=maincol,
+                            offset=Offset(absolute=(0, 0.25)),
+                        ),
+                        Text(
+                            text=txt,
+                            color=maincol,
+                            font_size=5,
+                        ),
+                    ],
+                )
+
+                values["children"].append(values["label"])
+
+        return values
+
+    def render(self, renderer, context, matrix: np.ndarray):
         Container.render(self, renderer, context, matrix)
 
 
@@ -155,12 +257,12 @@ class ERN(GeneticPart):
 
 class Promoter(GeneticPart):
     part_type: str = "Promoter"
-    offset: Offset = Offset(relative=(0, -0.5), absolute=(0, 1))
+    offset: Offset = Offset(relative=(0, -0.5), absolute=(0, 0.5))
 
 
 class Terminator(GeneticPart):
     part_type: str = "Terminator"
-    offset: Offset = Offset(relative=(0.5, -0.5), absolute=(0, 1))
+    offset: Offset = Offset(relative=(0.5, -0.5), absolute=(-0.5, 0.5))
     style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
 
 

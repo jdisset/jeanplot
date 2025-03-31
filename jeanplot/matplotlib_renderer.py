@@ -62,14 +62,14 @@ class MatplotlibRenderer(BaseRenderer):
         if self.debug:
             print(f"[MatplotlibRenderer] {msg}")
 
-    def refresh_linewidths(self, ctx):
+    def refresh_linewidths(self, context):
         """update linewidths for data-unit elements"""
         for patch, width in self.data_width_patches:
             if hasattr(patch, "set_linewidth"):
-                new_width = linewidth_from_data_units(width, ctx, "avg")
+                new_width = linewidth_from_data_units(width, context, "avg")
                 patch.set_linewidth(new_width)
 
-    def track_patch(self, patch, width, ctx):
+    def track_patch(self, patch, width, context):
         """track a patch with data-unit width"""
         self.data_width_patches.append((patch, width))
         return patch
@@ -113,7 +113,7 @@ class MatplotlibRenderer(BaseRenderer):
         for cb in self.post_render_callbacks:
             cb(context)
 
-    def adjust_limits(self, ctx, root, padding=0.05):
+    def adjust_limits(self, context, root, padding=0.05):
         """adjust plot limits to fit components"""
         min_x, min_y, max_x, max_y = self._calculate_world_bounds(root)
 
@@ -122,8 +122,8 @@ class MatplotlibRenderer(BaseRenderer):
 
         pad_x, pad_y = width * padding, height * padding
 
-        ctx.set_xlim(min_x - pad_x, max_x + pad_x)
-        ctx.set_ylim(min_y - pad_y, max_y + pad_y)
+        context.set_xlim(min_x - pad_x, max_x + pad_x)
+        context.set_ylim(min_y - pad_y, max_y + pad_y)
 
     def _calculate_world_bounds(self, comp, parent_matrix=None):
         """calculate world bounds recursively"""
@@ -157,7 +157,7 @@ class MatplotlibRenderer(BaseRenderer):
 
         return min_x, min_y, max_x, max_y
 
-    def render_rectangle(self, ctx, bounds, style, matrix, component=None):
+    def render_rectangle(self, context, bounds, style, matrix, component=None):
         """render a rectangle"""
         facecolor = style.background_color or "none"
         edgecolor = style.border_color or "none"
@@ -167,13 +167,17 @@ class MatplotlibRenderer(BaseRenderer):
         linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
         linestyle = linestyle_map.get(style.border_style, "-")
 
-        transform = mtransforms.Affine2D(matrix=matrix) + ctx.transData
+        # clip corner radius to prevent visual artifacts
+        max_radius = min(bounds.width, bounds.height) / 2
+        corner_radius = min(style.corner_radius, max_radius)
+
+        transform = mtransforms.Affine2D(matrix=matrix) + context.transData
 
         patch = mpatches.FancyBboxPatch(
             (0, 0),
             bounds.width,
             bounds.height,
-            boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=style.corner_radius),
+            boxstyle=mpatches.BoxStyle("Round", pad=0, rounding_size=corner_radius),
             facecolor=facecolor,
             edgecolor=edgecolor,
             linewidth=1.0 if width_mode == "data" else width_val,
@@ -182,22 +186,24 @@ class MatplotlibRenderer(BaseRenderer):
         )
 
         if width_mode == "data":
-            self.track_patch(patch, width_val, ctx)
+            self.track_patch(patch, width_val, context)
 
         if style.border_style == "custom" and style.dash_sequence and hasattr(patch, "set_dashes"):
             dash = style.dash_sequence
             if width_mode == "data":
-                avg_lw = linewidth_from_data_units(1.0, ctx, "avg")
+                avg_lw = linewidth_from_data_units(1.0, context, "avg")
                 dash = tuple(d * avg_lw for d in dash) if avg_lw > 0 else dash
             patch.set_dashes(dash)
 
-        ctx.add_patch(patch)
+        context.add_patch(patch)
 
-    def render_svg(self, context, svg_elem, matrix):
+    def render_svg(self, context, svg_elememt, matrix):
         """render an svg element"""
         # handle text paths
-        if hasattr(svg_elem, "svg_content") and isinstance(svg_elem.svg_content, SVGTextContent):
-            self._render_text_paths(context, svg_elem, matrix)
+        if hasattr(svg_elememt, "svg_content") and isinstance(
+            svg_elememt.svg_content, SVGTextContent
+        ):
+            self._render_text_paths(context, svg_elememt, matrix)
             return
 
         try:
@@ -206,12 +212,12 @@ class MatplotlibRenderer(BaseRenderer):
             print("svgpath2mpl is required for SVG rendering")
             return
 
-        paths = svg_elem.svg_content.paths
+        paths = svg_elememt.svg_content.paths
         if not paths:
             return
 
-        svg_dims = svg_elem._dimensions
-        viewBox = svg_elem.svg_content.viewBox
+        svg_dims = svg_elememt._dimensions
+        viewBox = svg_elememt.svg_content.viewBox
 
         # calculate scaling matrix
         if viewBox:
@@ -225,15 +231,15 @@ class MatplotlibRenderer(BaseRenderer):
                 ]
             )
         else:
-            content_w = max(svg_elem.svg_content.width, 1.0)
-            content_h = max(svg_elem.svg_content.height, 1.0)
+            content_w = max(svg_elememt.svg_content.width, 1.0)
+            content_h = max(svg_elememt.svg_content.height, 1.0)
             scale_x, scale_y = svg_dims.width / content_w, svg_dims.height / content_h
             svg_matrix = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]])
 
         final_matrix = matrix @ svg_matrix
         transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
-        width_mode = svg_elem.get_renderer_options(self.RENDERER_NAME).get("line_width_mode", "")
+        width_mode = svg_elememt.get_renderer_options(self.RENDERER_NAME).get("line_width_mode", "")
 
         for path_data in paths:
             try:
@@ -241,9 +247,9 @@ class MatplotlibRenderer(BaseRenderer):
 
                 fill = path_data.fill
                 if path_data.is_main_color:
-                    fill = svg_elem.main_color
+                    fill = svg_elememt.main_color
                 elif path_data.is_secondary_color:
-                    fill = svg_elem.secondary_color
+                    fill = svg_elememt.secondary_color
 
                 stroke = path_data.stroke if path_data.stroke != "none" else "none"
                 linewidth = path_data.stroke_width
@@ -264,10 +270,10 @@ class MatplotlibRenderer(BaseRenderer):
             except Exception as e:
                 print(f"Error rendering SVG path: {e}")
 
-    def render_debug(self, context, comp, matrix):
+    def render_debug(self, context, component, matrix):
         """render debug box around component"""
         debug_width = 0.5
-        w, h = comp._dimensions.width, comp._dimensions.height
+        w, h = component._dimensions.width, component._dimensions.height
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
 
         # draw rectangle
@@ -295,38 +301,43 @@ class MatplotlibRenderer(BaseRenderer):
         context.text(
             world_coords[0],
             world_coords[1] + 2,
-            f"{comp.id or 'unnamed'} ({w:.1f}x{h:.1f})",
+            f"{component.id or 'unnamed'} ({w:.1f}x{h:.1f})",
             color="red",
             fontsize=6,
             ha="left",
             va="bottom",
         )
 
-    def _render_text_paths(self, ctx, text_elem, matrix):
+    def _render_text_paths(self, context, text_element, matrix):
         """render cached text paths"""
         svg_content = None
-        if hasattr(text_elem, "_svg_cache"):
-            svg_content = text_elem._svg_cache
-        elif hasattr(text_elem, "svg_content"):
-            svg_content = text_elem.svg_content
+        if hasattr(text_element, "_svg_cache"):
+            svg_content = text_element._svg_cache
+        elif hasattr(text_element, "svg_content"):
+            svg_content = text_element.svg_content
 
         if not svg_content or not hasattr(svg_content, "text_paths") or not svg_content.text_paths:
             return
 
-        text_h = text_elem._dimensions.height
+        # transform setup - flip Y axis since matplotlib has Y increasing upward
+        text_h = text_element._dimensions.height
         unflip_y = np.array([[1, 0, 0], [0, -1, text_h], [0, 0, 1]])
         final_matrix = matrix @ unflip_y
-        transform = mtransforms.Affine2D(matrix=final_matrix) + ctx.transData
+        transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
         for path_info in svg_content.text_paths:
-            color = text_elem.main_color if hasattr(text_elem, "main_color") else text_elem.color
+            color = (
+                text_element.main_color
+                if hasattr(text_element, "main_color")
+                else text_element.color
+            )
             patch = mpatches.PathPatch(
                 path_info["path"],
                 facecolor=color,
                 edgecolor="none",
                 transform=transform,
             )
-            ctx.add_patch(patch)
+            context.add_patch(patch)
 
     def render_to_output(self, context, output=None, **kwargs):
         self.refresh_linewidths(context)
@@ -335,6 +346,7 @@ class MatplotlibRenderer(BaseRenderer):
         return context.figure
 
     def measure_text(self, text_comp) -> Size:
+        """measure text with tight bounds based on actual glyph extents"""
         if not text_comp.text:
             text_comp._svg_cache = None
             return Size(0, 0)
@@ -349,26 +361,54 @@ class MatplotlibRenderer(BaseRenderer):
         max_width = 0
         paths_info = []
 
+        line_spacing = getattr(text_comp, "line_spacing", 1.0)
+
+        # gather metrics for all lines
         for line in lines:
             if not line.strip():
                 continue
 
             path = TextPath((0, 0), line, size=text_comp.font_size, prop=font_props)
             try:
-                bbox = path.get_extents()
-                path_info = {
-                    "text": line,
-                    "path": path,
-                    "width": bbox.width,
-                    "height": bbox.height,
-                    "x0": bbox.x0,
-                    "y0": bbox.y0,
-                    "x1": bbox.x1,
-                    "y1": bbox.y1,
-                }
-                max_width = max(max_width, bbox.width)
+                vertices = path.vertices
+                if len(vertices) > 0:
+                    min_x = np.min(vertices[:, 0])
+                    max_x = np.max(vertices[:, 0])
+                    min_y = np.min(vertices[:, 1])
+                    max_y = np.max(vertices[:, 1])
+
+                    width = max_x - min_x
+                    height = max_y - min_y
+
+                    path_info = {
+                        "text": line,
+                        "path": path,
+                        "width": width,
+                        "height": height,
+                        "min_x": min_x,
+                        "min_y": min_y,
+                        "max_x": max_x,
+                        "max_y": max_y,
+                    }
+                else:
+                    # fallback to regular extents
+                    bbox = path.get_extents()
+                    path_info = {
+                        "text": line,
+                        "path": path,
+                        "width": bbox.width,
+                        "height": bbox.height,
+                        "min_x": bbox.x0,
+                        "min_y": bbox.y0,
+                        "max_x": bbox.x1,
+                        "max_y": bbox.y1,
+                    }
+
+                max_width = max(max_width, path_info["width"])
+
             except Exception:
                 # fallback estimation
+                print(f"Failed to measure text path: {line}")
                 est_w = len(line) * text_comp.font_size * 0.6
                 est_h = text_comp.font_size
                 path_info = {
@@ -376,21 +416,28 @@ class MatplotlibRenderer(BaseRenderer):
                     "path": path,
                     "width": est_w,
                     "height": est_h,
-                    "x0": 0,
-                    "y0": -est_h * 0.2,
-                    "x1": est_w,
-                    "y1": est_h * 0.8,
+                    "min_x": 0,
+                    "min_y": -est_h * 0.2,
+                    "max_x": est_w,
+                    "max_y": est_h * 0.8,
                 }
                 max_width = max(max_width, est_w)
 
             paths_info.append(path_info)
 
-        line_height = text_comp.font_size * 1.2
-        if paths_info:
-            line_height = sum(p["height"] for p in paths_info) / len(paths_info) * 1.2
+        if not paths_info:
+            return Size(0, 0)
 
-        # position paths from top to bottom
-        y_pos = 0
+        # find overall vertical bounds
+        total_min_y = min(p["min_y"] for p in paths_info)
+        total_max_y = max(p["max_y"] for p in paths_info)
+
+        # calculate average line height
+        avg_line_height = sum(p["max_y"] - p["min_y"] for p in paths_info) / len(paths_info)
+        line_height = avg_line_height * (1 + line_spacing)
+
+        # position lines with precise alignment
+        y_pos = 0  # start at exact top
         final_paths = []
 
         for i, line in enumerate(lines):
@@ -403,19 +450,29 @@ class MatplotlibRenderer(BaseRenderer):
                 y_pos += line_height
                 continue
 
-            new_path = TextPath((0, y_pos), line, size=text_comp.font_size, prop=font_props)
+            # position path at y_pos with perfect alignment to top of box
+            offset_y = y_pos - path_info["min_y"]  # align top of glyph to y_pos
+            new_path = TextPath((0, offset_y), line, size=text_comp.font_size, prop=font_props)
+
             final_paths.append(
                 {
                     "path": new_path,
                     "width": path_info["width"],
                     "height": path_info["height"],
-                    "y_pos": y_pos,
+                    "y_pos": offset_y,
                     "line_index": i,
                 }
             )
+
+            # advance to next line position
             y_pos += line_height
 
+        # calculate final height - should exactly match our layout
         total_height = y_pos
+
+        # minimal safety padding only if needed
+        if total_height < 1e-6:  # practically zero height
+            total_height = text_comp.font_size
 
         # store paths in svg cache
         svg_content = SVGTextContent(

@@ -15,6 +15,7 @@ class Text(Component):
     color: str = "black"
     align: Literal["left", "center", "right"] = "left"
     vertical_align: Literal["top", "middle", "bottom"] = "top"
+    line_spacing: float = 0.2  # controls extra space between lines (0.0 = no extra space)
 
     def measure(self, renderer=None) -> Size:
         if not self.text:
