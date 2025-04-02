@@ -205,8 +205,6 @@ class JStyle:
             if any(cond.startswith("id=") for cond in conditions):
                 specificity += 1000
 
-        print(f"selector {selector} has specificity: {specificity}")
-
         return specificity
 
     def _check_attribute_condition(self, condition, component):
@@ -288,9 +286,7 @@ class JStyle:
             if hasattr(obj, parts[-1]):
                 setattr(obj, parts[-1], value)
 
-        # direct property
-        elif hasattr(component, property_name):
-            print(f"setting {property_name} to {value} in {component.__class__.__name__}")
+        elif hasattr(component, property_name):  # direct property
             setattr(component, property_name, value)
 
     @contextmanager

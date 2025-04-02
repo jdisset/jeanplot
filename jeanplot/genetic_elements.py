@@ -50,20 +50,13 @@ class TranscriptionUnit(Container):
         Container.render(self, renderer, context, matrix)
 
 
-class CoTX(BaseModel):
-    stype: str = "cotx"
-    marker: Optional[str] = None
-    ratios: list[float] = []
-
-
-class Plasmid(BaseModel):
-    stype: str = "plasmid"
-    marker: Optional[str] = None
-
-
 class Source(Container):
-    multi_type: Optional[CoTX | Plasmid] = None
-    label: Optional[Container] = None
+    source_type: Optional[Literal["plasmid", "cotx"]] = "cotx"
+
+    marker: Optional[str] = None
+    tag_label: Optional[str] = None
+
+    tag_content: Optional[Container] = None
 
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
@@ -71,37 +64,21 @@ class Source(Container):
         )
     )
 
-    @model_validator(mode="before")
-    def style_source(cls, values):
-        mtype = values.get("multi_type")
-        if not mtype:
-            return values
+    def model_post_init(self, *args, **kwargs):
+        super().model_post_init(*args, **kwargs)
+        if self.source_type and self.tag_content is None:
+            svgpath = {"plasmid": PLASMID_LOGO, "cotx": AGGREGATION_LOGO}[self.source_type]
+            elmts = [SVGElement(svg_content=svgpath)]
+            if self.tag_label is not None:
+                elmts.append(Text(text=self.tag_label))  # type: ignore
+            self.tag_content = Container(
+                style_class="source_tag",
+                is_overlay=True,
+                children=elmts,  # type: ignore
+            )
 
-        if not values.get("label"):
-            if mtype.marker:
-                txt = MARKER_ALIAS.get(mtype.marker.upper(), mtype.marker)
-                if isinstance(mtype, CoTX):
-                    ratios_txt = ":".join([f"{r:.2g}" for r in mtype.ratios])
-                    txt += f"  {ratios_txt}"
-                svgpath = AGGREGATION_LOGO if isinstance(mtype, CoTX) else PLASMID_LOGO
-                values["label"] = Container(
-                    style_class="source_tag",
-                    is_overlay=True,
-                    children=[
-                        SVGElement(svg_content=svgpath),
-                        Text(text=txt),
-                    ],
-                )
-
-                if "children" not in values:
-                    values["children"] = []
-
-                values["children"].append(values["label"])
-
-        return values
-
-    def render(self, renderer, context, matrix: np.ndarray):
-        Container.render(self, renderer, context, matrix)
+        if self.tag_content:
+            self.add_child(self.tag_content)
 
 
 class GeneticPart(SVGElement, Container):
@@ -128,12 +105,17 @@ class GeneticPart(SVGElement, Container):
                 svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.{self.part_name}.svg"
                 svg_content = load_file_if_exists(svg_path)
                 if svg_content:
+                    print(f"Found SVG content for {self.part_name} at {svg_path}")
                     self.svg_content = get_svg_data_from_string(svg_content)
+                    return
+
+            svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
+            svg_content = load_file_if_exists(svg_path)
+            if svg_content:
+                print(f"Found SVG content for {self.part_name} at {svg_path}")
+                self.svg_content = get_svg_data_from_string(svg_content)
             else:
-                svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
-                svg_content = load_file_if_exists(svg_path)
-                if svg_content:
-                    self.svg_content = get_svg_data_from_string(svg_content)
+                print(f"SVG content not found for {self.part_name} of type {self.part_type}")
 
     @model_validator(mode="after")
     def set_label(self):
@@ -168,6 +150,24 @@ class ERN(GeneticPart):
                 vertical_align="middle",
                 font_size=9,
                 offset=Offset(relative=(-0.35, 0)),
+            )
+        return values
+
+
+class FluoMarker(GeneticPart):
+    part_type: str = "fluo_marker"
+    main_color: str = "#BBBBBB"
+
+    @model_validator(mode="before")
+    def set_label_to_name(cls, values):
+        """set label to part_name if no label is provided"""
+        if not values.get("label") and values.get("part_name"):
+            values["label"] = Text(
+                text=values["part_name"],
+                align="center",
+                vertical_align="middle",
+                font_size=5,
+                offset=Offset(relative=(-0.15, 0)),
             )
         return values
 

@@ -13,25 +13,16 @@ from jeanplot.genetic_elements import (
     Terminator,
     UorfGroup,
     Source,
-    CoTX,
-    Plasmid,
     ERN5pRecog,
 )
 from jeanplot.svg import LineEndFlat
 from jeanplot.debug import set_debug
 from pydantic import BaseModel, Field
-import dracon as dr
+import dracon as dr  # my conf library
 
 
 theme = dr.load("pkg:jeanplot:resources/themes/default", enable_interpolation=True, raw_dict=True)
 dr.resolve_all_lazy(theme)
-
-print("Theme:")
-print(json.dumps(theme, indent=2))
-print("\n")
-
-
-
 jstyle.styles = theme
 
 set_debug(False)
@@ -54,7 +45,12 @@ term1 = Terminator(id="term1")
 tu1.children = [promoter1, uorf1, ern0, term1]
 
 src1 = Source(
-    children=[tu1], id="src1", debug=False, multi_type=CoTX(marker="eBFP2", ratios=[1, 1])
+    children=[tu1],
+    id="src1",
+    debug=False,
+    source_type="cotx",
+    marker="eBFP2",
+    tag_label="eBFP2 1:1",
 )
 
 tu2 = TranscriptionUnit(id="tu2", debug=False)
@@ -64,7 +60,14 @@ recog = ERN5pRecog(part_name="Csy4_rec", id="recog", debug=False)
 term2 = Terminator(id="term2")
 tu2.children = [promoter2, recog, ern1, term2]
 
-src2 = Source(children=[tu2], id="src2", debug=False, multi_type=Plasmid(marker="mKate"))
+src2 = Source(
+    children=[tu2],
+    id="src2",
+    debug=False,
+    marker="mKate",
+    source_type="plasmid",
+    tag_label="mKate 0/1",
+)
 
 arrow_conn = Connection(
     start_component="src1/tu1/ern0",
