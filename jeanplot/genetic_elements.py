@@ -12,36 +12,6 @@ from jeanplot.text import Text
 from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset, AnchorPoint
 
 
-BASE_FLUO_COLORS = {
-    "red": {"base": "#ef957d", "light": "#ffe5de", "dark": "#840137"},
-    "green": {"base": "#6CCB83", "light": "#EFFFDD", "dark": "#0E633A"},
-    "blue": {"base": "#6cafc3", "light": "#F3FAFD", "dark": "#006394"},
-    "yellow": {"base": "#FAD26D", "light": "#FFF8B8", "dark": "#9B6600"},
-    "ir": {"base": "#df9ae4", "light": "#ffe7f4", "dark": "#6c1772"},
-    "maroon": {"base": "#D3A888", "light": "#F4DECD", "dark": "#734727"},
-}
-
-MARKER_COLORS = {
-    "eYFPG5A": BASE_FLUO_COLORS["yellow"],
-    "eYFP": BASE_FLUO_COLORS["yellow"],
-    "NeonGreen": BASE_FLUO_COLORS["green"],
-    "mNeonGreen": BASE_FLUO_COLORS["green"],
-    "L0.G_mNeonGreen": BASE_FLUO_COLORS["green"],
-    "eBFP": BASE_FLUO_COLORS["blue"],
-    "eBFP2": BASE_FLUO_COLORS["blue"],
-    "tagBFP": BASE_FLUO_COLORS["blue"],
-    "mKate": BASE_FLUO_COLORS["red"],
-    "mKO2": BASE_FLUO_COLORS["red"],
-    "tdTomato": BASE_FLUO_COLORS["red"],
-    "iRFP720": BASE_FLUO_COLORS["ir"],
-    "1xiRFP720": BASE_FLUO_COLORS["ir"],
-    "L0.G_iRFPmystery": BASE_FLUO_COLORS["ir"],
-    "iRFP": BASE_FLUO_COLORS["ir"],
-    "mMaroon": BASE_FLUO_COLORS["maroon"],
-    "mMaroon1": BASE_FLUO_COLORS["maroon"],
-}
-MARKER_COLORS = {k.upper(): v for k, v in MARKER_COLORS.items()}
-
 MARKER_ALIAS = {
     "NeonGreen": "mNeonGreen",
     "L0.G_mNeonGreen": "mNeonGreen",
@@ -49,16 +19,6 @@ MARKER_ALIAS = {
     "eBFP": "eBFP2",
 }
 MARKER_ALIAS = {k.upper(): v for k, v in MARKER_ALIAS.items()}
-
-ERN_COLORS = {
-    "Csy4": "#AAAAAA",
-    "CasE": "#CCCCCC",
-    "PgU": "#EEEEEE",
-}
-ERN_COLORS = {k.upper(): v for k, v in ERN_COLORS.items()}
-
-BORDER_COLOR = "#222222"
-TEXT_COLOR = BORDER_COLOR
 
 DEFAULT_RESOURCE_PATH = "pkg:jeanplot:resources"
 
@@ -91,92 +51,48 @@ class TranscriptionUnit(Container):
 
 
 class CoTX(BaseModel):
+    stype: str = "cotx"
     marker: Optional[str] = None
     ratios: list[float] = []
 
 
 class Plasmid(BaseModel):
+    stype: str = "plasmid"
     marker: Optional[str] = None
 
 
 class Source(Container):
     multi_type: Optional[CoTX | Plasmid] = None
+    label: Optional[Container] = None
+
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
             direction="column", align_items="center", justify_content="center", gap=5
         )
     )
 
-    label: Optional[Container] = None
-
     @model_validator(mode="before")
     def style_source(cls, values):
-        # if no style is provided, set auto style
         mtype = values.get("multi_type")
         if not mtype:
             return values
-        if not values.get("style"):
-            if mtype.marker:
-                values["style"] = VisualStyle(
-                    border_color=MARKER_COLORS.get(mtype.marker.upper(), {}).get(
-                        "base", BORDER_COLOR
-                    ),
-                    border_width=0.5,
-                    corner_radius=5,
-                    border_style="dashed",
-                    padding=(10, 10, 10, 10),
-                )
 
         if not values.get("label"):
             if mtype.marker:
-                bgcol = MARKER_COLORS.get(mtype.marker.upper(), {}).get("light", "#DDDDDD")
-                maincol = MARKER_COLORS.get(mtype.marker.upper(), {}).get("dark", BORDER_COLOR)
                 txt = MARKER_ALIAS.get(mtype.marker.upper(), mtype.marker)
                 if isinstance(mtype, CoTX):
                     ratios_txt = ":".join([f"{r:.2g}" for r in mtype.ratios])
                     txt += f"  {ratios_txt}"
                 svgpath = AGGREGATION_LOGO if isinstance(mtype, CoTX) else PLASMID_LOGO
-                svgtransform = (
-                    Transform(scale=(0.7, 0.7))
-                    if isinstance(mtype, Plasmid)
-                    else Transform(scale=(0.9, 0.9))
-                )
-
                 values["label"] = Container(
-                    style=VisualStyle(
-                        background_color=bgcol,
-                        border_color=maincol,
-                        border_width=0.5,
-                        corner_radius=50,
-                        padding=(1.25, 5, 1.25, 2),
-                    ),
+                    style_class="source_tag",
                     is_overlay=True,
-                    offset=Offset(
-                        relative=(0, -0.5),
-                        parent_relative=(0.1, 1),
-                    ),
-                    layout=LayoutConstraints(
-                        direction="row",
-                        align_items="center",
-                        justify_content="start",
-                        gap=3,
-                    ),
                     children=[
-                        SVGElement(
-                            svg_content=svgpath,
-                            transform=svgtransform,
-                            main_color=maincol,
-                            offset=Offset(absolute=(0, 0.25)),
-                        ),
-                        Text(
-                            text=txt,
-                            color=maincol,
-                            font_size=5,
-                        ),
+                        SVGElement(svg_content=svgpath),
+                        Text(text=txt),
                     ],
                 )
 
-                # Make sure children exists before appending
                 if "children" not in values:
                     values["children"] = []
 
@@ -195,8 +111,6 @@ class GeneticPart(SVGElement, Container):
     part_type: str
     part_name: Optional[str] = None
     label: Optional[Text] = None
-    main_color: str = BORDER_COLOR
-    secondary_color: str = BORDER_COLOR
 
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(justify_content="center", align_items="start")
@@ -245,15 +159,6 @@ class ERN(GeneticPart):
     ]
 
     @model_validator(mode="before")
-    def preset_colors(cls, values):
-        """set main and secondary colors based on part_type"""
-        pname = values.get("part_name").upper()
-        if pname in ERN_COLORS:
-            values["main_color"] = ERN_COLORS[pname]
-            values["secondary_color"] = BORDER_COLOR
-        return values
-
-    @model_validator(mode="before")
     def set_label_to_name(cls, values):
         """set label to part_name if no label is provided"""
         if not values.get("label") and values.get("part_name"):
@@ -261,7 +166,6 @@ class ERN(GeneticPart):
                 text=values["part_name"],
                 align="center",
                 vertical_align="middle",
-                color=TEXT_COLOR,
                 font_size=9,
                 offset=Offset(relative=(-0.35, 0)),
             )
@@ -293,12 +197,3 @@ class ERN5pRecog(GeneticPart):
         AnchorPoint(offset=Offset(relative=(0.5, -0.1)), direction=(0, 1), min_segment=12),
         AnchorPoint(offset=Offset(relative=(0.5, 1.1)), direction=(0, -1), min_segment=20),
     ]
-
-    @model_validator(mode="before")
-    def preset_colors(cls, values):
-        """set main and secondary colors based on part_type"""
-        pname = values.get("part_name").upper().split("_")[0]
-        if pname in ERN_COLORS:
-            values["main_color"] = ERN_COLORS[pname]
-            values["secondary_color"] = BORDER_COLOR
-        return values

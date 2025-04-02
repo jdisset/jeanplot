@@ -53,67 +53,92 @@ class JStyle:
         self._apply_styles_to_component(component, self.styles)
         return component
 
-    def _apply_styles_to_component(self, component, style_dict):
-        """apply styles from dict to component and recursively process children"""
-        # separate properties and selectors
-        properties = {}
-        selectors = {}
+    def _is_property_key(self, key, component):
+        if "[" in key:
+            return False
+        if "." in key:
+            return True
+        if key in ("style", "transform", "offset") or hasattr(component, key):
+            return True
+        return False
 
+    def _merge_styles(self, target, source):
+        """Recursively merge two style dictionaries. The source values override target."""
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                target[key] = self._merge_styles(copy.deepcopy(target[key]), value)
+            else:
+                target[key] = value
+        return target
+
+    def _apply_styles_to_component(self, component, style_dict):
+        """
+        Apply styles to a component by first splitting the style dictionary into
+        base properties (which set component attributes) and nested selectors
+        (which target either the current component or its children).
+
+        Matching selectors are merged (in order of increasing specificity) into the base
+        properties. Then, for each child component, any nested selectors that match are merged
+        into a child style dictionary which is applied recursively.
+        """
+        # separate into base properties and nested selectors.
+        base_props = {}
+        nested_selectors = {}
         for key, value in style_dict.items():
             if isinstance(value, dict):
-                # Check if this is a property path or a selector
-                if "." in key or key in ("style", "transform", "offset") or hasattr(component, key):
-                    # This is likely a nested property (like style.background_color)
-                    properties[key] = value
-                else:
-                    # This is a selector for child components
-                    selectors[key] = value
-            else:
-                # Direct property
-                properties[key] = value
+                # TODO: more robust selector/property detection
 
-        for key, value in properties.items():
+                # if key contains '[', it is definitely a selector.
+                if "[" in key:
+                    nested_selectors[key] = value
+                elif (
+                    "." in key or key in ("style", "transform", "offset") or hasattr(component, key)
+                ):  # most likely a property
+                    base_props[key] = value
+                else:  # assume it's a selector by default
+                    nested_selectors[key] = value
+            else:
+                base_props[key] = value
+
+        # merge properties from any selectors that match this component.
+        merged_props = copy.deepcopy(base_props)
+        matching_selectors = []
+        for selector, sub_dict in nested_selectors.items():
+            if self._selector_matches(selector, component):
+                spec = self._calculate_specificity(selector)
+                matching_selectors.append((spec, selector, sub_dict))
+        matching_selectors.sort(key=lambda x: x[0])
+        for spec, selector, sub_dict in matching_selectors:
+            # from the sub-dict, only extract keys that qualify as properties for this component.
+            sub_props = {}
+            for key, value in sub_dict.items():
+                if self._is_property_key(key, component):
+                    sub_props[key] = value
+            merged_props = self._merge_styles(merged_props, sub_props)
+
+        # apply the merged properties to the component.
+        for key, value in merged_props.items():
             self._set_property(component, key, value)
 
-        # find matching child selectors
-        matching_selectors = []
-        for selector, sub_dict in selectors.items():
-            if self._selector_matches(selector, component):
-                specificity = self._calculate_specificity(selector)
-                matching_selectors.append((selector, sub_dict, specificity))
-
-        matching_selectors.sort(key=lambda x: x[2])
-
-        for selector, sub_dict, _ in matching_selectors:
-            for key, value in sub_dict.items():
-                if (
-                    not isinstance(value, dict)
-                    or "." in key
-                    or key in ("style", "transform", "offset")
-                    or hasattr(component, key)
-                ):
-                    self._set_property(component, key, value)
-
-        # process children
+        # process children: gather nested selectors that match the child.
         if hasattr(component, "children") and component.children:
             for child in component.children:
-                # apply all selectors that might match children
-                for selector, sub_dict in selectors.items():
-                    # if child type matches selector, apply entire subdictionary
-                    if self._selector_matches(selector, child):
-                        self._apply_styles_to_component(child, sub_dict)
-
-                # also apply from matching parent selectors
-                for _, matched_dict, _ in matching_selectors:
-                    # recursively apply children selectors from matched parent
-                    for child_selector, child_dict in matched_dict.items():
-                        if (
-                            isinstance(child_dict, dict)
-                            and not "." in child_selector
-                            and not child_selector in ("style", "transform", "offset")
+                child_style = {}
+                # first, check all top-level nested selectors from the parent's style dict.
+                for sel, sub_dict in nested_selectors.items():
+                    if self._selector_matches(sel, child):
+                        child_style = self._merge_styles(child_style, sub_dict)
+                # next, for each selector that matched the parent, look for nested selectors (i.e. keys
+                # in the matching sub-dict that are not properties) that might match the child.
+                for spec, parent_sel, parent_sub in matching_selectors:
+                    for child_sel, child_sub in parent_sub.items():
+                        if isinstance(child_sub, dict) and not self._is_property_key(
+                            child_sel, child
                         ):
-                            if self._selector_matches(child_selector, child):
-                                self._apply_styles_to_component(child, child_dict)
+                            if self._selector_matches(child_sel, child):
+                                child_style = self._merge_styles(child_style, child_sub)
+                if child_style:
+                    self._apply_styles_to_component(child, child_style)
 
     def _selector_matches(self, selector, component):
         """check if selector matches component"""
@@ -180,21 +205,58 @@ class JStyle:
             if any(cond.startswith("id=") for cond in conditions):
                 specificity += 1000
 
+        print(f"selector {selector} has specificity: {specificity}")
+
         return specificity
 
     def _check_attribute_condition(self, condition, component):
         """check a single attribute=value condition"""
-        if "=" not in condition:
+        # determine operator and split accordingly
+        if "=~" in condition:
+            attr_name, attr_value = condition.split("=~", 1)
+            case_sensitive = False
+        elif "=" in condition:
+            attr_name, attr_value = condition.split("=", 1)
+            case_sensitive = True
+        else:
             return False
 
-        attr_name, attr_value = condition.split("=", 1)
+        # clean up names and values
         attr_name = attr_name.strip()
         attr_value = attr_value.strip()
-
-        # strip quotes if present
         if attr_value.startswith(("'", '"')) and attr_value.endswith(attr_value[0]):
             attr_value = attr_value[1:-1]
 
+        actual_value = self._get_attribute_value(component, attr_name)
+        if actual_value is None:
+            return False
+
+        actual_str = str(actual_value)
+
+        has_wildcard = "*" in attr_value or "?" in attr_value
+
+        if has_wildcard:
+            # convert wildcard pattern to regex
+            pattern = attr_value.replace(".", "\\.").replace("*", ".*").replace("?", ".")
+            pattern = f"^{pattern}$"
+
+            flags = re.IGNORECASE if not case_sensitive else 0
+            regex = re.compile(pattern, flags)
+
+            return bool(regex.match(actual_str))
+        else:
+            # standard comparison without wildcards
+            if case_sensitive:
+                return actual_str == attr_value
+            else:
+                return (
+                    isinstance(actual_value, str)
+                    and isinstance(attr_value, str)
+                    and attr_value.lower() == actual_str.lower()
+                )
+
+    def _get_attribute_value(self, component, attr_name):
+        """get attribute value, handling nested paths"""
         # handle nested attributes (style.background_color)
         if "." in attr_name:
             parts = attr_name.split(".")
@@ -204,12 +266,11 @@ class JStyle:
                 if hasattr(obj, part):
                     obj = getattr(obj, part)
                 else:
-                    return False
+                    return None
 
-            return hasattr(obj, parts[-1]) and str(getattr(obj, parts[-1])) == attr_value
+            return getattr(obj, parts[-1]) if hasattr(obj, parts[-1]) else None
 
-        # simple attribute
-        return hasattr(component, attr_name) and str(getattr(component, attr_name)) == attr_value
+        return getattr(component, attr_name) if hasattr(component, attr_name) else None
 
     def _set_property(self, component, property_name, value):
         """set a property on a component"""
@@ -229,6 +290,7 @@ class JStyle:
 
         # direct property
         elif hasattr(component, property_name):
+            print(f"setting {property_name} to {value} in {component.__class__.__name__}")
             setattr(component, property_name, value)
 
     @contextmanager
@@ -244,14 +306,6 @@ class JStyle:
             yield
         finally:
             self.styles = old_styles
-
-    def _merge_styles(self, target, source):
-        """recursively merge style dictionaries"""
-        for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                self._merge_styles(target[key], value)
-            else:
-                target[key] = value
 
     # shorthand for context
     __call__ = context

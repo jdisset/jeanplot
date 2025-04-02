@@ -5,6 +5,7 @@ from jeanplot.matplotlib_renderer import MatplotlibRenderer
 from jeanplot.container import Container
 from jeanplot.connector import Connection, StraightCurve, OrthogonalCurve, SimpleBezierCurve
 from jeanplot.style import jstyle
+import json
 from jeanplot.genetic_elements import (
     ERN,
     Promoter,
@@ -19,26 +20,19 @@ from jeanplot.genetic_elements import (
 from jeanplot.svg import LineEndFlat
 from jeanplot.debug import set_debug
 from pydantic import BaseModel, Field
+import dracon as dr
 
 
-class GeneSchematicConfig(BaseModel):
-    vertical_spacing: float = 20.0
-    horizontal_spacing: float = 20.0
+theme = dr.load("pkg:jeanplot:resources/themes/default", enable_interpolation=True, raw_dict=True)
+dr.resolve_all_lazy(theme)
+
+print("Theme:")
+print(json.dumps(theme, indent=2))
+print("\n")
 
 
-JEANPLOT_STYLES = {
-    "ERN[part_name=Csy4]": {
-        "main_color": "#FF6600",
-        "Text": {"color": "#FFFFFF", "font_weight": "bold"},
-    },
-    "Source": {
-        "style.margin": (8, 2, 8, 2),
-    },
-}
 
-
-jstyle.styles = JEANPLOT_STYLES
-
+jstyle.styles = theme
 
 set_debug(False)
 
