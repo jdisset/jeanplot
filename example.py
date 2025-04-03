@@ -37,7 +37,6 @@ def test_simple_container():
 
 def test_row_layout():
     """test row layout with different alignment options"""
-    # create a container with row layout
     container = Container(
         id="row-container",
         min_dimensions=Size(width=400, height=200),
@@ -74,18 +73,11 @@ def test_row_layout():
         style=BoxStyle(background_color="blue"),
     )
 
-    # add children to container
     container.children = [box1, box2, box3]
-
-    # create renderer and context
     renderer = MatplotlibRenderer()
     ax = renderer.create_context(width=500, height=300)
-
-    # measure and render
     container.measure(renderer)
     renderer.render_component(ax, container)
-
-    # display
     plt.title(
         f"Row Layout - align: {container.layout.align_items}, justify: {container.layout.justify_content}"
     )
@@ -652,27 +644,21 @@ def test_offset_examples():
         )
     ]
 
-    # Add all boxes to parent container
     parent.children = [box1, box2, box3, box4]
 
-    # Enable debug to see origin markers
     for child in parent.children:
         child.debug = True
 
-    # Create renderer and context
     renderer = MatplotlibRenderer()
     ax = renderer.create_context(width=600, height=400)
-    # Measure, layout and render
     parent.measure_and_layout(renderer)
     renderer.render_component(ax, parent)
-    # Add title and display
     plt.title("Unified Offset Examples")
     plt.show()
 
 
 def test_svg_with_offset():
     """Test SVG elements with the new offset system"""
-    # Create a container
     container = Container(
         id="svg-container",
         min_dimensions=Size(width=500, height=300),
@@ -689,9 +675,7 @@ def test_svg_with_offset():
         ),
     )
 
-    # Create SVG elements with different offsets
     svg_paths = [
-        "test_circle.svg",
         "jeanplot/resources/symbols/l2.svg",
     ]
 
@@ -704,7 +688,6 @@ def test_svg_with_offset():
 
     colors = ["darkblue", "purple", "green", "red"]
 
-    # Create SVG elements
     svg_elements = []
     for i, (path, offset, color) in enumerate(zip(svg_paths * 2, offset_configs, colors)):
         svg = SVGElement(
@@ -717,25 +700,17 @@ def test_svg_with_offset():
         svg.debug = True
         svg_elements.append(svg)
 
-    # Add to container
     container.children = svg_elements
-
-    # Create renderer and context
     renderer = MatplotlibRenderer()
     ax = renderer.create_context(width=600, height=400)
-
-    # Measure, layout and render
     container.measure_and_layout(renderer)
     renderer.render_component(ax, container)
-
-    # Add title and display
     plt.title("SVG Elements with Unified Offset")
     plt.show()
 
 
 def test_text_with_offset():
     """Test text components with the new offset system"""
-    # Create a container
     container = Container(
         id="text-container",
         min_dimensions=Size(width=500, height=300),
@@ -752,7 +727,6 @@ def test_text_with_offset():
         ),
     )
 
-    # Create text elements with different offsets
     offset_configs = [
         Offset(),  # default
         Offset(relative=(0.5, 0.5)),  # centered origin
@@ -761,8 +735,6 @@ def test_text_with_offset():
     ]
 
     colors = ["navy", "purple", "forestgreen", "maroon"]
-
-    # Create text elements
     text_elements = []
     for i, (offset, color) in enumerate(zip(offset_configs, colors)):
         bg_container = Container(
@@ -775,7 +747,6 @@ def test_text_with_offset():
                 corner_radius=5,
             ),
         )
-
         text = Text(
             id=f"text-{i}",
             text=f"Offset\nExample\n{i+1}",
@@ -790,18 +761,11 @@ def test_text_with_offset():
         bg_container.children = [text]
         text_elements.append(bg_container)
 
-    # Add to container
     container.children = text_elements
-
-    # Create renderer and context
     renderer = MatplotlibRenderer()
     ax = renderer.create_context(width=600, height=400)
-
-    # Measure, layout and render
     container.measure_and_layout(renderer)
     renderer.render_component(ax, container)
-
-    # Add title and display
     plt.title("Text Components with Unified Offset")
     plt.show()
 

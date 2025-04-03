@@ -25,7 +25,7 @@
       base: "#D3A888"
       light: "#F4DECD"
 
-  marker_colors: 
+  marker_colors:
     EYFPG5A: *fcolors@yellow
     EYFP: *fcolors@yellow
     NEONGREEN: *fcolors@green
@@ -39,7 +39,6 @@
     EBFP: *fcolors@blue
     EBFP2: *fcolors@blue
     TAGBFP: *fcolors@blue
-    TAGBFP2: *fcolors@blue
     SIRIUS: *fcolors@blue
     MKATE: *fcolors@red
     MKATE2: *fcolors@red
@@ -62,6 +61,7 @@
 
   border_color: "#222222"
   text_color: "#222222"
+  ern_interaction_color: "#777"
 
 ERN:
   Text:
@@ -83,17 +83,11 @@ GeneticPart:
   secondary_color: !include tvars@border_color
 
 Source:
-  style.margin: [8, 2, 8, 2]
   style.padding: [15, 15, 15, 15]
   style.border_color: !include tvars@border_color
   style.border_width: 0.5
   style.corner_radius: 5
   style.border_style: dashed
-
-  layout.direction: row
-  layout.align_items: center
-  layout.justify_content: center
-  layout.gap: 20
 
   Container[style_class=source_tag]:
     style.background_color: "#777777"
@@ -130,6 +124,17 @@ Source[source_type=cotx]:
       transform.scale: [0.9, 0.9]
       main_color: "#0000ff"
 
+NetworkGeneticSchematic:
+  grid_gap: [40, 40]
+  style.padding: [5,5,5,5]
+
+Connection:
+  line_width: 1
+  line_style: dashed
+  dash_array: [2, 2]
+  color: !include tvars@ern_interaction_color
+  end_cap.stroke_color: !include tvars@ern_interaction_color
+  end_cap.length: 7
 
 !each(e) "${theme['marker_colors'].items()}":
   Source[marker=~${e[0]}]:

@@ -11,15 +11,7 @@ from pydantic import Field, BaseModel
 from .component import Component
 from .models import Size, BoxStyle
 from .renderer import BaseRenderer
-from .svg import SVGElement, SVGContent
-
-
-class SVGTextContent(SVGContent):
-    """svg content for text"""
-
-    text_paths: List[Dict[str, Any]] = Field(default_factory=list)
-    measured_width: float = 0
-    measured_height: float = 0
+from .svg import SVGElement, SVGContent, SVGTextContent, SVGPathData
 
 
 def linewidth_from_data_units(linewidth, axis, reference="y"):
@@ -73,6 +65,66 @@ class MatplotlibRenderer(BaseRenderer):
         """track a patch with data-unit width"""
         self.data_width_patches.append((patch, width))
         return patch
+
+    def render_path(self, context, path_data: SVGPathData, matrix: np.ndarray):
+        """renders a single path described by SVGPathData"""
+        try:
+            from svgpath2mpl import parse_path
+        except ImportError:
+            print("svgpath2mpl is required for path rendering")
+            return
+
+        try:
+            path = parse_path(path_data.d)
+            transform = mtransforms.Affine2D(matrix=matrix) + context.transData
+
+            # handle styling (similar to render_svg path loop)
+            fill = path_data.fill if path_data.fill != "none" else "none"
+            stroke = path_data.stroke if path_data.stroke != "none" else "none"
+            linewidth = path_data.stroke_width
+            # assuming perimeter path uses 'point' width mode, but could check component options
+            # width_mode = component.get_renderer_options(self.RENDERER_NAME).get("line_width_mode", "point")
+            # use_data_width = width_mode == "data" and stroke != "none" and linewidth > 0
+            use_data_width = False  # assume point width for perimeter path
+
+            linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
+            linestyle = linestyle_map.get(path_data.line_style, "-")
+
+            patch = mpatches.PathPatch(
+                path,
+                facecolor=fill,  # usually 'none' for borders
+                edgecolor=stroke,
+                linewidth=1.0 if use_data_width else linewidth,
+                linestyle=linestyle,
+                transform=transform,
+            )
+
+            # apply custom dash array if specified
+            if (
+                path_data.line_style == "custom"
+                and path_data.dash_array
+                and hasattr(patch, "set_dashes")
+            ):
+                patch.set_dashes(path_data.dash_array)
+                if path_data.dash_offset != 0.0 and hasattr(patch, "set_dash_offset"):
+                    patch.set_dash_offset(path_data.dash_offset)
+            elif (
+                path_data.line_style in ("dashed", "dotted")
+                and path_data.dash_array
+                and linestyle == "-"
+            ):
+                if hasattr(patch, "set_dashes"):
+                    patch.set_dashes(path_data.dash_array)
+                    patch.set_linestyle("-")
+                    if path_data.dash_offset != 0.0 and hasattr(patch, "set_dash_offset"):
+                        patch.set_dash_offset(path_data.dash_offset)
+
+            if use_data_width:
+                self.track_patch(patch, linewidth, context)
+
+            context.add_patch(patch)
+        except Exception as e:
+            print(f"Error rendering SVG path data: {e} (Path: {path_data.d})")
 
     def create_context(self, width=None, height=None, dpi=100, ax=None, **kwargs):
         """create matplotlib figure and axes"""
@@ -247,21 +299,56 @@ class MatplotlibRenderer(BaseRenderer):
 
                 fill = path_data.fill
                 if path_data.is_main_color:
-                    fill = svg_elememt.main_color
+                    fill = (
+                        svg_elememt.main_color if hasattr(svg_elememt, "main_color") else "blue"
+                    )  # Added default
                 elif path_data.is_secondary_color:
-                    fill = svg_elememt.secondary_color
+                    fill = (
+                        svg_elememt.secondary_color
+                        if hasattr(svg_elememt, "secondary_color")
+                        else "green"
+                    )  # Added default
 
                 stroke = path_data.stroke if path_data.stroke != "none" else "none"
                 linewidth = path_data.stroke_width
                 use_data_width = width_mode == "data" and stroke != "none" and linewidth > 0
 
+                linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
+                # default to solid if style not found or invalid
+                linestyle = linestyle_map.get(path_data.line_style, "-")
+
                 patch = mpatches.PathPatch(
                     path,
-                    facecolor=fill,
-                    edgecolor=stroke,
+                    facecolor=fill if fill != "none" else "none",
+                    edgecolor=stroke if stroke != "none" else "none",
                     linewidth=1.0 if use_data_width else linewidth,
+                    linestyle=linestyle,
                     transform=transform,
                 )
+
+                # apply custom dash array if specified
+                if path_data.line_style == "custom" and path_data.dash_array:
+                    dash = path_data.dash_array
+                    # TODO: consider scaling dash array if use_data_width is true?
+                    # Similar logic as in render_rectangle might be needed if desired.
+                    # For now, apply directly:
+                    if hasattr(patch, "set_dashes"):
+                        patch.set_dashes(dash)
+                        if path_data.dash_offset != 0.0 and hasattr(patch, "set_dash_offset"):
+                            patch.set_dash_offset(path_data.dash_offset)
+                elif (
+                    path_data.line_style in ("dashed", "dotted")
+                    and path_data.dash_array
+                    and linestyle == "-"
+                ):
+                    # cases where style is 'dashed' but custom array is provided
+                    # (Matplotlib uses linestyle='--' OR set_dashes, not both easily)
+                    # prioritize the dash_array if provided
+                    if hasattr(patch, "set_dashes"):
+                        patch.set_dashes(path_data.dash_array)
+                        patch.set_linestyle("-")  # Use solid line style with custom dashes
+                        if path_data.dash_offset != 0.0 and hasattr(patch, "set_dash_offset"):
+                            patch.set_dash_offset(path_data.dash_offset)
 
                 if use_data_width:
                     self.track_patch(patch, linewidth, context)

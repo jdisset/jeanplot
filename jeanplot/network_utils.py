@@ -1,18 +1,15 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Set
 from pydantic import BaseModel
 from collections import defaultdict
 
 
+# PartInfo, TUInfo, Interaction classes remain the same
 class PartInfo(BaseModel):
-    """information about a genetic part"""
-
     name: str
     category: str
 
 
 class TUInfo(BaseModel):
-    """transcription unit info"""
-
     tu_id: str
     tu_name: str
     cotx_marker: Optional[str] = None
@@ -32,8 +29,6 @@ class TUInfo(BaseModel):
 
 
 class Interaction(BaseModel):
-    """interaction between genetic elements"""
-
     src_tu_id: str
     src_part_name: str
     tgt_tu_id: str
@@ -41,42 +36,34 @@ class Interaction(BaseModel):
     type: str = "ERN"
 
 
-def get_tu_informations(network) -> Dict[str, TUInfo]:
-    """extract TU info from network, returns dict of TUInfo keyed by tu_id"""
+# get_tu_informations remains the same
+def get_tu_informations(network: Any) -> Dict[str, TUInfo]:
     network_info = network.generate_network_info()
     markers = set(network_info.get("markers", []))
-
-    # get source and aggregation data
     sources = network.compute_graph[network.compute_graph["type"] == "source"]
-
-    # first pass: collect basic TU data
     tus = {}
-    aggr_to_tus = defaultdict(list)  # map aggregation node -> tu_ids
+    aggr_to_tus = defaultdict(list)
 
     for _, src in sources.iterrows():
         plasmid_name = "_".join(src["source_id"].split("_")[:-1])
         tu_cdgs = network.central_dogma_graph.loc[src["cdg_output"]]
-        is_in_l2 = len(tu_cdgs) > 1  # l2 = plasmid with multiple TUs
+        is_in_l2 = len(tu_cdgs) > 1
 
-        # process each TU in this plasmid
         for pos, (_, tu_row) in enumerate(tu_cdgs.iterrows()):
-            tu_id = tu_row["tu_id"][0]  # assuming one tu_id per row
+            # use .get() with default to handle potential missing tu_id gracefully
+            tu_id = tu_row.get("tu_id", [None])[0]
+            if not tu_id:
+                continue  # skip if no tu_id found
             tu_name = "_".join(tu_id.split("_")[:-1])
-
-            # find if this is a marker TU
-            content = tu_row["content"]
+            content = tu_row.get("content", [])
             is_marker = any(item in markers for item in content)
             marker = next((item for item in content if item in markers), None)
 
-            # get part information from network_info
-            parts = []
-            if network_info and "all_parts" in network_info:
-                parts_dict = network_info.get("all_parts", {}).get(tu_id, {})
-                parts = [
-                    PartInfo(name=name, category=category) for name, category in parts_dict.items()
-                ]
+            parts_dict = network_info.get("all_parts", {}).get(tu_id, {})
+            parts = [
+                PartInfo(name=name, category=category) for name, category in parts_dict.items()
+            ]
 
-            # create TU info
             tus[tu_id] = TUInfo(
                 tu_id=tu_id,
                 tu_name=tu_name,
@@ -89,140 +76,203 @@ def get_tu_informations(network) -> Dict[str, TUInfo]:
                 parts=parts,
             )
 
-            # check for aggregation
-            if src["input_from"] and len(src["input_from"]) > 0:
-                upstream_id = src["input_from"][0][0]
+            input_from = src.get("input_from")  # use .get()
+            if input_from and len(input_from) > 0:
+                upstream_id = input_from[0][0]
                 try:
-                    upstream_type = network.compute_graph.at[upstream_id, "type"]
-
-                    if upstream_type == "aggregation":
+                    if network.compute_graph.at[upstream_id, "type"] == "aggregation":
                         ratios = network.compute_graph.at[upstream_id, "extra"]["ratios"]
+                        # ensure ratios list has enough elements for the position
+                        if pos < len(ratios):
+                            tus[tu_id].aggregation_node_id = upstream_id
+                            tus[tu_id].aggregation_ratio = ratios[pos]
+                            tus[tu_id].in_aggregation = True
+                            aggr_to_tus[upstream_id].append(tu_id)
+                        else:
+                            print(
+                                f"Warning: Ratio missing for TU {tu_id} (pos {pos}) in aggregation {upstream_id}"
+                            )
 
-                        tus[tu_id].aggregation_node_id = upstream_id
-                        tus[tu_id].aggregation_ratio = ratios[pos]
-                        tus[tu_id].in_aggregation = True
-                        aggr_to_tus[upstream_id].append(tu_id)
-                except (KeyError, IndexError):
-                    pass
+                except (KeyError, IndexError, TypeError):  # added TypeError for safety
+                    # print(f"Warning: Could not process aggregation info for TU {tu_id}. Error: {e}")
+                    pass  # ignore errors during aggregation processing
 
-    # second pass: normalize ratios within aggregation groups
+    # normalize ratios
     for aggr_id, tu_ids in aggr_to_tus.items():
-        # find min ratio in this aggregation group
-        min_ratio = min(tus[tu_id].aggregation_ratio or 1.0 for tu_id in tu_ids)
+        valid_ratios = [
+            tus[tu_id].aggregation_ratio
+            for tu_id in tu_ids
+            if tus[tu_id].aggregation_ratio is not None
+        ]
+        if not valid_ratios:
+            continue
+        min_ratio = min(valid_ratios)
         if min_ratio > 0:
-            # normalize ratios
             for tu_id in tu_ids:
-                if tus[tu_id].aggregation_ratio:
+                if tus[tu_id].aggregation_ratio is not None:
                     tus[tu_id].aggregation_ratio_norm = tus[tu_id].aggregation_ratio / min_ratio
 
-    # third pass: ensure all TUs in same aggregation have the same marker
+    # propagate marker info within aggregation groups
     for aggr_id, tu_ids in aggr_to_tus.items():
-        # find marker TU
-        marker_tu_id = next((tu_id for tu_id in tu_ids if tus[tu_id].is_marker), None)
-
-        # if found, propagate marker to all TUs in this aggregation
-        if marker_tu_id:
-            marker = tus[marker_tu_id].cotx_marker
-            marker_ratio = tus[marker_tu_id].aggregation_ratio_norm
-
+        marker_tu = next((tus[tu_id] for tu_id in tu_ids if tus[tu_id].is_marker), None)
+        if marker_tu:
             for tu_id in tu_ids:
-                tus[tu_id].cotx_marker = marker
-                tus[tu_id].marker_ratio = marker_ratio
+                tus[tu_id].cotx_marker = marker_tu.cotx_marker
+                tus[tu_id].marker_ratio = marker_tu.aggregation_ratio_norm
 
-    # final pass: create ratio labels
+    # create ratio labels
     for aggr_id, tu_ids in aggr_to_tus.items():
-        # collect all normalized ratios
-        ratios = sorted([tus[tu_id].aggregation_ratio_norm for tu_id in tu_ids])
-
-        # create a combined label
-        label = ":".join([f"{r:.0f}" for r in ratios])
-
-        # apply to all TUs in this aggregation
+        # sort by original position within source for consistent labels
+        sorted_tu_ids = sorted(tu_ids, key=lambda tid: tus[tid].position_in_plasmid)
+        ratios = [tus[tu_id].aggregation_ratio_norm for tu_id in sorted_tu_ids]
+        label = ":".join([f"{r:.0f}" if r is not None else "?" for r in ratios])
         for tu_id in tu_ids:
             tus[tu_id].aggregation_ratio_label = label
 
     return tus
 
 
-def get_tu_grid_layout(network, node_type="translation") -> List[List[str]]:
-    """create grid layout of TUs based on network topology"""
-    # get nodes of the specified type
+def get_tu_grid_layout(
+    network: Any,
+    node_type="translation",
+    tu_id_allow_set: Optional[Set[str]] = None,
+) -> List[List[str]]:
+    """
+    create topological grid layout layers, considering only allowed TUs.
+    if tu_id_allow_set is None, all TUs are considered.
+    """
     cnodes = network.compute_graph[network.compute_graph["type"] == node_type]
+    if cnodes.empty:
+        return []
 
-    # map nodes to their TU ids
     node_to_tus = {}
     for node_id, inputs in cnodes["cdg_input"].items():
-        node_to_tus[node_id] = [
-            network.central_dogma_graph.loc[input_id]["tu_id"][0] for input_id in inputs
-        ]
+        # Extract TUs, handling potential errors
+        tus_in_node = []
+        for input_id in inputs:
+            if input_id in network.central_dogma_graph.index:
+                tu_id = network.central_dogma_graph.loc[input_id].get("tu_id", [None])[0]
+                if tu_id and (tu_id_allow_set is None or tu_id in tu_id_allow_set):
+                    tus_in_node.append(tu_id)
+        if tus_in_node:  # only store nodes that have allowed TUs
+            node_to_tus[node_id] = tus_in_node
 
-    # get topological ordering of nodes
-    topo_order = network.topological_order(cnodes.index.tolist())
+    # filter nodes for topological sort based on whether they map to allowed TUs
+    nodes_to_sort = [node_id for node_id in cnodes.index if node_id in node_to_tus]
+    if not nodes_to_sort:
+        return []
 
-    # organize into columns
-    columns = [[] for _ in range(len(topo_order))]
-    columns[-1] = topo_order[-1]  # last column is easy
+    topo_order = network.topological_order(nodes_to_sort)
+    if not topo_order or not topo_order[0]:
+        return []
 
-    # optimize earlier columns based on upstream relationships
-    for col_idx in range(len(topo_order) - 2, -1, -1):
-        next_col = topo_order[col_idx + 1]
-        columns[col_idx] = []
+    # build layers using only the filtered node_to_tus map
+    layers = []
+    processed_nodes = set()
+    for layer_nodes in topo_order:
+        current_layer = []
+        # only consider nodes that we kept earlier
+        valid_layer_nodes = [node for node in layer_nodes if node in node_to_tus]
+        for node in valid_layer_nodes:
+            if node not in processed_nodes:
+                # extend with TUs we know are allowed
+                current_layer.extend(node_to_tus[node])
+                processed_nodes.add(node)
+        if current_layer:
+            layers.append(current_layer)
 
-        # first add nodes that are upstream of next column
-        for next_node in next_col:
-            for node in topo_order[col_idx]:
-                if (
-                    network.compute_node_is_upstream_of(node, next_node)
-                    and node not in columns[col_idx]
-                ):
-                    columns[col_idx].append(node)
-
-        # then add any remaining nodes
-        for node in topo_order[col_idx]:
-            if node not in columns[col_idx]:
-                columns[col_idx].append(node)
-
-    # convert node IDs to TU IDs and flatten
-    return [[tu_id for node_id in col for tu_id in node_to_tus.get(node_id, [])] for col in columns]
+    return layers
 
 
-def get_interactions(network) -> List[Interaction]:
+def _get_source_id(tu_id: str, tu_infos: Dict[str, TUInfo]) -> str:
+    """determines the unique source identifier for a TU"""
+    if tu_id not in tu_infos:
+        return "unknown_source"
+    info = tu_infos[tu_id]
+    if info.in_l2:
+        return f"plasmid_{info.plasmid_name}"
+    else:
+        # include marker, node_id, and ratio label for uniqueness in cotx
+        return (
+            f"source_{info.cotx_marker}_{info.aggregation_node_id}_{info.aggregation_ratio_label}"
+        )
+
+
+def optimize_grid_for_source_adjacency(
+    grid_layers: List[List[str]], tu_infos: Dict[str, TUInfo]
+) -> List[List[str]]:
+    """
+    sorts TUs *within* each layer of the grid to group by source.
+    preserves the layer structure.
+    """
+    optimized_layers = []
+    for layer in grid_layers:
+        if not layer:
+            optimized_layers.append([])
+            continue
+
+        # create tuples of (tu_id, source_id, original_index) for sorting
+        sortable_tus = []
+        for i, tu_id in enumerate(layer):
+            if tu_id and tu_id in tu_infos:  # handle potential None/missing TUs
+                source_id = _get_source_id(tu_id, tu_infos)
+                sortable_tus.append((tu_id, source_id, i))
+            # else: implicitly skip None or invalid tu_ids
+
+        # sort primarily by source_id, secondarily by original index (for stability)
+        sortable_tus.sort(key=lambda x: (x[1], x[2]))
+
+        # extract sorted tu_ids
+        optimized_layer = [tu_id for tu_id, _, _ in sortable_tus]
+        optimized_layers.append(optimized_layer)
+
+    return optimized_layers
+
+
+def get_interactions(network: Any) -> List[Interaction]:
     """extract interactions between genetic elements"""
+    # handle case where sequestron_ERN nodes might not exist
+    if "sequestron_ERN" not in network.compute_graph["type"].values:
+        return []
     ern_nodes = network.compute_graph[network.compute_graph["type"] == "sequestron_ERN"]
     interactions = []
 
     for _, ern in ern_nodes.iterrows():
-        cdg_inputs = network.central_dogma_graph.loc[ern["cdg_input"]]
-
-        if len(cdg_inputs) != 2:
+        cdg_inputs_idx = ern.get("cdg_input")
+        if cdg_inputs_idx is None or len(cdg_inputs_idx) != 2:
             continue
 
-        # first input is ERN part
-        ern_row = cdg_inputs.iloc[0]
-        ern_tu_ids = ern_row["tu_id"]
-        ern_part_name = ern_row["content"][0]
+        # safely access cdg graph data
+        try:
+            cdg_inputs = network.central_dogma_graph.loc[cdg_inputs_idx]
+            ern_row = cdg_inputs.iloc[0]
+            rec_row = cdg_inputs.iloc[1]
 
-        # second input is recognition site
-        rec_row = cdg_inputs.iloc[1]
-        rec_tu_ids = rec_row["tu_id"]
-        rec_parts = rec_row["content"]
+            ern_tu_ids = ern_row.get("tu_id", [])
+            ern_part_name = ern_row.get("content", [None])[0]
+            rec_tu_ids = rec_row.get("tu_id", [])
+            rec_parts = rec_row.get("content", [])
 
-        # find matching recognition part (has ERN name in it)
-        rec_part_name = next((p for p in rec_parts if ern_part_name in p), None)
-        if not rec_part_name:
-            continue
+            if not ern_tu_ids or not rec_tu_ids or not ern_part_name or not rec_parts:
+                continue
 
-        # create interaction for each source-target pair
-        for src_tu_id in ern_tu_ids:
-            for tgt_tu_id in rec_tu_ids:
-                interactions.append(
-                    Interaction(
-                        src_tu_id=src_tu_id,
-                        src_part_name=ern_part_name,
-                        tgt_tu_id=tgt_tu_id,
-                        tgt_part_name=rec_part_name,
-                        type="ERN",
+            rec_part_name = next((p for p in rec_parts if ern_part_name in p), None)
+            if not rec_part_name:
+                continue
+
+            for src_tu_id in ern_tu_ids:
+                for tgt_tu_id in rec_tu_ids:
+                    interactions.append(
+                        Interaction(
+                            src_tu_id=src_tu_id,
+                            src_part_name=ern_part_name,
+                            tgt_tu_id=tgt_tu_id,
+                            tgt_part_name=rec_part_name,
+                            type="ERN",
+                        )
                     )
-                )
+        except (KeyError, IndexError):
+            # handle cases where cdg_input indices might be invalid
+            continue
 
     return interactions

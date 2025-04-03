@@ -37,9 +37,9 @@ with Session(engine) as session:
 
 # random shuffle of networks
 networks = list(networks)
-random.shuffle(networks)
+# random.shuffle(networks)
 
-mnet = networks[0]
+mnet = networks[18]
 
 
 mnet.recipe.content
@@ -64,20 +64,27 @@ print("interactions:")
 print(json.dumps([i.model_dump() for i in interactions], indent=2))
 
 
-fig, ax, schematic = draw_network_schematic(network, connection_style="bezier")
+fig, ax, schematic = draw_network_schematic(
+    network,
+    connection_style="bezier",
+    dpi=300,
+    # show_all_tus=True,
+    layout_orientation="column",
+)
 # remove the axis
 ax.axis("off")
 ax.set_title(mnet.name)
 # add recipe content as note
-ax.text(
-    0.1,
-    -0.01,
-    recipe_str,
-    horizontalalignment="left",
-    verticalalignment="top",
-    transform=ax.transAxes,
-    fontsize=5,
-)
+
+# ax.text(
+#     0.1,
+#     -0.01,
+#     recipe_str,
+#     horizontalalignment="left",
+#     verticalalignment="top",
+#     transform=ax.transAxes,
+#     fontsize=5,
+# )
 
 fig.tight_layout()
 plt.show()

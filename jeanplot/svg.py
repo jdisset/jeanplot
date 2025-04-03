@@ -399,6 +399,14 @@ def get_svg_data_from_file(
         return SVGContent()
 
 
+class SVGTextContent(SVGContent):
+    """svg content for text"""
+
+    text_paths: List[dict[str, Any]] = Field(default_factory=list)
+    measured_width: float = 0
+    measured_height: float = 0
+
+
 class SVGElement(Component):
     """svg element loaded from a file"""
 

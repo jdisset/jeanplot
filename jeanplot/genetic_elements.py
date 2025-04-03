@@ -136,8 +136,8 @@ class ERN(GeneticPart):
     secondary_color: str = "#111111"
 
     anchor_points: list[AnchorPoint] = [
-        AnchorPoint(offset=Offset(relative=(0.77, -0.1)), direction=(0, -1)),
-        AnchorPoint(offset=Offset(relative=(0.77, 1.1)), direction=(0, 1)),
+        AnchorPoint(offset=Offset(relative=(0.77, -0.1)), direction=(0, -1), min_segment=20),
+        AnchorPoint(offset=Offset(relative=(0.77, 1.1)), direction=(0, 1), min_segment=20),
     ]
 
     @model_validator(mode="before")
@@ -188,12 +188,38 @@ class UorfGroup(GeneticPart):
     style: BoxStyle = BoxStyle(margin=(0, 0, 0, -10))
     offset: Offset = Offset(relative=(0, 0.1))
 
+    @model_validator(mode="before")
+    def set_label_to_name(cls, values):
+        """set label to part_name if no label is provided"""
+        if not values.get("label") and values.get("part_name"):
+            values["label"] = Text(
+                text=values["part_name"].split("_")[0],
+                align="center",
+                vertical_align="middle",
+                font_size=5,
+                offset=Offset(relative=(0, -1.3)),
+            )
+        return values
+
 
 class ERN5pRecog(GeneticPart):
     part_type: str = "ERN_recog_site_5p"
     offset: Offset = Offset(relative=(0, -0.4), absolute=(0, 0.5))
 
     anchor_points: list[AnchorPoint] = [
-        AnchorPoint(offset=Offset(relative=(0.5, -0.1)), direction=(0, 1), min_segment=12),
-        AnchorPoint(offset=Offset(relative=(0.5, 1.1)), direction=(0, -1), min_segment=20),
+        AnchorPoint(offset=Offset(relative=(0.5, -0.1)), direction=(0, 1), min_segment=30),
+        AnchorPoint(offset=Offset(relative=(0.5, 1.1)), direction=(0, -1), min_segment=30),
     ]
+
+    # @model_validator(mode="before")
+    # def set_label_to_name(cls, values):
+    # """set label to part_name if no label is provided"""
+    # if not values.get("label") and values.get("part_name"):
+    #     values["label"] = Text(
+    #         text=values["part_name"].split("_")[0],
+    #         align="center",
+    #         vertical_align="middle",
+    #         font_size=5,
+    #         offset=Offset(relative=(0, 2)),
+    #     )
+    # return values

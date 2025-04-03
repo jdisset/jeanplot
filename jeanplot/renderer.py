@@ -1,6 +1,7 @@
 from typing import Optional, Union, BinaryIO, TextIO, Callable
 import numpy as np
 from .component import Component
+from .svg import SVGPathData
 
 
 class BaseRenderer:
@@ -28,6 +29,10 @@ class BaseRenderer:
         """render a component to the context"""
         matrix = component.compute_world_matrix(parent_matrix)
         component.render(self, context, matrix)
+
+    def render_path(self, context, path_data: SVGPathData, matrix: np.ndarray):
+        """render a single SVG path data object"""
+        raise NotImplementedError("renderers must implement render_path")
 
     def render_to_output(
         self, context, output: Optional[Union[str, BinaryIO, TextIO]] = None, **kwargs
