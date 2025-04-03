@@ -9,7 +9,7 @@ from jeanplot.svg import SVGElement, get_svg_data_from_string, make_svg_line, SV
 from jeanplot.container import Container
 from jeanplot.component import Component
 from jeanplot.text import Text
-from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset, AnchorPoint
+from jeanplot.models import Transform, Size, BoxStyle, LayoutConstraints, Offset, AnchorPoint
 
 
 MARKER_ALIAS = {
@@ -72,7 +72,7 @@ class Source(Container):
             if self.tag_label is not None:
                 elmts.append(Text(text=self.tag_label))  # type: ignore
             self.tag_content = Container(
-                style_class="source_tag",
+                style_class=["source_tag"],
                 is_overlay=True,
                 children=elmts,  # type: ignore
             )
@@ -180,12 +180,12 @@ class Promoter(GeneticPart):
 class Terminator(GeneticPart):
     part_type: str = "Terminator"
     offset: Offset = Offset(relative=(0.5, -0.5), absolute=(-0.5, 0.5))
-    style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
+    style: BoxStyle = BoxStyle(margin=(0, 0, 0, -10))
 
 
 class UorfGroup(GeneticPart):
     part_type: str = "uORF_group"
-    style: VisualStyle = VisualStyle(margin=(0, 0, 0, -10))
+    style: BoxStyle = BoxStyle(margin=(0, 0, 0, -10))
     offset: Offset = Offset(relative=(0, 0.1))
 
 

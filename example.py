@@ -1,7 +1,7 @@
 from jeanplot.component import Component
 import numpy as np
 import matplotlib.pyplot as plt
-from jeanplot.models import Transform, Size, VisualStyle, LayoutConstraints, Offset
+from jeanplot.models import Transform, Size, BoxStyle, LayoutConstraints, Offset
 from jeanplot.matplotlib_renderer import MatplotlibRenderer
 from jeanplot.container import Container
 from jeanplot.text import Text
@@ -13,13 +13,13 @@ def test_simple_container():
     container = Container(
         id="root",
         min_dimensions=Size(width=200, height=100),
-        style=VisualStyle(background_color="white", border_color="black", border_width=1),
+        style=BoxStyle(background_color="white", border_color="black", border_width=1),
     )
 
     rect = Container(
         id="rect",
         min_dimensions=Size(width=50, height=50),
-        style=VisualStyle(background_color="blue", corner_radius=5),
+        style=BoxStyle(background_color="blue", corner_radius=5),
     )
 
     container.children = [rect]
@@ -47,7 +47,7 @@ def test_row_layout():
             justify_content="space-between",  # try: "start", "center", "end", "space-between", etc.
             gap=10,
         ),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f0f0f0",
             border_color="black",
             border_width=1,
@@ -59,19 +59,19 @@ def test_row_layout():
     box1 = Container(
         id="box1",
         min_dimensions=Size(width=80, height=50),
-        style=VisualStyle(background_color="red"),
+        style=BoxStyle(background_color="red"),
     )
 
     box2 = Container(
         id="box2",
         min_dimensions=Size(width=100, height=80),
-        style=VisualStyle(background_color="green"),
+        style=BoxStyle(background_color="green"),
     )
 
     box3 = Container(
         id="box3",
         min_dimensions=Size(width=120, height=30),
-        style=VisualStyle(background_color="blue"),
+        style=BoxStyle(background_color="blue"),
     )
 
     # add children to container
@@ -101,7 +101,7 @@ def test_nested_layout():
         id="root",
         min_dimensions=Size(width=500, height=400),
         layout=LayoutConstraints(direction="column", gap=10),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="white", border_color="black", border_width=1, padding=(10, 10, 10, 10)
         ),
     )
@@ -113,21 +113,21 @@ def test_nested_layout():
         layout=LayoutConstraints(
             direction="row", justify_content="space-between", align_items="center"
         ),
-        style=VisualStyle(background_color="#e0e0e0", padding=(5, 10, 5, 10)),
+        style=BoxStyle(background_color="#e0e0e0", padding=(5, 10, 5, 10)),
     )
 
     # create header items
     logo = Container(
         id="logo",
         min_dimensions=Size(width=40, height=40),
-        style=VisualStyle(background_color="blue", corner_radius=20),
+        style=BoxStyle(background_color="blue", corner_radius=20),
     )
 
     nav = Container(
         id="nav",
         min_dimensions=Size(width=200, height=30),
         layout=LayoutConstraints(direction="row", justify_content="space-evenly", gap=5),
-        style=VisualStyle(background_color="#d0d0d0"),
+        style=BoxStyle(background_color="#d0d0d0"),
     )
 
     # create nav items
@@ -136,7 +136,7 @@ def test_nested_layout():
             Container(
                 id=f"nav-item-{i+1}",
                 min_dimensions=Size(width=60, height=20),
-                style=VisualStyle(background_color=color, corner_radius=3),
+                style=BoxStyle(background_color=color, corner_radius=3),
             )
         )
 
@@ -148,7 +148,7 @@ def test_nested_layout():
         id="content",
         min_dimensions=Size(width=0, height=300),
         layout=LayoutConstraints(direction="row", gap=10),
-        style=VisualStyle(background_color="#f5f5f5"),
+        style=BoxStyle(background_color="#f5f5f5"),
     )
 
     # create sidebar
@@ -156,7 +156,7 @@ def test_nested_layout():
         id="sidebar",
         min_dimensions=Size(width=100, height=0),
         layout=LayoutConstraints(direction="column", gap=5),
-        style=VisualStyle(background_color="#e5e5e5", padding=(5, 5, 5, 5)),
+        style=BoxStyle(background_color="#e5e5e5", padding=(5, 5, 5, 5)),
     )
 
     # add sidebar items
@@ -165,7 +165,7 @@ def test_nested_layout():
             Container(
                 id=f"sidebar-item-{i+1}",
                 min_dimensions=Size(width=0, height=30),
-                style=VisualStyle(background_color="#c0c0c0", corner_radius=3),
+                style=BoxStyle(background_color="#c0c0c0", corner_radius=3),
             )
         )
 
@@ -173,7 +173,7 @@ def test_nested_layout():
     main = Container(
         id="main",
         min_dimensions=Size(width=0, height=0),
-        style=VisualStyle(background_color="white", border_color="#d0d0d0", border_width=1),
+        style=BoxStyle(background_color="white", border_color="#d0d0d0", border_width=1),
     )
 
     # assemble content
@@ -184,13 +184,13 @@ def test_nested_layout():
         id="footer",
         min_dimensions=Size(width=0, height=40),
         layout=LayoutConstraints(direction="row", justify_content="center", align_items="center"),
-        style=VisualStyle(background_color="#e0e0e0"),
+        style=BoxStyle(background_color="#e0e0e0"),
     )
 
     footer_text = Container(
         id="footer-text",
         min_dimensions=Size(width=200, height=20),
-        style=VisualStyle(background_color="#d0d0d0"),
+        style=BoxStyle(background_color="#d0d0d0"),
     )
 
     footer.children = [footer_text]
@@ -235,7 +235,7 @@ def test_interdependent_layout():
             justify_content="space-evenly",
             gap=10,
         ),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f0f0f0",
             border_color="black",
             border_width=1,
@@ -248,7 +248,7 @@ def test_interdependent_layout():
         id="child1",
         min_dimensions=Size(width=100, height=50),
         max_dimensions=Size(width=100, height=float("inf")),  # can stretch vertically
-        style=VisualStyle(background_color="red", border_color="darkred", border_width=1),
+        style=BoxStyle(background_color="red", border_color="darkred", border_width=1),
     )
 
     # create a nested container with children that will affect its height
@@ -258,7 +258,7 @@ def test_interdependent_layout():
         layout=LayoutConstraints(
             direction="column", align_items="stretch", justify_content="space-evenly", gap=2
         ),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#e0e0e0",
             border_color="darkblue",
             border_width=1,
@@ -273,9 +273,7 @@ def test_interdependent_layout():
             Container(
                 id=f"nested-child-{i+1}",
                 min_dimensions=Size(width=0, height=40),
-                style=VisualStyle(
-                    background_color="lightblue", border_color="blue", border_width=1
-                ),
+                style=BoxStyle(background_color="lightblue", border_color="blue", border_width=1),
                 layout=LayoutConstraints(
                     direction="column",  # Changed from row to column
                     justify_content="start",  # Center vertically
@@ -322,7 +320,7 @@ def test_svg_integration():
         layout=LayoutConstraints(
             direction="row", align_items="center", justify_content="space-around", gap=20
         ),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f0f0f0",
             border_color="black",
             border_width=1,
@@ -353,7 +351,7 @@ def test_svg_integration():
             offset=Offset(relative=(i, 0)),
             main_color="purple",
             min_dimensions=Size(width=40, height=40),
-            transform=Transform(scale=(5, 5), rotate=-70),
+            transform=Transform(scale=(i + 1, i + 1), rotate=-70),
         )
         for i in range(2)
     )
@@ -365,7 +363,7 @@ def test_svg_integration():
         layout=LayoutConstraints(
             direction="column", align_items="center", justify_content="space-evenly"
         ),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="white",
             border_color="gray",
             border_width=5,
@@ -383,6 +381,8 @@ def test_svg_integration():
     renderer = MatplotlibRenderer()
     # fig, ax = plt.subplots(figsize=(5, 2.5), dpi=300)
     fig, ax = plt.subplots(figsize=(10, 5), dpi=300)
+    # equal
+    ax.set_aspect("equal")
 
     # measure and render
     container.measure(renderer)
@@ -402,7 +402,7 @@ def test_text_component():
     root = Container(
         id="text-examples",
         min_dimensions=Size(width=500, height=400),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f5f5f5",
             border_color="#333333",
             border_width=1,
@@ -440,7 +440,7 @@ def test_text_component():
     alignment_container = Container(
         id="alignment-examples",
         min_dimensions=Size(width=450, height=150),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="white",
             border_color="#999",
             border_width=1,
@@ -455,7 +455,7 @@ def test_text_component():
         text_box = Container(
             id=f"{align}-aligned",
             min_dimensions=Size(width=140, height=130),
-            style=VisualStyle(
+            style=BoxStyle(
                 background_color="#f0f0f0",
                 border_color="#ddd",
                 border_width=1,
@@ -479,7 +479,7 @@ def test_text_component():
     vertical_container = Container(
         id="vertical-examples",
         min_dimensions=Size(width=450, height=150),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="white",
             border_color="#999",
             border_width=1,
@@ -494,7 +494,7 @@ def test_text_component():
         text_box = Container(
             id=f"{valign}-aligned",
             min_dimensions=Size(width=140, height=140),
-            style=VisualStyle(
+            style=BoxStyle(
                 background_color="#f0f0f0",
                 border_color="#d0d",
                 border_width=1,
@@ -548,7 +548,7 @@ def test_offset_examples():
     parent = Container(
         id="offset-examples",
         min_dimensions=Size(width=500, height=300),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f0f0f0",
             border_color="black",
             border_width=1,
@@ -569,7 +569,7 @@ def test_offset_examples():
     box1 = Container(
         id="no-offset",
         min_dimensions=Size(width=80, height=80),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="lightblue",
             border_color="blue",
             border_width=2,
@@ -590,7 +590,7 @@ def test_offset_examples():
     box2 = Container(
         id="relative-offset",
         min_dimensions=Size(width=80, height=80),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="lightgreen",
             border_color="green",
             border_width=2,
@@ -612,7 +612,7 @@ def test_offset_examples():
     box3 = Container(
         id="absolute-offset",
         min_dimensions=Size(width=80, height=80),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="lightyellow",
             border_color="orange",
             border_width=2,
@@ -634,7 +634,7 @@ def test_offset_examples():
     box4 = Container(
         id="combined-offset",
         min_dimensions=Size(width=80, height=80),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="lightpink",
             border_color="red",
             border_width=2,
@@ -676,7 +676,7 @@ def test_svg_with_offset():
     container = Container(
         id="svg-container",
         min_dimensions=Size(width=500, height=300),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f5f5f5",
             border_color="#333",
             border_width=1,
@@ -739,7 +739,7 @@ def test_text_with_offset():
     container = Container(
         id="text-container",
         min_dimensions=Size(width=500, height=300),
-        style=VisualStyle(
+        style=BoxStyle(
             background_color="#f8f8f8",
             border_color="#999",
             border_width=1,
@@ -768,7 +768,7 @@ def test_text_with_offset():
         bg_container = Container(
             id=f"text-bg-{i}",
             min_dimensions=Size(width=100, height=80),
-            style=VisualStyle(
+            style=BoxStyle(
                 background_color="#e0e0e0",
                 border_color="#999",
                 border_width=1,

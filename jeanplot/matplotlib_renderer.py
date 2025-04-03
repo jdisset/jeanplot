@@ -9,7 +9,7 @@ from matplotlib.textpath import TextPath
 from pydantic import Field, BaseModel
 
 from .component import Component
-from .models import Size, VisualStyle
+from .models import Size, BoxStyle
 from .renderer import BaseRenderer
 from .svg import SVGElement, SVGContent
 

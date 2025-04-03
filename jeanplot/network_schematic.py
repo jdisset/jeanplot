@@ -14,7 +14,7 @@ from collections import defaultdict
 
 from jeanplot.component import Component
 from jeanplot.container import Container
-from jeanplot.models import Size, VisualStyle, LayoutConstraints, Offset
+from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset
 from jeanplot.genetic_elements import (
     ERN,
     Promoter,
@@ -41,8 +41,8 @@ class NetworkGeneticSchematic(Container):
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(direction="column", gap=40, align_items="center")
     )
-    style: VisualStyle = Field(
-        default_factory=lambda: VisualStyle(background_color="#ffffff", padding=(30, 30, 30, 30))
+    style: BoxStyle = Field(
+        default_factory=lambda: BoxStyle(background_color="#ffffff", padding=(30, 30, 30, 30))
     )
 
     show_all_tus: bool = False  # show all TUs in sources
@@ -80,8 +80,7 @@ class NetworkGeneticSchematic(Container):
 
     def _create_layout(self):
         """Create layout of sources containing TUs"""
-        grouped_containers = []
-
+        grouped_containers = []  # will contain each row or column
         source_ids_processed = set()
 
         for row_idx, row_tus in enumerate(self._grid_layout):
@@ -125,7 +124,7 @@ class NetworkGeneticSchematic(Container):
             if sources_in_row:
                 direction = self.layout_direction
                 row_container = Container(
-                    id=f"row_{row_idx}",
+                    style_class=["source_row"],
                     layout=LayoutConstraints(
                         direction=direction,
                         gap=40,
@@ -145,7 +144,7 @@ class NetworkGeneticSchematic(Container):
                     )
 
                     group_container = Container(
-                        id=f"group_{row_idx}",
+                        style_class=["group_container"],
                         layout=LayoutConstraints(direction="column", gap=10, align_items="center"),
                         children=[row_title, row_container],
                     )
@@ -164,11 +163,11 @@ class NetworkGeneticSchematic(Container):
                     font_weight="bold",
                     color="#333333",
                     align="center",
-                    style=VisualStyle(margin=(0, 0, 20, 0)),
+                    style=BoxStyle(margin=(0, 0, 20, 0)),
                 )
 
                 main_container = Container(
-                    id="main_container",
+                    style_class=["network_schematic"],
                     layout=LayoutConstraints(
                         direction=opposite_direction, gap=60, align_items="center"
                     ),
@@ -178,7 +177,7 @@ class NetworkGeneticSchematic(Container):
                 self.add_child(main_container)
             else:
                 main_container = Container(
-                    id="main_container",
+                    style_class=["network_schematic"],
                     layout=LayoutConstraints(
                         direction=opposite_direction, gap=60, align_items="center"
                     ),
@@ -209,7 +208,6 @@ class NetworkGeneticSchematic(Container):
             tag_label = f"{marker}"
 
         source = Source(
-            id=f"source_{source_id}",
             source_type="plasmid" if is_plasmid else "cotx",
             marker=marker,
             tag_label=tag_label,

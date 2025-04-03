@@ -1,10 +1,10 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, model_validator, PrivateAttr
 import numpy as np
 from collections import defaultdict
 from functools import partial
 import math
-from .models import Transform, Size, VisualStyle, Offset, AnchorPoint
+from .models import Transform, Size, BoxStyle, Offset, AnchorPoint
 from .debug import debug_print
 from .style import jstyle
 
@@ -22,9 +22,10 @@ class Component(BaseModel):
         default_factory=partial(Size, width=float("inf"), height=float("inf"))
     )
 
-    style: VisualStyle = Field(default_factory=VisualStyle)
+    style: Any = Field(default_factory=BoxStyle)
 
-    style_class: Optional[str] = None  # can be useful for styling selection (similar to css class)
+    # can be useful for styling selection (similar to css class):
+    style_class: list[str] = []
 
     renderer_options: Dict[str, Dict[str, Any]] = Field(default_factory=lambda: defaultdict(dict))
     debug: bool = False

@@ -69,55 +69,66 @@ class Transform(BaseModel):
     """transformation matrix components"""
 
     translate: Tuple[float, float] = (0.0, 0.0)
-    rotate: float = 0.0
+    rotate: float = 0.0  # degrees
     scale: Tuple[float, float] = (1.0, 1.0)
+    skew_x: float = 0.0
+    skew_y: float = 0.0
     rotation_center: Tuple[float, float] = (0.5, 0.5)
 
     def to_matrix(self, dimensions: Optional[Size] = None) -> np.ndarray:
         """convert to 3x3 homogeneous transform matrix"""
-        # handle rotation center with dimensions
-        if dimensions and self.rotate != 0.0:
-            cx, cy = (
-                dimensions.width * self.rotation_center[0],
-                dimensions.height * self.rotation_center[1],
-            )
+        # translation matrix
+        t = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
 
-            # matrices
+        # scaling matrix
+        s = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
+
+        # skew matrix
+        # convert degrees to radians for tan
+        sx_rad = np.radians(self.skew_x)
+        sy_rad = np.radians(self.skew_y)
+        tan_x = np.tan(sx_rad)
+        tan_y = np.tan(sy_rad)
+        # combined skew matrix (applies x-skew based on y, y-skew based on x)
+        skew_m = np.array([[1, tan_x, 0], [tan_y, 1, 0], [0, 0, 1]])
+
+        # rotation matrix and centering logic
+        theta = np.radians(self.rotate)
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        r = np.array([[cos_t, -sin_t, 0], [sin_t, cos_t, 0], [0, 0, 1]])
+
+        # if rotation is non-zero AND dimensions are provided for centering
+        if (
+            self.rotate != 0.0
+            and dimensions
+            and (self.rotation_center[0] != 0.0 or self.rotation_center[1] != 0.0)
+        ):
+            # calculate center point in local coordinates
+            cx = dimensions.width * self.rotation_center[0]
+            cy = dimensions.height * self.rotation_center[1]
+
+            # matrices for moving rotation center to origin and back
             to_center = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]])
-            theta = np.radians(self.rotate)
-            r = np.array(
-                [[np.cos(theta), -np.sin(theta), 0], [np.sin(theta), np.cos(theta), 0], [0, 0, 1]]
-            )
             from_center = np.array([[1, 0, cx], [0, 1, cy], [0, 0, 1]])
-            s = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
-            t = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
 
-            # combine: t * s * from_center * r * to_center
-            return t @ s @ from_center @ r @ to_center
+            # combined transformation: Translate * Scale * Skew * MoveToOrigin * Rotate * MoveFromOrigin
+            # note: applied right-to-left -> matrix multiplication left-to-right
+            # applying skew *before* the rotation centering logic
+            # matrix = t @ s @ skew_m @ from_center @ r @ to_center
+            # let's try applying skew *after* scale but before rotation
+            matrix = t @ from_center @ r @ to_center @ s @ skew_m
+
         else:
-            # simple case without dimensions or rotation
-            t = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
+            # simpler case: rotation around origin (0,0) or no rotation
+            # apply T * R * S * Skew (relative to origin)
+            # if rotation is 0, R is identity
+            matrix = t @ r @ s @ skew_m
 
-            if self.rotate != 0.0:
-                theta = np.radians(self.rotate)
-                r = np.array(
-                    [
-                        [np.cos(theta), -np.sin(theta), 0],
-                        [np.sin(theta), np.cos(theta), 0],
-                        [0, 0, 1],
-                    ]
-                )
-            else:
-                r = np.eye(3)
-
-            s = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
-            return t @ r @ s
+        return matrix
 
 
-class VisualStyle(BaseModel):
-    margin: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    padding: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    background_color: Optional[str] = None
+class BorderStyle(BaseModel):
     border_color: Optional[str] = None
     border_width: float = 0.0
     border_width_mode: LineWidthMode = "data"
@@ -125,6 +136,11 @@ class VisualStyle(BaseModel):
     dash_sequence: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
     corner_radius: float = 0.0
+
+
+class MarginPadding(BaseModel):
+    margin: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    padding: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
 
     # margin accessors
     margin_top = property(lambda self: self.margin[0])
@@ -148,6 +164,10 @@ class VisualStyle(BaseModel):
             max(0, bounds.width - inset[1] - inset[3]),
             max(0, bounds.height - inset[0] - inset[2]),
         )
+
+
+class BoxStyle(BorderStyle, MarginPadding):
+    background_color: Optional[str] = None
 
 
 class LayoutConstraints(BaseModel):

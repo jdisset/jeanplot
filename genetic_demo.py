@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from jeanplot.models import Size, VisualStyle, LayoutConstraints, Offset
+from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset
 from jeanplot.matplotlib_renderer import MatplotlibRenderer
 from jeanplot.container import Container
 from jeanplot.connector import Connection, StraightCurve, OrthogonalCurve, SimpleBezierCurve

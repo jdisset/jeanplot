@@ -412,28 +412,33 @@ class SVGElement(Component):
         """load svg data from file or string"""
         if isinstance(self.svg_content, (str, Path)):
             try:
-                self.svg_content = get_svg_data_from_file(
-                    self.svg_content,
-                )
+                svg_data = get_svg_data_from_file(self.svg_content)
+                if svg_data:
+                    self.svg_content = svg_data
+                else:
+                    print(f"Warning: Failed to load SVG data from {self.svg_content}")
+                    self.svg_content = SVGContent()
 
             except Exception as e:
                 print(f"Error loading SVG: {e}")
                 self.svg_content = SVGContent()
 
         if not isinstance(self.svg_content, SVGContent):
-            self.svg_content = SVGContent()
+            self.svg_content = SVGContent()  # Ensure it's always SVGContent
 
         self._dimensions = Size(
             width=self.svg_content.width,
             height=self.svg_content.height,
         )
-        self._transformed_aabb = self.compute_transformed_aabb()
-        return self
+        self._dimensions.width = min(
+            max(self.min_dimensions.width, self._dimensions.width), self.max_dimensions.width
+        )
+        self._dimensions.height = min(
+            max(self.min_dimensions.height, self._dimensions.height), self.max_dimensions.height
+        )
 
-    def measure(self, renderer=None) -> Size:
-        """return svg dimensions"""
-        self._transformed_aabb = self.compute_transformed_aabb()
-        return self._dimensions
+        self._transformed_aabb = self.compute_transformed_aabb()  # Calculate initial AABB
+        return self
 
     def render(self, renderer, context, matrix: np.ndarray):
         """render svg using renderer"""
@@ -441,3 +446,31 @@ class SVGElement(Component):
         renderer.render_svg(context, self, matrix)
         if self.debug:
             renderer.render_debug(context, self, matrix)
+
+    def measure(self, renderer=None) -> Size:
+        """return svg dimensions, potentially adjusted by scale transform"""
+        if self.svg_content and isinstance(self.svg_content, SVGContent):  # Check type
+            base_width = self.svg_content.width
+            base_height = self.svg_content.height
+
+            scale_x, scale_y = self.transform.scale
+            scaled_width = base_width * abs(scale_x)
+            scaled_height = base_height * abs(scale_y)
+
+            # use scaled dimensions for measurement
+            measured_size = Size(width=scaled_width, height=scaled_height)
+        else:
+            measured_size = Size()  # default to zero if no content
+
+        # apply min/max constraints AFTER scaling
+        final_width = min(
+            max(self.min_dimensions.width, measured_size.width), self.max_dimensions.width
+        )
+        final_height = min(
+            max(self.min_dimensions.height, measured_size.height), self.max_dimensions.height
+        )
+
+        self._dimensions = Size(width=final_width, height=final_height)
+
+        self._transformed_aabb = self.compute_transformed_aabb()  # AABB considers rotation too
+        return self._dimensions

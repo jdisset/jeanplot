@@ -208,50 +208,116 @@ class JStyle:
         return specificity
 
     def _check_attribute_condition(self, condition, component):
-        """check a single attribute=value condition"""
-        # determine operator and split accordingly
-        if "=~" in condition:
-            attr_name, attr_value = condition.split("=~", 1)
-            case_sensitive = False
-        elif "=" in condition:
-            attr_name, attr_value = condition.split("=", 1)
-            case_sensitive = True
-        else:
-            return False
+        """check a single attribute condition (e.g., 'id=foo', 'name=~bar', 'class=/item-\\d+/i')"""
+        # determine operator and split
+        attr_name = ""
+        op = ""
+        value_pattern = ""
 
-        # clean up names and values
-        attr_name = attr_name.strip()
-        attr_value = attr_value.strip()
-        if attr_value.startswith(("'", '"')) and attr_value.endswith(attr_value[0]):
-            attr_value = attr_value[1:-1]
+        # order matters: check for regex first, then case-insensitive, then exact
+        if "=/" in condition and condition.endswith("/"):  # naive check for regex start/end
+            parts = condition.split("=/", 1)
+            if len(parts) == 2:
+                # try to split pattern and flags
+                pattern_flags = parts[1].rsplit("/", 1)
+                if (
+                    len(pattern_flags) == 2 and len(pattern_flags[1]) <= 3
+                ):  # allow up to 3 flags (e.g., 'i', 'm', 's')
+                    attr_name = parts[0].strip()
+                    op = "=/"
+                    value_pattern = pattern_flags[0]  # the regex pattern
+                    flags_str = pattern_flags[1]  # the flags (e.g., 'i')
+                else:  # doesn't look like pattern/flags, treat as normal string
+                    pass  # fallback to other checks
 
+        if not op:  # if regex didn't match format
+            if "=~" in condition:
+                parts = condition.split("=~", 1)
+                if len(parts) == 2:
+                    attr_name = parts[0].strip()
+                    op = "=~"
+                    value_pattern = parts[1].strip()
+            elif "=" in condition:
+                parts = condition.split("=", 1)
+                if len(parts) == 2:
+                    attr_name = parts[0].strip()
+                    op = "="
+                    value_pattern = parts[1].strip()
+            else:
+                return False  # invalid condition format
+
+        # clean up value pattern if it's not regex
+        if (
+            op != "=/"
+            and value_pattern.startswith(("'", '"'))
+            and value_pattern.endswith(value_pattern[0])
+        ):
+            value_pattern = value_pattern[1:-1]
+
+        # get component's actual value
         actual_value = self._get_attribute_value(component, attr_name)
         if actual_value is None:
             return False
 
+        # handle list values: check if *any* item matches
+        if isinstance(actual_value, (list, tuple, set)) and not isinstance(actual_value, str):
+            if op == "=/":
+                return any(
+                    self._regex_matches(item, value_pattern, flags_str) for item in actual_value
+                )
+            else:
+                return any(self._value_matches(item, value_pattern, op) for item in actual_value)
+        else:
+            # handle single value
+            if op == "=/":
+                return self._regex_matches(actual_value, value_pattern, flags_str)
+            else:
+                return self._value_matches(actual_value, value_pattern, op)
+
+    def _regex_matches(self, actual_value, pattern, flags_str):
+        """perform regex matching"""
+        actual_str = str(actual_value)
+        re_flags = 0
+        if "i" in flags_str:
+            re_flags |= re.IGNORECASE  # case-insensitive (eq to using =~)
+        if "m" in flags_str:
+            re_flags |= re.MULTILINE  # multiline means '^' and '$' match start/end of lines
+        if "s" in flags_str:
+            re_flags |= re.DOTALL  # dotall means '.' matches any character, including newline
+        # using re.search to find pattern anywhere in string, use re.match for start only
+        try:
+            return bool(re.search(pattern, actual_str, re_flags))
+        except re.error as e:
+            # handle invalid regex patterns gracefully in styles
+            print(f"Warning: Invalid regex pattern '{pattern}' in style selector: {e}")
+            return False
+
+    def _value_matches(self, actual_value, pattern_value, operator):
+        """check if a single value matches using =, =~ operators"""
         actual_str = str(actual_value)
 
-        has_wildcard = "*" in attr_value or "?" in attr_value
-
+        has_wildcard = "*" in pattern_value or "?" in pattern_value
         if has_wildcard:
             # convert wildcard pattern to regex
-            pattern = attr_value.replace(".", "\\.").replace("*", ".*").replace("?", ".")
-            pattern = f"^{pattern}$"
+            regex_pattern = pattern_value.replace(".", "\\.").replace("*", ".*").replace("?", ".")
+            regex_pattern = f"^{regex_pattern}$"  # anchor wildcard match
 
-            flags = re.IGNORECASE if not case_sensitive else 0
-            regex = re.compile(pattern, flags)
-
-            return bool(regex.match(actual_str))
+            # case sensitivity depends on original operator
+            flags = re.IGNORECASE if operator == "=~" else 0
+            try:
+                return bool(re.match(regex_pattern, actual_str, flags))
+            except re.error as e:
+                print(f"Warning: Invalid wildcard pattern '{pattern_value}' in style selector: {e}")
+                return False
         else:
             # standard comparison without wildcards
-            if case_sensitive:
-                return actual_str == attr_value
+            if operator == "=":  # exact match
+                return actual_str == pattern_value
+            elif operator == "=~":  # case-insensitive match
+                # check type to avoid errors comparing non-strings case-insensitively
+                return actual_str.lower() == pattern_value.lower()
             else:
-                return (
-                    isinstance(actual_value, str)
-                    and isinstance(attr_value, str)
-                    and attr_value.lower() == actual_str.lower()
-                )
+                return False  # should not happen
 
     def _get_attribute_value(self, component, attr_name):
         """get attribute value, handling nested paths"""
@@ -259,16 +325,17 @@ class JStyle:
         if "." in attr_name:
             parts = attr_name.split(".")
             obj = component
-
             for part in parts[:-1]:
-                if hasattr(obj, part):
-                    obj = getattr(obj, part)
-                else:
+                # handle potential None values during traversal
+                if obj is None or not hasattr(obj, part):
                     return None
+                obj = getattr(obj, part)
 
-            return getattr(obj, parts[-1]) if hasattr(obj, parts[-1]) else None
+            # check final part on the potentially None object
+            return getattr(obj, parts[-1]) if obj is not None and hasattr(obj, parts[-1]) else None
 
-        return getattr(component, attr_name) if hasattr(component, attr_name) else None
+        # direct attribute
+        return getattr(component, attr_name, None)  # use default=None
 
     def _set_property(self, component, property_name, value):
         """set a property on a component"""
