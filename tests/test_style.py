@@ -1,4 +1,5 @@
 import pytest
+from typing import Optional, List
 import copy
 from jeanplot.component import Component
 from jeanplot.container import Container
@@ -762,3 +763,190 @@ def test_nested_context_discovery_during_apply():
     assert (
         child.color == "red"
     ), "Child should get 'red' from nested rule found via context discovery"
+
+
+def test_style_leakage_between_siblings():
+    """
+    tests if styling a property (esp. on a nested model like 'style')
+    for one subclass incorrectly affects a sibling subclass that inherits
+    the same base style object reference initially.
+    """
+    from jeanplot.models import LayoutConstraints
+
+    # --- component definitions for this test ---
+    class SiblingBase(Container):
+        # base class defines the style field with a factory
+        style: BoxStyle = Field(default_factory=BoxStyle)
+        unique_prop: str = "base_default"
+
+    class SiblingA(SiblingBase):
+        pass  # inherits style
+
+    class SiblingB(SiblingBase):
+        pass  # inherits style
+
+    # --- end component definitions ---
+
+    # style only sibling a's shadow and unique_prop
+    jstyle.update(
+        {
+            "SiblingA": {
+                "style.shadow": {"blur_radius": 5, "color": "red"},
+                "unique_prop": "set_for_A",
+                "layout": LayoutConstraints(
+                    direction="column",
+                ),
+            },
+            "SiblingB": {
+                "unique_prop": "set_for_B"  # style B differently
+            },
+        }
+    )
+
+    sibling_a = SiblingA(id="a")
+    sibling_b = SiblingB(id="b")  # sibling instance
+
+    print(f"Initial style object IDs: A={id(sibling_a.style)}, B={id(sibling_b.style)}")
+
+    # apply styles - this is where the potential mutation happens
+    jstyle.apply(sibling_a)
+    jstyle.apply(sibling_b)
+
+    print(f"Final style object IDs:   A={id(sibling_a.style)}, B={id(sibling_b.style)}")
+
+    # sibling_a should have the shadow and its unique prop
+    assert sibling_a.style.shadow is not None, "SiblingA should have a shadow"
+    assert sibling_a.style.shadow.blur_radius == 5
+    assert sibling_a.style.shadow.color == "red"
+    assert sibling_a.unique_prop == "set_for_A"
+    assert sibling_a.layout.direction == "column"
+
+    # sibling_b should *not* have the shadow from sibling_a's rule
+    # and should have its own unique_prop value
+    assert (
+        sibling_b.style.shadow is None
+    ), "SiblingB's style.shadow should remain None (not affected by SiblingA's style)"
+    assert sibling_b.unique_prop == "set_for_B"
+    assert sibling_b.layout.direction == "row"  # default from Container
+
+
+def test_attribute_presence_selector():
+    """
+    tests the [attribute_name] selector for presence and truthiness.
+    """
+
+    # --- component definition for this test ---
+    class FeatureComponent(Component):
+        is_active: bool = False
+        has_feature: Optional[str] = None  # optional attribute
+        counter: int = 0
+        items: List[str] = Field(default_factory=list)
+        style: BoxStyle = Field(default_factory=BoxStyle)  # add style for testing nested props
+
+    # --- end component definition ---
+
+    jstyle.update(
+        {
+            "[is_active]": {"style.border_color": "green"},
+            "[has_feature]": {"style.background_color": "yellow"},
+            "[counter]": {"style.border_width": 2},  # counter=0 is falsy
+            "[items]": {"style.corner_radius": 5},  # empty list is falsy
+        }
+    )
+
+    # create components with different attribute states
+    comp_active = FeatureComponent(id="active", is_active=True)
+    comp_inactive = FeatureComponent(id="inactive", is_active=False)
+    comp_feature_str = FeatureComponent(id="feature_str", has_feature="enabled")
+    comp_feature_empty = FeatureComponent(id="feature_empty", has_feature="")  # falsy
+    comp_feature_none = FeatureComponent(id="feature_none", has_feature=None)  # falsy
+    comp_counter_zero = FeatureComponent(id="counter_zero", counter=0)  # falsy
+    comp_counter_non_zero = FeatureComponent(id="counter_non_zero", counter=5)  # truthy
+    comp_items_empty = FeatureComponent(id="items_empty", items=[])  # falsy
+    comp_items_full = FeatureComponent(id="items_full", items=["a"])  # truthy
+
+    # apply styles to all components
+    components = [
+        comp_active,
+        comp_inactive,
+        comp_feature_str,
+        comp_feature_empty,
+        comp_feature_none,
+        comp_counter_zero,
+        comp_counter_non_zero,
+        comp_items_empty,
+        comp_items_full,
+    ]
+    # applying individually to avoid container context issues
+    for comp in components:
+        jstyle.apply(comp)
+
+    # --- assertions ---
+    # [is_active]
+    assert comp_active.style.border_color == "green", "Should match [is_active] when True"
+    assert comp_inactive.style.border_color is None, "Should NOT match [is_active] when False"
+
+    # [has_feature]
+    assert (
+        comp_feature_str.style.background_color == "yellow"
+    ), "Should match [has_feature] when truthy string"
+    assert (
+        comp_feature_empty.style.background_color is None
+    ), "Should NOT match [has_feature] when empty string"
+    assert (
+        comp_feature_none.style.background_color is None
+    ), "Should NOT match [has_feature] when None"
+
+    # [counter]
+    assert (
+        comp_counter_zero.style.border_width == 0.0
+    ), "Should NOT match [counter] when 0"  # default width is 0
+    assert comp_counter_non_zero.style.border_width == 2, "Should match [counter] when non-zero"
+
+    # [items]
+    assert (
+        comp_items_empty.style.corner_radius == 0.0
+    ), "Should NOT match [items] when empty list"  # default radius is 0
+    assert comp_items_full.style.corner_radius == 5, "Should match [items] when non-empty list"
+
+
+def test_attribute_absence_selector():
+    """
+    tests the [!attribute_name] selector for absence or falsiness.
+    """
+
+    # --- component definition for this test ---
+    class OptFeatureComponent(Component):
+        is_enabled: Optional[bool] = None
+        config_value: Optional[int] = None
+        style: BoxStyle = Field(default_factory=BoxStyle)
+
+    # --- end component definition ---
+
+    jstyle.update(
+        {
+            "[!is_enabled]": {"style.border_style": "dotted"},
+            "[!config_value]": {"style.background_color": "lightgrey"},
+        }
+    )
+
+    comp_none = OptFeatureComponent(id="none", is_enabled=None, config_value=None)
+    comp_false = OptFeatureComponent(id="false", is_enabled=False, config_value=0)
+    comp_true = OptFeatureComponent(id="true", is_enabled=True, config_value=10)
+
+    components = [comp_none, comp_false, comp_true]
+    for comp in components:
+        jstyle.apply(comp)
+
+    # --- assertions ---
+    # [!is_enabled] - should match None and False
+    assert comp_none.style.border_style == "dotted", "[!is_enabled] should match None"
+    assert comp_false.style.border_style == "dotted", "[!is_enabled] should match False"
+    assert (
+        comp_true.style.border_style == "solid"
+    ), "[!is_enabled] should NOT match True (default is solid)"
+
+    # [!config_value] - should match None and 0
+    assert comp_none.style.background_color == "lightgrey", "[!config_value] should match None"
+    assert comp_false.style.background_color == "lightgrey", "[!config_value] should match 0"
+    assert comp_true.style.background_color is None, "[!config_value] should NOT match 10"
