@@ -166,8 +166,18 @@ class MarginPadding(BaseModel):
         )
 
 
+class Shadow(BaseModel):
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    blur_radius: float = 3.0
+    spread: float = 0.0
+    color: str = "#00000080"
+    resolution: float = 1.0
+
+
 class BoxStyle(BorderStyle, MarginPadding):
     background_color: Optional[str] = None
+    shadow: Optional[Shadow] = None
 
 
 class LayoutConstraints(BaseModel):

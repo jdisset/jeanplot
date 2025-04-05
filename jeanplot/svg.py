@@ -82,6 +82,38 @@ def _normalize_vector(v, default=(1, 0)):
     return (v[0] / length, v[1] / length) if length > 0 else default
 
 
+def arc_to_bezier(center_x, center_y, radius, start_angle_deg, end_angle_deg):
+    """
+    Convert a 90-degree circular arc to a cubic Bezier curve approximation.
+    Angles are in degrees, counter-clockwise from positive x-axis.
+    Includes debug prints. Attempts different control point offset.
+    """
+    start_rad = np.radians(start_angle_deg)
+    end_rad = np.radians(end_angle_deg)
+
+    angle_diff = abs(end_angle_deg - start_angle_deg)
+    if not np.isclose(angle_diff, 90.0, atol=1e-6) and not np.isclose(angle_diff, 270.0, atol=1e-6):
+        raise ValueError(f"this bezier approximation is only for 90-degree arcs, got {angle_diff}")
+
+    kappa = 0.5522847498
+    dist = kappa * radius
+
+    p_start = (center_x + radius * np.cos(start_rad), center_y + radius * np.sin(start_rad))
+    p_end = (center_x + radius * np.cos(end_rad), center_y + radius * np.sin(end_rad))
+
+    # tangent vector at start point
+    tx1, ty1 = -np.sin(start_rad), np.cos(start_rad)
+    # *** Try subtracting offset from start ***
+    cp1 = (p_start[0] - dist * tx1, p_start[1] - dist * ty1)
+
+    # tangent vector at end point
+    tx2, ty2 = -np.sin(end_rad), np.cos(end_rad)
+    # *** Try adding offset relative to end tangent ***
+    cp2 = (p_end[0] + dist * tx2, p_end[1] + dist * ty2)
+
+    return p_start, cp1, cp2, p_end
+
+
 def create_arrow_cap(
     point: Tuple[float, float], direction: Tuple[float, float], arrow: LineEndArrow
 ) -> SVGPathData:
