@@ -311,7 +311,7 @@ class MatplotlibRenderer(BaseRenderer):
             points_per_data_unit = linewidth_from_data_units(1.0, context)
             # Use the user's refined formula for num_layers
             num_layers = max(
-                5,
+                4,
                 int((shadow.blur_radius**1) * (points_per_data_unit**0.75) * shadow.resolution),
             )
             num_layers = min(num_layers, 100)  # cap layers for sanity

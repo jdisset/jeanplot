@@ -34,7 +34,7 @@ Core Features:
         - `^=`: Starts with (`[id^=item-]`)
         - `$=`: Ends with (`[filename$=.png]`)
         - `*=`: Contains substring (`[text*='important']`)
-        - `=/regex/flags`: Regular expression match (e.g., `[id=/^user-\d+$/i]`)
+        - `=/regex/flags`: Regular expression match (e.g., `[name=/^foo/i]`).
         - `[attr]`: Presence check (attribute exists and is truthy) (`[disabled]`)
         - `<`, `<=`, `>`, `>=`: Numeric comparison (`[value>100]`)
         ```python
@@ -117,6 +117,7 @@ Core Features:
     *   `with jstyle(temporary_styles): ...`: Creates a temporary context where
         `temporary_styles` are merged with and override global styles. Styles
         revert upon exiting the `with` block.
+    *   `jstyle.clear()`: Clears all styles, resetting to the default state.
 
 """
 
@@ -148,9 +149,12 @@ class Selector:
     _ATTRIBUTE_SELECTOR_RE: ClassVar = re.compile(r"\[([^\]]+)\]")
     _CONDITION_RE: ClassVar = re.compile(
         # group 1: name, group 2: operator, group 3: value
-        r"^\s*([^=~!<>*^$]+)\s*(=[/~]?|!=|<=?|>=?|\*=|\^=|\$=)?\s*(.*)\s*$"
+        r"^\s*([^=~!<>*^$!]+)\s*(=[/~]?|!=|<=?|>=?|\*=|\^=|\$=)?\s*(.*)\s*$"  # added '!' to excluded chars for name start
     )
     _REGEX_RE: ClassVar = re.compile(r"^(.*)/([ism]*)$")  # pattern, flags
+    _PRESENCE_RE: ClassVar = re.compile(
+        r"^\s*(!)?([\w.-]+)\s*$"
+    )  # group 1: negation, group 2: attr name
 
     raw_selector: str
     type_selector: Optional[str] = None
@@ -169,19 +173,45 @@ class Selector:
     def _parse(self):
         """extracts type and attribute parts from the raw selector."""
         selector = self.raw_selector
-        match = self._ATTRIBUTE_SELECTOR_RE.search(selector)
-        if match:
-            attr_part = match.group(0)
-            type_part = selector.split(attr_part)[0].strip()
+        matches = list(self._ATTRIBUTE_SELECTOR_RE.finditer(selector))  # find all attribute parts
+
+        if not matches:
+            # no attribute selectors, just type or wildcard
+            if selector != "*":
+                self.type_selector = selector
+            return
+
+        # handle potentially multiple attribute selectors like Type[attr1][attr2]
+        last_match_end = 0
+        combined_attr_content = ""
+        if not selector.startswith("["):  # check if there's a type selector before the first attr
+            first_match_start = matches[0].start()
+            type_part = selector[:first_match_start].strip()
             if type_part and type_part != "*":
                 self.type_selector = type_part
-            self._parse_attributes(attr_part[1:-1])  # content inside brackets
-        elif selector != "*":
-            self.type_selector = selector
+            last_match_end = matches[0].end()
+            combined_attr_content += matches[0].group(1)  # content of first bracket
+        else:  # starts directly with attribute selector
+            last_match_end = matches[0].end()
+            combined_attr_content += matches[0].group(1)
+
+        # append content from subsequent adjacent brackets if any
+        for i in range(1, len(matches)):
+            if matches[i].start() == last_match_end:  # check if brackets are adjacent
+                # use comma as separator for distinct selectors within merged content
+                combined_attr_content += "," + matches[i].group(1)
+                last_match_end = matches[i].end()
+            else:
+                # non-adjacent bracket means invalid syntax between them or end of sequence
+                logger.warning(
+                    f"ignoring attribute content after non-adjacent bracket in selector: '{self.raw_selector}'"
+                )
+                break
+
+        self._parse_attributes(combined_attr_content)
 
     def _parse_attributes(self, attr_content: str):
         """parses comma-separated attribute conditions."""
-        # split by comma, but not inside quotes or brackets (basic handling)
         conditions = [
             cond.strip()
             for cond in re.split(r",(?=(?:[^\"']*[\"'][^\"']*[\"'])*[^\"']*$)", attr_content)
@@ -189,20 +219,28 @@ class Selector:
         for cond in conditions:
             if not cond:
                 continue
-            match = self._CONDITION_RE.match(cond)
-            if match:
-                name, op, val = match.groups()
+
+            match_presence = self._PRESENCE_RE.match(cond)
+            if match_presence:
+                negation, name = match_presence.groups()
+                op = "not_exists" if negation == "!" else "exists"
+                self.attributes.append((name.strip(), op, None))
+                continue  # condition parsed, move to next
+
+            match_cond = self._CONDITION_RE.match(cond)
+            if match_cond:
+                name, op, val = match_cond.groups()
                 # strip quotes from value if present
-                if val and val.startswith(("'", '"')) and val.endswith(val[0]):
+                if val and len(val) >= 2 and val.startswith(("'", '"')) and val.endswith(val[0]):
                     val = val[1:-1]
-                self.attributes.append((name.strip(), op, val.strip()))
-            # handle simple attribute presence check like '[disabled]'
-            elif re.match(r"^\s*[\w.-]+\s*$", cond):
-                self.attributes.append((cond.strip(), "exists", None))
-            else:
-                logger.warning(
-                    f"could not parse attribute condition: '{cond}' in '{self.raw_selector}'"
-                )
+                # default op is '=' if present but group is None (e.g., [attr=val] which is caught by _CONDITION_RE)
+                self.attributes.append((name.strip(), op or "=", val.strip()))
+                continue  # condition parsed, move to next
+
+            # if neither matched, log warning
+            logger.warning(
+                f"could not parse attribute condition: '{cond}' in '{self.raw_selector}'"
+            )
 
     def _calculate_specificity(self) -> Specificity:
         """calculates specificity based on parsed components."""
@@ -239,31 +277,37 @@ class Selector:
     ) -> bool:
         """checks a single attribute condition."""
         actual_value = self._get_attribute_value(component, name)
+        attr_exists = (
+            actual_value is not None
+        )  # need to know if the attribute exists at all for exists/not_exists
 
         op_map: Dict[str, Callable[[Any, Optional[str]], bool]] = {
-            "exists": lambda v, p: bool(v),
-            "=": lambda v, p: self._value_matches(v, p, operator="="),
-            "!=": lambda v, p: self._value_matches(v, p, operator="!="),
-            "=~": lambda v, p: self._value_matches(v, p, operator="=~"),
-            "^=": lambda v, p: str(v).startswith(p) if v is not None and p is not None else False,
-            "$=": lambda v, p: str(v).endswith(p) if v is not None and p is not None else False,
-            "*=": lambda v, p: p in str(v) if v is not None and p is not None else False,
-            "=/": self._regex_matches,
-            "<": lambda v, p: self._numeric_compare(v, p, operator="<"),
-            "<=": lambda v, p: self._numeric_compare(v, p, operator="<="),
-            ">": lambda v, p: self._numeric_compare(v, p, operator=">"),
-            ">=": lambda v, p: self._numeric_compare(v, p, operator=">="),
+            "exists": lambda v, p: attr_exists and bool(v),  # exists and truthy
+            "not_exists": lambda v, p: not attr_exists or not bool(v),  # does not exist or is falsy
+            "=": lambda v, p: attr_exists and self._value_matches(v, p, operator="="),
+            "!=": lambda v, p: not attr_exists
+            or self._value_matches(v, p, operator="!="),  # true if not exists OR value mismatch
+            "=~": lambda v, p: attr_exists and self._value_matches(v, p, operator="=~"),
+            "^=": lambda v, p: attr_exists and str(v).startswith(p) if p is not None else False,
+            "$=": lambda v, p: attr_exists and str(v).endswith(p) if p is not None else False,
+            "*=": lambda v, p: attr_exists and p in str(v) if p is not None else False,
+            "=/": lambda v, p: attr_exists and self._regex_matches(v, p),
+            "<": lambda v, p: attr_exists and self._numeric_compare(v, p, operator="<"),
+            "<=": lambda v, p: attr_exists and self._numeric_compare(v, p, operator="<="),
+            ">": lambda v, p: attr_exists and self._numeric_compare(v, p, operator=">"),
+            ">=": lambda v, p: attr_exists and self._numeric_compare(v, p, operator=">="),
         }
 
-        # handle list attributes: match if *any* item matches
-        if isinstance(actual_value, (list, tuple, set)) and op != "exists":
-            # use the specific operator's function for list items
-            matcher = op_map.get(op) if op else None
+        # handle list attributes: match if *any* item matches (only for comparison ops, not exists/not_exists)
+        list_ops = {"=", "!=", "=~", "^=", "$=", "*=", "=/", "<", "<=", ">", ">="}
+        if isinstance(actual_value, (list, tuple, set)) and op in list_ops:
+            matcher = op_map.get(op)
             if matcher and value_pattern is not None:
+                # note: list matching against != might be unintuitive, e.g., [a!=foo] is true if *any* element is not foo.
                 return any(matcher(item, value_pattern) for item in actual_value)
             return False  # invalid op for list or no pattern
 
-        # handle non-list attributes
+        # handle non-list attributes or exists/not_exists
         matcher = op_map.get(op) if op else None
         if matcher:
             return matcher(actual_value, value_pattern)
@@ -315,9 +359,11 @@ class Selector:
         self, actual_value: Any, pattern_value: Optional[str], operator: str
     ) -> bool:
         """performs basic value comparisons (equality, inequality, case-insensitive)."""
+        # this check assumes the attribute exists (done in _check_condition)
         if pattern_value is None:
-            # only makes sense for != check against None/non-None
-            return operator == "!=" and actual_value is not None
+            # this case should ideally not be reached if op requires a pattern
+            logger.warning(f"pattern_value is None for operator '{operator}'")
+            return False
 
         # handle 'none' keyword for checking against None
         pattern_is_none_keyword = pattern_value.lower() == "none"
@@ -328,12 +374,14 @@ class Selector:
                 and str(actual_value) == pattern_value
             )
         elif operator == "!=":
-            return (actual_value is not None or not pattern_is_none_keyword) and (
-                actual_value is None
-                or pattern_is_none_keyword
-                or str(actual_value) != pattern_value
-            )
+            # actual value is not None AND (pattern is not 'none' keyword OR actual value differs)
+            # OR actual value is None AND pattern is not 'none' keyword
+            return (
+                actual_value is not None
+                and (not pattern_is_none_keyword or str(actual_value) != pattern_value)
+            ) or (actual_value is None and not pattern_is_none_keyword)
         elif operator == "=~":
+            # case-insensitive comparison only makes sense if both are not None and pattern is not 'none'
             return (
                 actual_value is not None
                 and not pattern_is_none_keyword
@@ -348,8 +396,9 @@ class Selector:
         self, actual_value: Any, pattern_value: Optional[str], operator: str
     ) -> bool:
         """performs numeric comparisons."""
-        if actual_value is None or pattern_value is None:
-            return False
+        # this check assumes the attribute exists (done in _check_condition)
+        if pattern_value is None:
+            return False  # cannot compare numerically with None
         try:
             num_actual, num_pattern = float(actual_value), float(pattern_value)
             op_map = {
@@ -589,20 +638,88 @@ class JStyle:
         try:
             # traverse to the parent object
             for part in parts[:-1]:
-                target_obj = getattr(target_obj, part)
-                if target_obj is None:
-                    logger.warning(
-                        f"intermediate attribute '{part}' is None in '{property_name}' for {comp_cls}(id={comp_id})"
-                    )
-                    return
+                # if intermediate part is a pydantic model but None, try to create it? - might be too complex/risky
+                # for now, assume intermediate parts must exist
+                current_intermediate = getattr(target_obj, part)
+                if current_intermediate is None:
+                    # Check if it's supposed to be a model and has a default factory
+                    field_info = getattr(target_obj, "model_fields", {}).get(part)
+                    if (
+                        field_info
+                        and hasattr(field_info, "default_factory")
+                        and field_info.default_factory
+                    ):
+                        logger.debug(
+                            f"      instantiating intermediate model '{part}' using default factory"
+                        )
+                        current_intermediate = field_info.default_factory()
+                        setattr(
+                            target_obj, part, current_intermediate
+                        )  # set the new intermediate model back
+                        target_obj = current_intermediate
+                    else:
+                        logger.warning(
+                            f"intermediate attribute '{part}' is None in '{property_name}' for {comp_cls}(id={comp_id}) and cannot be auto-created."
+                        )
+                        return
+                else:
+                    target_obj = current_intermediate
 
             current_val = getattr(target_obj, attr_to_set, None)
             final_value = value
 
             # handle pydantic model update with dict value
             if isinstance(current_val, BaseModel) and isinstance(value, dict):
-                logger.debug(f"      handling basemodel update for {property_name}")
+                logger.debug(f"      handling basemodel update for existing {property_name}")
                 final_value = self._update_pydantic_model(current_val, value, property_name)
+            elif (
+                current_val is None
+                and isinstance(value, dict)
+                and isinstance(target_obj, BaseModel)
+            ):
+                # check if the target attribute is annotated as a pydantic model
+                field_info = target_obj.model_fields.get(attr_to_set)
+                if field_info and hasattr(field_info, "annotation"):
+                    # get the actual type annotation, handling optional[...]
+                    target_type = field_info.annotation
+                    origin = getattr(target_type, "__origin__", None)
+                    if (
+                        origin is Union or origin is Optional
+                    ):  # check for Optional[Model] or Union[Model, None]
+                        args = getattr(target_type, "__args__", [])
+                        # find the basemodel type among the union args
+                        model_type = next(
+                            (
+                                arg
+                                for arg in args
+                                if inspect.isclass(arg) and issubclass(arg, BaseModel)
+                            ),
+                            None,
+                        )
+                    elif inspect.isclass(target_type) and issubclass(target_type, BaseModel):
+                        model_type = target_type
+                    else:
+                        model_type = None
+
+                    if model_type:
+                        try:
+                            logger.debug(
+                                f"      instantiating new '{model_type.__name__}' for {property_name} from dict"
+                            )
+                            # instantiate the model from the dict value
+                            final_value = model_type(**value)
+                        except ValidationError as e_create:
+                            logger.error(
+                                f"      validation error creating {model_type.__name__} for {property_name}: {e_create}"
+                            )
+                            # fallback to setting the dict if model creation fails? or just skip? skip for now.
+                            return
+                        except Exception as e_create_other:
+                            logger.error(
+                                f"      error creating {model_type.__name__} for {property_name}: {e_create_other}",
+                                exc_info=True,
+                            )
+                            return
 
             # perform assignment
             setattr(target_obj, attr_to_set, final_value)
@@ -755,6 +872,11 @@ class JStyle:
             # restore original styles
             self.styles = old_parsed_rules
             self._raw_styles = old_raw_styles
+
+    def clear(self):
+        """clears all styles."""
+        self._raw_styles = {}
+        self.styles = []
 
     __call__ = context
 
