@@ -29,6 +29,8 @@ PLASMID_LOGO = DEFAULT_RESOURCE_PATH + "/parts/l2.svg"
 class TranscriptionUnit(Container):
     """render an SVG line representing the transcription unit, in the middle"""
 
+    name: Optional[str] = None
+    label: Optional[Text] = None
     line_thickness: float = 1
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
@@ -36,17 +38,37 @@ class TranscriptionUnit(Container):
         )
     )
 
+    @model_validator(mode="after")
+    def set_label_from_name(self):
+        """create label text component from name if not explicitly provided"""
+        if self.name and not self.label and not any(isinstance(c, Text) for c in self.children):
+            self.label = Text(
+                text=self.name,
+                font_size=4,
+                offset=Offset(parent_relative=(0, 1.1)),  # position above
+                style_class=["tu-label"],
+                is_overlay=True,
+                color="#aaaaaa",
+            )
+            self.add_child(self.label)
+        elif self.label and self.label not in self.children:
+            self.add_child(self.label)
+        return self
+
     def render(self, renderer, context, matrix: np.ndarray):
+        # draw main TU line in the middle vertically
         svg_line_content = make_svg_line(self._dimensions.width, self.line_thickness, "#000000")
         svg_line = SVGElement(
             svg_content=svg_line_content,
             transform=Transform(translate=(0, (self._dimensions.height - self.line_thickness) / 2)),
         )
-        svg_line._dimensions = Size(width=self._dimensions.width, height=2)
+        svg_line._dimensions = Size(width=self._dimensions.width, height=self.line_thickness)
 
-        svg_line_matrix = svg_line.compute_world_matrix(matrix)
+        # render the line using its *own* local matrix relative to the parent (TU) matrix
+        svg_line_matrix = matrix @ svg_line.compute_local_matrix()
         svg_line.render(renderer, context, svg_line_matrix)
 
+        # render children (parts and the label) using the standard container logic
         Container.render(self, renderer, context, matrix)
 
 
@@ -197,7 +219,7 @@ class UorfGroup(GeneticPart):
                 align="center",
                 vertical_align="middle",
                 font_size=5,
-                offset=Offset(relative=(0, -1.3)),
+                offset=Offset(relative=(0, 1.3)),
             )
         return values
 
@@ -205,6 +227,7 @@ class UorfGroup(GeneticPart):
 class ERN5pRecog(GeneticPart):
     part_type: str = "ERN_recog_site_5p"
     offset: Offset = Offset(relative=(0, -0.4), absolute=(0, 0.5))
+    style: BoxStyle = BoxStyle(margin=(0, 2, 0, -4))
 
     anchor_points: list[AnchorPoint] = [
         AnchorPoint(offset=Offset(relative=(0.5, -0.1)), direction=(0, 1), min_segment=30),

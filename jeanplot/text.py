@@ -2,6 +2,7 @@ from typing import Optional, Literal
 import numpy as np
 from .component import Component
 from .models import Size
+from .style import jstyle
 
 
 class Text(Component):
@@ -18,6 +19,7 @@ class Text(Component):
     line_spacing: float = 0.2  # controls extra space between lines (0.0 = no extra space)
 
     def measure(self, renderer=None) -> Size:
+        jstyle.apply(self)
         if not self.text:
             self._dimensions = Size()
             self._transformed_aabb = Size()

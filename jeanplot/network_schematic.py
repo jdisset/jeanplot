@@ -7,7 +7,6 @@ However, by convention, to not overload the schematics, in a source that has a f
 I then add a source_tag (and color the border of the source thanks to the style sheet) that just "discretely" tell what color is attached to this construct and in what ratio (or at what position if it's an L2).
 Recognizing a marker transcription unit is easy: it's the simplest possible TU: promoter + fluo gene + terminator (+ maybe insulator I guess).
 """
-# jeanplot/network_schematic.py
 
 from typing import Dict, List, Optional, Any, Tuple, Literal
 from pydantic import Field, PrivateAttr
@@ -95,7 +94,7 @@ class NetworkGeneticSchematic(Container):
     )
     layout_orientation: Literal["row", "column"] = "row"
     show_all_tus: bool = False
-    grid_gap: Tuple[float, float] = (40.0, 20.0)
+    grid_gap: Tuple[float, float] = (40.0, 40.0)
     connection_style: Literal["orthogonal", "bezier", "straight"] = "orthogonal"
 
     _tu_infos: Dict[str, TUInfo] = PrivateAttr(default_factory=dict)
@@ -223,7 +222,8 @@ class NetworkGeneticSchematic(Container):
             self.children = [c for c in self.children if not isinstance(c, TranscriptionUnit)]
         for tu_id in self._grid_coords.keys():  # iterate over TUs present in the compacted grid
             tu_info = self._tu_infos[tu_id]
-            tu = TranscriptionUnit(id=tu_id)
+            # create TU with name from tu_info
+            tu = TranscriptionUnit(id=tu_id, name=tu_info.tu_name)
             tu.parent = self
             for part in tu_info.parts:
                 element = self._create_genetic_element(part, tu_id)
@@ -437,7 +437,7 @@ class NetworkGeneticSchematic(Container):
         self.children.extend(connections_to_add)
 
     def measure_and_layout(self, renderer=None) -> Size:
-        # orchestration logic remains the same
+        jstyle.apply(self)
         self.children = []
         self._create_tu_components(add_as_children=False)
         if not self._tu_components:

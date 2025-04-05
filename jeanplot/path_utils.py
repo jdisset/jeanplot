@@ -1,6 +1,6 @@
-# jeanplot/path_utils.py
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List, Tuple
 from .component import Component
+from collections import defaultdict
 
 
 def find_component_by_path(root: Component, path: str) -> Optional[Component]:

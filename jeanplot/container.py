@@ -1,5 +1,6 @@
+# jeanplot/container.py
 from pydantic import Field, model_validator, BaseModel, PrivateAttr, BeforeValidator
-from typing import Annotated
+from typing import Annotated, List  # Ensure List is imported
 from .component import Component
 import numpy as np
 from .models import Size, LayoutConstraints
@@ -11,6 +12,7 @@ from .style import jstyle
 def is_true(value):
     if not value:
         raise ValueError("Value must be True")
+    return True
 
 
 class Overlay(Component):
@@ -27,7 +29,6 @@ class Container(Component):
     def set_parent_for_children(self):
         for child in self.children:
             child.parent = self
-            jstyle.apply(child)
         return self
 
     def _log_debug(self, message: str, data=None):
@@ -37,7 +38,8 @@ class Container(Component):
         """measure container based on children's bounds"""
         self._log_debug("Measuring container")
         for child in self.children:
-            child.parent = self
+            if child.parent != self:
+                child.parent = self
 
         if not self.children:
             self._dimensions = self.min_dimensions
@@ -110,19 +112,27 @@ class Container(Component):
         # first measure non-overlay children
         layout_children = [c for c in self.children if not c.is_overlay]
         for child in layout_children:
+            # ensure parent link is set before child layout
+            if child.parent != self:
+                child.parent = self
+            # the child's measure_and_layout will apply its own styles
             child.measure_and_layout(renderer)
             self._log_debug(
                 f"Child {child.id} measured",
                 {"dims": (child._dimensions.width, child._dimensions.height)},
             )
 
+        # now measure the container itself based on children sizes
         self.measure(renderer)
 
+        # apply layout (position children) based on container size
         self.apply_layout()
         self._log_debug("Layout applied")
 
         # measure and layout overlays (connections, etc.)
         for overlay in [c for c in self.children if c.is_overlay]:
+            if overlay.parent != self:
+                overlay.parent = self
             overlay.measure_and_layout(renderer)
             self._log_debug(
                 f"Overlay {overlay.id} measured",
@@ -131,6 +141,9 @@ class Container(Component):
                     "pos": overlay.transform.translate,
                 },
             )
+
+        # recompute aabb for the container after layout
+        self._transformed_aabb = self.compute_transformed_aabb()
 
         return self._dimensions
 
@@ -156,10 +169,15 @@ class Container(Component):
         if stretched:
             # remeasure container based on stretched children
             self.measure()
-            # potentially relayout nested containers
+            # relayout children within the container after remeasure
+            self._layout_children(
+                content_x, content_y, content_w, content_h, is_row, layout_children
+            )
+            # potentially relayout nested containers IF their size changed
             for container in stretched:
                 if isinstance(container, Container) and container.children:
-                    container.apply_layout()
+                    # Trigger re-layout for stretched containers
+                    container.measure_and_layout()
 
     def _apply_stretch_alignment(self, content_w, content_h):
         """stretch children if needed based on 'stretch' alignment"""
@@ -368,7 +386,7 @@ class Container(Component):
             child_h = child._transformed_aabb.height
 
             # get alignment setting
-            align = is_text and child.vertical_align or self.layout.align_items
+            align = child.vertical_align if is_text else self.layout.align_items
 
             # apply alignment
             if align in ("center", "middle"):
@@ -380,6 +398,7 @@ class Container(Component):
                     y = pos_y + avail_h - child.style.margin_bottom - child_h
                 else:
                     y = pos_y + effective_h - child_h
+            # else: align is 'start' or 'stretch', y remains pos_y + margin_top
 
         # horizontal alignment (cross axis for column layout)
         elif not is_row and avail_w is not None:
@@ -392,7 +411,7 @@ class Container(Component):
             child_w = child._transformed_aabb.width
 
             # get alignment setting
-            align = is_text and child.align or self.layout.align_items
+            align = child.align if is_text else self.layout.align_items
 
             # apply alignment
             if align == "center":
@@ -404,6 +423,7 @@ class Container(Component):
                     x = pos_x + avail_w - child.style.margin_right - child_w
                 else:
                     x = pos_x + effective_w - child_w
+            # else: align is 'start' or 'stretch', x remains pos_x + margin_left
 
         # set final translation
         child.transform.translate = (x, y)
@@ -411,8 +431,7 @@ class Container(Component):
 
     def render(self, renderer, context, matrix: np.ndarray):
         """render container and children"""
-        # draw container background and border
-        if self.style.background_color or self.style.border_color:
+        if self.style.background_color or (self.style.border_color and self.style.border_width > 0):
             renderer.render_rectangle(context, self._dimensions, self.style, matrix, component=self)
 
         if self.debug:
@@ -446,7 +465,6 @@ class Container(Component):
         if child not in self.children:
             self.children.append(child)
             child.parent = self
-            jstyle.apply(child)
             self._log_debug(f"Added child {child.id or 'Unnamed'}")
 
     def add_children(self, children: list[Component]):

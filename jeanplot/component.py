@@ -1,5 +1,5 @@
-from typing import Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, model_validator, PrivateAttr
+from typing import Optional, Dict, Any, Union, Annotated
+from pydantic import BaseModel, Field, model_validator, PrivateAttr, BeforeValidator, ConfigDict
 import numpy as np
 from collections import defaultdict
 from functools import partial
@@ -9,16 +9,28 @@ from .debug import debug_print
 from .style import jstyle
 
 
+def size_from_sequence(seq: Union[tuple, list, Size]) -> Size:
+    """helper to convert a sequence to a Size object"""
+    if isinstance(seq, Size):
+        return seq
+    return Size(width=seq[0], height=seq[1])
+
+
+ValidatedSize = Annotated[Size, BeforeValidator(size_from_sequence)]
+
+
 class Component(BaseModel):
     """base component class - anything that can be rendered"""
+
+    model_config = ConfigDict(validate_assignment=True)
 
     id: Optional[str] = None
     transform: Transform = Field(default_factory=Transform)
     offset: Offset = Field(default_factory=Offset)
     anchor_points: list[AnchorPoint] = Field(default_factory=list)
 
-    min_dimensions: Size = Field(default_factory=Size)
-    max_dimensions: Size = Field(
+    min_dimensions: ValidatedSize = Field(default_factory=Size)
+    max_dimensions: ValidatedSize = Field(
         default_factory=partial(Size, width=float("inf"), height=float("inf"))
     )
 
@@ -35,12 +47,6 @@ class Component(BaseModel):
 
     _dimensions: Size = PrivateAttr(default_factory=Size)
     _transformed_aabb: Size = PrivateAttr(default_factory=Size)
-
-    @model_validator(mode="after")
-    def apply_styles(self):
-        """apply global styles after model creation"""
-        jstyle.apply(self)
-        return self
 
     def _get_path(self):
         """get component path in hierarchy for styling"""
