@@ -300,12 +300,9 @@ class MatplotlibRenderer(BaseRenderer):
         edgecolor_main = style.border_color or "none"
         linewidth_main = style.border_width
         width_mode = style.border_width_mode
-        linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
-        linestyle_main = linestyle_map.get(style.border_style, "-")
         max_radius_main = min(w, h) / 2
         radius_main = min(style.corner_radius, max_radius_main) if max_radius_main > 0 else 0
 
-        # --- Render Shadow Layers (if specified) ---
         if style.shadow and style.shadow.blur_radius > 0:
             shadow = style.shadow
             points_per_data_unit = linewidth_from_data_units(1.0, context)
@@ -345,14 +342,10 @@ class MatplotlibRenderer(BaseRenderer):
                 alpha_to_draw_int = int(accumulated_alpha_intensity / min_render_alpha)
 
                 if alpha_to_draw_int > 0:
-                    # clamp the integer alpha
                     alpha_to_draw_int = min(alpha_to_draw_int, 255)
-                    # convert back to float alpha for drawing
                     patch_alpha = alpha_to_draw_int * min_render_alpha
 
-                    # subtract the intensity we are about to draw from the accumulator
                     accumulated_alpha_intensity -= patch_alpha
-                    # ensure accumulator doesn't go negative due to float precision
                     accumulated_alpha_intensity = max(0, accumulated_alpha_intensity)
 
                     # calculate geometry for this visible layer
@@ -382,9 +375,16 @@ class MatplotlibRenderer(BaseRenderer):
                     context.add_patch(layer_patch)
                 # else: accumulated alpha is still < 1/256, skip drawing this layer
 
-        # --- Render Main Shape ---
         if facecolor_main != "none" or (edgecolor_main != "none" and linewidth_main > 0):
             main_path = self._create_rounded_rect_path(0, 0, w, h, radius_main)
+
+            linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":", "custom": "-"}
+            linestyle_main = linestyle_map.get(style.border_style, "-")
+
+            if style.dash_sequence:
+                linestyle_main = tuple(style.dash_sequence)
+                linestyle_main = (style.dash_offset, linestyle_main)
+
             main_patch = mpatches.PathPatch(
                 main_path,
                 facecolor=facecolor_main,
@@ -404,18 +404,6 @@ class MatplotlibRenderer(BaseRenderer):
             ):
                 main_patch.set_linewidth(linewidth_main)
 
-            if style.dash_sequence and hasattr(main_patch, "set_dashes"):
-                dash = tuple(style.dash_sequence)
-                main_patch.set_linestyle("-")
-                if width_mode == "data":
-                    try:
-                        avg_lw = linewidth_from_data_units(1.0, context, "avg")
-                        dash = tuple(d * avg_lw for d in dash) if avg_lw > 0 else dash
-                    except NameError:
-                        pass
-                main_patch.set_dashes(dash)
-                if style.dash_offset != 0.0 and hasattr(main_patch, "set_dash_offset"):
-                    main_patch.set_dash_offset(style.dash_offset)
             context.add_patch(main_patch)
 
     def render_svg(self, context, svg_element, matrix):
@@ -448,25 +436,25 @@ class MatplotlibRenderer(BaseRenderer):
         if svg_dims.width == 0 or svg_dims.height == 0:
             return  # don't render zero-size svgs
 
-        # calculate scaling matrix from viewBox or svg dims
-        if viewBox:
-            vb_w, vb_h = max(viewBox[2], 1e-6), max(viewBox[3], 1e-6)  # avoid div by zero
-            scale_x, scale_y = svg_dims.width / vb_w, svg_dims.height / vb_h
-            # translate by viewBox origin *after* scaling
-            vb_ox, vb_oy = viewBox[0], viewBox[1]
-            translate_vb_origin = np.array(
-                [[1, 0, -vb_ox * scale_x], [0, 1, -vb_oy * scale_y], [0, 0, 1]]
-            )
+        if viewBox and (svg_dims.width > 1e-6 and svg_dims.height > 1e-6):
+            vb_x, vb_y, vb_w, vb_h = viewBox
+            vb_w = max(vb_w, 1e-6)  # avoid div by zero
+            vb_h = max(vb_h, 1e-6)
+            scale_x = svg_dims.width / vb_w
+            scale_y = svg_dims.height / vb_h
+            # Translate to handle viewBox origin, then scale
+            translate_vb_origin = np.array([[1, 0, -vb_x], [0, 1, -vb_y], [0, 0, 1]])
             scale_matrix = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]])
-            svg_matrix = translate_vb_origin @ scale_matrix
-
+            # Final SVG matrix: Scale first, then translate the scaled origin
+            svg_matrix = scale_matrix @ translate_vb_origin
+            # print(f"DEBUG SVG {svg_element.id}: viewBox={viewBox}, dims={svg_dims}, svg_matrix=\n{np.round(svg_matrix, 3)}") # Add debug
         else:
-            content_w = max(svg_element.svg_content.width, 1e-6)
-            content_h = max(svg_element.svg_content.height, 1e-6)
-            scale_x, scale_y = svg_dims.width / content_w, svg_dims.height / content_h
-            svg_matrix = np.array([[scale_x, 0, 0], [0, scale_y, 0], [0, 0, 1]])
+            svg_matrix = np.identity(3)  # Default to identity if no viewBox or zero dims
+            # print(f"DEBUG SVG {svg_element.id}: No viewBox or zero dims, using identity svg_matrix") # Add debug
 
+        # matrix received is conn_matrix (world matrix of the Connection component)
         final_matrix = matrix @ svg_matrix
+        # Ensure transform uses this final matrix correctly
         transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
         width_mode = svg_element.get_renderer_options(self.RENDERER_NAME).get("line_width_mode", "")

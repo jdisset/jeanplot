@@ -1,13 +1,18 @@
-from typing import Optional, Literal, Union, Dict, Any, List, Tuple
-from pydantic import Field, BeforeValidator, model_validator, PrivateAttr, BaseModel, AfterValidator
+from typing import Optional, Any, List, Tuple
+from pydantic import Field, BeforeValidator, PrivateAttr
 from typing_extensions import Annotated
-from .path_utils import resolve_component_ref
 import numpy as np
 import math
 
-from .container import Overlay
-from .component import Component
-from .models import Size, Offset, Transform
+from .path_utils import resolve_component_ref
+from .curve import (
+    CurveDefinition,
+    OrthogonalCurve,
+    SimpleBezierCurve,
+    StraightCurve,
+)
+from .component import Component, Overlay, AnchorComponent, get_world_origin
+from .models import Size, Offset
 from .svg import (
     SVGElement,
     SVGContent,
@@ -23,289 +28,421 @@ from .svg import (
 )
 from .debug import debug_print
 
-
-class CurveDefinition(BaseModel):
-    pass
-
-
-class StraightCurve(CurveDefinition):
-    pass
-
-
-class SimpleBezierCurve(CurveDefinition):
-    """bezier curve with vectors from start and end points"""
-
-    start_vector: tuple[float, float] = (0, 1)  # vector from start point
-    end_vector: tuple[float, float] = (0, 1)  # vector from end point
-
-
-class AdvancedBezierCurve(CurveDefinition):
-    """bezier curve with explicit control points"""
-
-    control_points: list[tuple[float, float]]
-
-
-class OrthogonalCurve(CurveDefinition):
-    """path with orthogonal segments (right angles)"""
-
-    start_direction: Literal["up", "down", "left", "right"] = "down"
-    start_length: float = 5.0  # minimum length of start segment
-    end_direction: Literal["up", "down", "left", "right"] = "down"
-    end_length: float = 5.0  # minimum length of end segment
-    corner_radius: float = 10.0
-    checkpoints: List[Tuple[float, float]] = Field(default_factory=list)
-    auto_simplify: bool = True
-
-    def _get_flow_direction(self, position_direction: str, is_start: bool) -> Tuple[float, float]:
-        # map anchor position to the direction vector the connection should flow
-        direction_map = {
-            "up": (0, 1 if is_start else -1),
-            "down": (0, -1 if is_start else 1),
-            "left": (1 if is_start else -1, 0),
-            "right": (-1 if is_start else 1, 0),
-        }
-        return direction_map.get(position_direction, (0, 1 if is_start else -1))
-
-
-ComponentRef = Annotated[Union[Component, str], AfterValidator(resolve_component_ref)]
+ValidatedComponentRef = Annotated[Component, BeforeValidator(resolve_component_ref)]
 
 
 class Connection(Overlay):
     """connects two components with a styled line/curve"""
 
-    start_component: ComponentRef
-    end_component: ComponentRef
+    start_component: ValidatedComponentRef
+    end_component: ValidatedComponentRef
+
     start_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     end_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     color: str = "#000000"
     line_width: float = 1.0
     curve_type: CurveDefinition = Field(default_factory=StraightCurve)
     line_style: LineStyle = "solid"
-    dash_array: Optional[tuple[float, ...]] = None
+    dash_array: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
     start_cap: Optional[LineEndType] = None
     end_cap: Optional[LineEndType] = None
-    auto_route: bool = True  # whether to use anchor points
+    auto_route: bool = True
 
     _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
-    _local_start: Optional[tuple[float, float]] = PrivateAttr(default=None)
-    _local_end: Optional[tuple[float, float]] = PrivateAttr(default=None)
-    _world_start: Optional[tuple[float, float]] = PrivateAttr(default=None)
-    _world_end: Optional[tuple[float, float]] = PrivateAttr(default=None)
+    _local_start: Optional[Tuple[float, float]] = PrivateAttr(default=None)
+    _local_end: Optional[Tuple[float, float]] = PrivateAttr(default=None)
+    _world_start: Optional[Tuple[float, float]] = PrivateAttr(default=None)
+    _world_end: Optional[Tuple[float, float]] = PrivateAttr(default=None)
     _local_checkpoints: List[Tuple[float, float]] = PrivateAttr(default_factory=list)
 
-    def _log_debug(self, message: str, data: Any = None):
-        """log debug messages with connection id"""
-        debug_print(self.id or "Connection", message, data)
-
-    def _resolve_components(self):
-        """resolve string path components to actual references"""
-        from .path_utils import find_component_by_path
-
-        root = self
-        while root.parent is not None:
-            root = root.parent
-
-        if isinstance(self.start_component, str):
-            comp = find_component_by_path(root, self.start_component)
-            if comp is not None:
-                self.start_component = comp
-
-        if isinstance(self.end_component, str):
-            comp = find_component_by_path(root, self.end_component)
-            if comp is not None:
-                self.end_component = comp
-
-    def measure(self, renderer=None) -> Size:
-        """calculate dimensions based on connected components positions"""
-        self._log_debug("Measuring connection")
-        self._resolve_components()
-
-        # need parent container to position properly
-        if self.parent is None:
-            self._log_debug("No parent for connection, skipping measurement")
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # Check if both components exist and have dimensions
-        if not hasattr(self.start_component, "_dimensions") or not hasattr(
-            self.end_component, "_dimensions"
-        ):
-            self._log_debug(
-                "Components missing dimensions",
-                {
-                    "start_has_dims": hasattr(self.start_component, "_dimensions"),
-                    "end_has_dims": hasattr(self.end_component, "_dimensions"),
-                },
-            )
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # get world coordinates of connection points
-        self._world_start, self._world_end = self._calculate_world_connection_points()
-        self._log_debug(
-            "World connection points", {"start": self._world_start, "end": self._world_end}
+    def _log_debug(self, message: str, data: Any = None, matrix: Optional[np.ndarray] = None):
+        """concise debug logging with connection identity"""
+        comp_id = (
+            self.id
+            or f"Conn({getattr(self.start_component, 'id', '?')}->{getattr(self.end_component, 'id', '?')})"
         )
+        if matrix is not None:
+            data_str = (
+                f"{data}\nMatrix:\n{np.round(matrix, 3)}"
+                if data
+                else f"Matrix:\n{np.round(matrix, 3)}"
+            )
+            debug_print(comp_id, message, data_str)
+        else:
+            debug_print(comp_id, message, data)
 
-        # transform to parent's coordinate system
+    def _transform_world_to_parent(
+        self, world_point: Tuple[float, float]
+    ) -> Optional[Tuple[float, float]]:
+        """transform point from world to parent coordinates"""
+        if not self.parent:
+            return world_point
+
         parent_matrix = self.parent.compute_world_matrix()
-        self._log_debug("Parent matrix", parent_matrix)
-
-        # avoid singular matrix - use identity if needed
         try:
             parent_inv = np.linalg.inv(parent_matrix)
         except np.linalg.LinAlgError:
-            self._log_debug("Singular parent matrix, using identity")
+            self._log_debug("warning: parent matrix not invertible, using identity")
             parent_inv = np.eye(3)
 
-        # transform world points to parent space
-        start_parent_coords = np.dot(parent_inv, [self._world_start[0], self._world_start[1], 1])
-        end_parent_coords = np.dot(parent_inv, [self._world_end[0], self._world_end[1], 1])
+        parent_coords = np.dot(parent_inv, [world_point[0], world_point[1], 1])
+        return (parent_coords[0], parent_coords[1])
 
-        start_parent = (start_parent_coords[0], start_parent_coords[1])
-        end_parent = (end_parent_coords[0], end_parent_coords[1])
+    def measure(self, renderer=None) -> Size:
+        """calculate dimensions based on connected components positions"""
+        self._log_debug("measure: starting")
 
-        self._log_debug("Parent space points", {"start": start_parent, "end": end_parent})
+        # early exit checks
+        if not self.parent or not self.start_component or not self.end_component:
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
+            return self._dimensions
 
-        # Transform checkpoints from world to parent space if using OrthogonalCurve with checkpoints
+        # ensure components are measured
+        for comp in [self.start_component, self.end_component]:
+            if (
+                not hasattr(comp, "_dimensions")
+                or comp._dimensions.width <= 0
+                or comp._dimensions.height <= 0
+            ):
+                comp.measure_and_layout(renderer)
+            if comp._dimensions.width <= 0 or comp._dimensions.height <= 0:
+                self._log_debug(f"warning: component {comp.id} has zero dimensions after measure")
+                self._dimensions = Size()
+                self._transformed_aabb = Size()
+                return self._dimensions
+
+        # calculate connection points
+        self._world_start, self._world_end = self._calculate_world_connection_points()
+        if not self._world_start or not self._world_end:
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
+            return self._dimensions
+
+        # transform points to parent coordinates
+        start_parent = self._transform_world_to_parent(self._world_start)
+        end_parent = self._transform_world_to_parent(self._world_end)
+        if start_parent is None or end_parent is None:
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
+            return self._dimensions
+
+        # transform checkpoints if present
         self._local_checkpoints = []
+        world_checkpoints = []
+        parent_checkpoints = []
         if isinstance(self.curve_type, OrthogonalCurve) and self.curve_type.checkpoints:
             world_checkpoints = self.curve_type.checkpoints
-            self._log_debug("World checkpoints", {"checkpoints": world_checkpoints})
-
-            # Transform each checkpoint to parent space
-            for cp_world in world_checkpoints:
-                cp_parent_coords = np.dot(parent_inv, [cp_world[0], cp_world[1], 1])
-                self._local_checkpoints.append((cp_parent_coords[0], cp_parent_coords[1]))
-
-            self._log_debug("Parent space checkpoints", {"checkpoints": self._local_checkpoints})
+            parent_checkpoints = [self._transform_world_to_parent(cp) for cp in world_checkpoints]
+            if any(p is None for p in parent_checkpoints):
+                self._log_debug("warning: failed to transform checkpoints, ignoring them")
+                parent_checkpoints = []
 
         # calculate bounds with buffer
-        min_x = min(start_parent[0], end_parent[0])
-        max_x = max(start_parent[0], end_parent[0])
-        min_y = min(start_parent[1], end_parent[1])
-        max_y = max(start_parent[1], end_parent[1])
+        points = [start_parent, end_parent] + parent_checkpoints
+        try:
+            min_x = min(p[0] for p in points)
+            max_x = max(p[0] for p in points)
+            min_y = min(p[1] for p in points)
+            max_y = max(p[1] for p in points)
+        except Exception as e:
+            self._log_debug(f"error calculating bounds: {e}")
+            self._dimensions = Size()
+            self._transformed_aabb = Size()
+            return self._dimensions
 
-        # Include checkpoints in bounds calculation
-        for cp in self._local_checkpoints:
-            min_x = min(min_x, cp[0])
-            max_x = max(max_x, cp[0])
-            min_y = min(min_y, cp[1])
-            max_y = max(max_y, cp[1])
-
-        # add buffer for line width and control points
-        buffer = max(self.line_width * 3, 20)
+        # add buffer for visual padding and end caps
+        buffer = max(self.line_width * 3, 10)
         min_x -= buffer
         min_y -= buffer
         max_x += buffer
         max_y += buffer
 
-        # ensure positive dimensions
+        # update dimensions and offset
         width = max(max_x - min_x, 1.0)
         height = max(max_y - min_y, 1.0)
-
-        self._log_debug(
-            "Connection dimensions", {"width": width, "height": height, "position": (min_x, min_y)}
-        )
-
-        # set dimensions and position
         self._dimensions = Size(width=width, height=height)
-        self.transform.translate = (min_x, min_y)
+        self.offset = Offset(absolute=(min_x, min_y))
 
-        # convert world points to local coordinates
+        # calculate local coordinates relative to offset
         self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
         self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
+        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in parent_checkpoints]
 
-        # also convert checkpoint positions to component-local coordinates
-        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in self._local_checkpoints]
-
-        self._log_debug(
-            "Local points",
-            {
-                "start": self._local_start,
-                "end": self._local_end,
-                "checkpoints": self._local_checkpoints,
-            },
-        )
-
-        # create SVG content
+        # create svg content and calculate final aabb
         self._create_svg_content()
-
         self._transformed_aabb = self.compute_transformed_aabb()
+
+        self._log_debug(f"measure: complete, dims={self._dimensions}, offset={self.offset}")
         return self._dimensions
 
-    def _get_component_world_position(self, component, offset):
-        """get world position using component's world matrix"""
-        if component is None:
-            return (0, 0)
+    def _get_component_offset_world_position(
+        self, component: Component, offset: Offset
+    ) -> Optional[Tuple[float, float]]:
+        """get world position of an offset point relative to a component"""
+        if not hasattr(component, "_dimensions") or component._dimensions.width <= 0:
+            component.measure_and_layout()
 
-        # calculate offset point in local component space
-        dims = getattr(component, "_dimensions", Size(width=1, height=1))
-        ox, oy = offset.compute(dims)
-        local_point = np.array([ox, oy, 1])
+        # compute local position using offset
+        dims = component._dimensions
+        if dims.width <= 0 or dims.height <= 0:
+            self._log_debug(f"warning: component {component.id} has zero dimensions")
+            local_pos = (0, 0)
+        else:
+            local_pos = offset.compute(dims, dims)
 
         # transform to world space
         world_matrix = component.compute_world_matrix()
-        world_point = world_matrix @ local_point
-        pos = (world_point[0], world_point[1])
+        world_point = world_matrix @ np.array([local_pos[0], local_pos[1], 1])
+        return (world_point[0], world_point[1])
 
-        self._log_debug(
-            f"World position for {component.id}", {"offset": (ox, oy), "world_point": pos}
+    def _find_best_target_anchor(
+        self, component: Component, reference_point_world: Tuple[float, float]
+    ) -> Optional[AnchorComponent]:
+        """find best anchor on component based on distance to a reference point"""
+        anchors = [
+            a for a in getattr(component, "anchor_points", []) if isinstance(a, AnchorComponent)
+        ]
+        if not anchors:
+            return None
+
+        best_anchor = None
+        min_dist_sq = float("inf")
+
+        for anchor in anchors:
+            # ensure anchor is measured
+            if not hasattr(anchor, "_dimensions") or anchor._dimensions.width <= 0:
+                anchor.measure_and_layout()
+
+            try:
+                anchor_pos = get_world_origin(anchor)
+                dist_sq = math.dist(anchor_pos, reference_point_world) ** 2
+                if dist_sq < min_dist_sq:
+                    min_dist_sq = dist_sq
+                    best_anchor = anchor
+            except Exception:
+                continue  # skip anchor if error occurs
+
+        return best_anchor
+
+    def _calculate_world_connection_points(
+        self,
+    ) -> Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]]:
+        """calculate endpoints in world coordinates with auto-routing"""
+        start_comp = self.start_component
+        end_comp = self.end_component
+        if not start_comp or not end_comp:
+            return None, None
+
+        # ensure components are measured
+        for comp in [start_comp, end_comp]:
+            if not hasattr(comp, "_dimensions") or comp._dimensions.width <= 0:
+                comp.measure_and_layout()
+
+        # default targets are the components with specified offsets
+        start_target, end_target = start_comp, end_comp
+        start_offset, end_offset = self.start_offset, self.end_offset
+
+        # get initial world positions for anchor finding
+        start_world_initial = self._get_component_offset_world_position(start_target, start_offset)
+        end_world_initial = self._get_component_offset_world_position(end_target, end_offset)
+        if not start_world_initial or not end_world_initial:
+            return None, None
+
+        def update_curve_from_anchor(anchor: AnchorComponent, is_start: bool):
+            """update curve parameters based on anchor properties"""
+            prefix = "start" if is_start else "end"
+            anchor_dir = getattr(anchor, "direction", (0, 1))
+            anchor_len = getattr(anchor, "min_segment", 10.0)
+
+            if isinstance(self.curve_type, OrthogonalCurve):
+                setattr(
+                    self.curve_type,
+                    f"{prefix}_direction",
+                    OrthogonalCurve.get_direction(anchor_dir),
+                )
+                setattr(self.curve_type, f"{prefix}_length", anchor_len)
+            elif isinstance(self.curve_type, SimpleBezierCurve):
+                setattr(
+                    self.curve_type,
+                    f"{prefix}_vector",
+                    (anchor_dir[0] * anchor_len, anchor_dir[1] * anchor_len),
+                )
+
+        # find best anchors if auto-routing is enabled
+        if self.auto_route:
+            # find best anchor on end component
+            best_end_anchor = self._find_best_target_anchor(end_comp, start_world_initial)
+            if best_end_anchor:
+                end_target = best_end_anchor
+                end_offset = Offset()  # use anchor's origin
+                update_curve_from_anchor(best_end_anchor, False)
+
+            # find best anchor on start component
+            ref_point = (
+                self._get_component_offset_world_position(end_target, end_offset)
+                or end_world_initial
+            )
+            best_start_anchor = self._find_best_target_anchor(start_comp, ref_point)
+            if best_start_anchor:
+                start_target = best_start_anchor
+                start_offset = Offset()  # use anchor's origin
+                update_curve_from_anchor(best_start_anchor, True)
+
+        # calculate final world positions
+        start_world = self._get_component_offset_world_position(start_target, start_offset)
+        end_world = self._get_component_offset_world_position(end_target, end_offset)
+
+        return start_world, end_world
+
+    def render(self, renderer, context, matrix: np.ndarray):
+        """render connection as SVG element"""
+        if not self.show or not self.start_component or not self.end_component:
+            return
+
+        # calculate current target world points
+        start_world_target, end_world_target = self._calculate_world_connection_points()
+        if not start_world_target or not end_world_target:
+            return
+
+        # check if geometry update is needed
+        tolerance = 1e-4
+        needs_update = (
+            not self._world_start
+            or not self._world_end
+            or math.dist(start_world_target, self._world_start) > tolerance
+            or math.dist(end_world_target, self._world_end) > tolerance
+            or not hasattr(self, "_dimensions")
+            or self._dimensions.width <= 0
         )
-        return pos
+
+        # update geometry if needed
+        if needs_update:
+            self._world_start, self._world_end = start_world_target, end_world_target
+            if self.parent:
+                start_parent = self._transform_world_to_parent(start_world_target)
+                end_parent = self._transform_world_to_parent(end_world_target)
+                if start_parent is not None and end_parent is not None:
+                    self._update_connection_geometry(start_parent, end_parent)
+                else:
+                    return  # can't proceed without valid transforms
+            else:
+                return  # can't proceed without parent
+
+        # render SVG element
+        if self._svg_element:
+            self._svg_element.render(renderer, context, matrix)
+
+        # render debug visualization if enabled
+        if self.debug:
+            # verify point mapping in debug mode
+            if self._local_start is not None and self._world_start is not None:
+                self._debug_check_transform(matrix)
+
+            # render debug box
+            if hasattr(self, "_dimensions") and self._dimensions.width > 0:
+                renderer.render_debug(context, self, matrix)
+
+    def _debug_check_transform(self, matrix: np.ndarray):
+        """verify world/local point transformations in debug mode"""
+        local_start_h = np.array([self._local_start[0], self._local_start[1], 1])
+        transformed_start = (matrix @ local_start_h)[:2]
+        start_match = np.allclose(transformed_start, self._world_start, atol=1e-5)
+
+        local_end_h = np.array([self._local_end[0], self._local_end[1], 1])
+        transformed_end = (matrix @ local_end_h)[:2]
+        end_match = np.allclose(transformed_end, self._world_end, atol=1e-5)
+
+        print(f"--- Debug Connection {self.id or 'unnamed'} ---")
+        parent_matrix = self.parent.compute_world_matrix() if self.parent else np.identity(3)
+        print(f"Parent World Matrix:\n{np.round(parent_matrix, 3)}")
+        print(f"Connection Offset: {self.offset}")
+        print(f"Connection Dimensions: {self._dimensions}")
+        try:
+            local_mat = self.compute_local_matrix()
+            print(f"Connection Local Matrix:\n{np.round(local_mat, 3)}")
+        except Exception as e:
+            print(f"Connection Local Matrix: Error - {e}")
+
+        print(f"Connection World Matrix:\n{np.round(matrix, 3)}")
+        print(f"World Start: {np.round(self._world_start, 3)}")
+        print(f"World End: {np.round(self._world_end, 3)}")
+        print(f"Local Start: {np.round(self._local_start, 3)}")
+        print(f"Local End: {np.round(self._local_end, 3)}")
+        print(f"Transformed Start: {np.round(transformed_start, 3)}")
+        print(f"Transformed End: {np.round(transformed_end, 3)}")
+        print(
+            f"Start Match: {start_match} (Diff: {np.linalg.norm(transformed_start - self._world_start):.4e})"
+        )
+        print(
+            f"End Match: {end_match} (Diff: {np.linalg.norm(transformed_end - self._world_end):.4e})"
+        )
+
+    def _update_connection_geometry(
+        self, start_parent: Tuple[float, float], end_parent: Tuple[float, float]
+    ):
+        """update connection dimensions, offset and svg content"""
+        # recalculate local checkpoints if present
+        parent_checkpoints = []
+        if isinstance(self.curve_type, OrthogonalCurve) and self.curve_type.checkpoints:
+            world_checkpoints = self.curve_type.checkpoints
+            parent_checkpoints_temp = [
+                self._transform_world_to_parent(cp) for cp in world_checkpoints
+            ]
+            if not any(p is None for p in parent_checkpoints_temp):
+                parent_checkpoints = parent_checkpoints_temp
+
+        # calculate bounds with all points
+        points = [start_parent, end_parent] + parent_checkpoints
+        try:
+            min_x = min(p[0] for p in points)
+            max_x = max(p[0] for p in points)
+            min_y = min(p[1] for p in points)
+            max_y = max(p[1] for p in points)
+        except Exception as e:
+            self._log_debug(f"error calculating bounds: {e}")
+            return
+
+        # add buffer and calculate dimensions
+        buffer = max(self.line_width * 3, 10)
+        min_x -= buffer
+        min_y -= buffer
+        max_x += buffer
+        max_y += buffer
+
+        # update dimensions and offset
+        self._dimensions = Size(width=max(max_x - min_x, 1.0), height=max(max_y - min_y, 1.0))
+        self.offset = Offset(absolute=(min_x, min_y))
+
+        # calculate local coordinates relative to offset
+        self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
+        self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
+        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in parent_checkpoints]
+
+        # create svg content with updated coordinates
+        self._create_svg_content()
 
     def _create_svg_content(self):
         """create SVG content based on connection points and curve type"""
-        if not self._local_start or not self._local_end:
-            self._log_debug("Missing local points for SVG creation")
+        if not self._local_start or not self._local_end or not hasattr(self, "_dimensions"):
+            self._svg_element = None
             return
 
-        start = self._local_start
-        end = self._local_end
         width = max(self._dimensions.width, 1.0)
         height = max(self._dimensions.height, 1.0)
 
-        # create path based on curve type
-        path_str = ""
-        control_points = []
+        # generate path from curve type
+        try:
+            path_str, control_points = self.curve_type.get_path(
+                self._local_start, self._local_end, self._local_checkpoints
+            )
+        except Exception as e:
+            self._log_debug(f"error getting path: {e}")
+            self._svg_element = None
+            return
 
-        if isinstance(self.curve_type, StraightCurve):
-            path_str = f"M {start[0]} {start[1]} L {end[0]} {end[1]}"
-        elif isinstance(self.curve_type, SimpleBezierCurve):
-            # calculate control points from vectors
-            start_vec = self.curve_type.start_vector
-            end_vec = self.curve_type.end_vector
-            ctrl1 = (start[0] + start_vec[0], start[1] + start_vec[1])
-            ctrl2 = (end[0] + end_vec[0], end[1] + end_vec[1])
-            path_str = f"M {start[0]} {start[1]} C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end[0]} {end[1]}"
-            control_points = [ctrl1, ctrl2]
-        elif isinstance(self.curve_type, AdvancedBezierCurve):
-            # use explicit control points
-            cps = self.curve_type.control_points
-            if len(cps) == 1:
-                # quadratic bezier
-                path_str = f"M {start[0]} {start[1]} Q {cps[0][0]} {cps[0][1]}, {end[0]} {end[1]}"
-            else:
-                # cubic bezier
-                ctrl1 = cps[0] if len(cps) > 0 else start
-                ctrl2 = cps[1] if len(cps) > 1 else end
-                path_str = f"M {start[0]} {start[1]} C {ctrl1[0]} {ctrl1[1]}, {ctrl2[0]} {ctrl2[1]}, {end[0]} {end[1]}"
-            control_points = cps
-        elif isinstance(self.curve_type, OrthogonalCurve):
-            # calculate orthogonal path with minimal turns
-            points = self._calculate_orthogonal_path(start, end)
-            if self.curve_type.corner_radius > 0:
-                path_str = self._create_rounded_orthogonal_path(points)
-            else:
-                path_str = f"M {points[0][0]} {points[0][1]}"
-                for p in points[1:]:
-                    path_str += f" L {p[0]} {p[1]}"
-        else:  # default to straight
-            path_str = f"M {start[0]} {start[1]} L {end[0]} {end[1]}"
-
-        # create path data
+        # create svg path
         path_data = SVGPathData(
             d=path_str,
             stroke=self.color,
@@ -316,560 +453,80 @@ class Connection(Overlay):
             dash_offset=self.dash_offset,
         )
 
-        # add end caps
+        # add end caps if needed
         paths = [path_data]
-        self._add_end_caps(paths, start, end, control_points)
+        if self.start_cap or self.end_cap:
+            self._add_end_caps(paths, self._local_start, self._local_end, control_points)
 
+        # create svg content with viewBox
         svg_content = SVGContent(
-            width=width, height=height, viewBox=(0, 0, width, height), paths=paths
-        )
-        self._svg_element = SVGElement(svg_content=svg_content)
-
-    def _calculate_orthogonal_path(self, start, end):
-        """calculate orthogonal path with minimal turns"""
-        # convert string directions to vectors
-        dir_to_vector = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
-
-        # get direction vectors
-        start_dir = dir_to_vector[self.curve_type.start_direction]
-        end_dir = dir_to_vector[self.curve_type.end_direction]
-
-        # for orthogonal paths, we need to go outward from start and inward to end
-        # so we flip the end direction
-        end_dir = (-end_dir[0], -end_dir[1])
-
-        if self._local_checkpoints:
-            return self._path_with_checkpoints(start, end, start_dir, end_dir)
-
-        # try simple path first
-        if self.curve_type.auto_simplify:
-            simple_path = self._find_simple_path(start, end, start_dir, end_dir)
-            if simple_path:
-                return simple_path
-
-        # calculate segment points
-        start_len = self.curve_type.start_length
-        end_len = self.curve_type.end_length
-
-        first_segment_end = (
-            start[0] + start_dir[0] * start_len,
-            start[1] + start_dir[1] * start_len,
+            width=width,
+            height=height,
+            viewBox=(0, 0, width, height),
+            paths=paths,
         )
 
-        last_segment_start = (
-            end[0] + end_dir[0] * end_len,  # end_dir already flipped
-            end[1] + end_dir[1] * end_len,
-        )
+        # create svg element and set dimensions
+        self._svg_element = SVGElement(svg_content=svg_content, id=f"svg_{self.id or 'conn'}")
+        self._svg_element._dimensions = Size(width=width, height=height)
 
-        return self._connect_segments(start, first_segment_end, last_segment_start, end)
-
-    def _find_simple_path(self, start, end, start_dir, end_dir):
-        """Try to find a path with minimal turns (0 or 1)"""
-        # check if points are aligned for direct path
-        if start[0] == end[0] or start[1] == end[1]:
-            # points are aligned; check if directions allow direct connection
-            if self._can_connect_directly(start, end, start_dir, end_dir):
-                return [start, end]
-
-        # try one-turn path
-        corner = self._find_corner(start, end, start_dir, end_dir)
-        if corner:
-            return [start, corner, end]
-
-        # no simple path possible
-        return None
-
-    def _can_connect_directly(self, p1, p2, dir1, dir2):
-        """Check if two points can be connected with a straight line"""
-        if p1[0] == p2[0]:  # vertical alignment
-            if dir1[0] != 0 or dir2[0] != 0:  # directions must be vertical
-                return False
-            if (p2[1] - p1[1]) * dir1[1] <= 0:
-                return False
-            if (p1[1] - p2[1]) * dir2[1] <= 0:
-                return False
-            return True
-
-        elif p1[1] == p2[1]:  # horizontal alignment
-            if dir1[1] != 0 or dir2[1] != 0:  # directions must be horizontal
-                return False
-            if (p2[0] - p1[0]) * dir1[0] <= 0:
-                return False
-            if (p1[0] - p2[0]) * dir2[0] <= 0:
-                return False
-            return True
-
-        return False  # points not aligned
-
-    def _find_corner(self, start, end, start_dir, end_dir):
-        """Find corner point for a one-turn path if possible"""
-        # two possible corners:
-        corners = [
-            (
-                start[0] + start_dir[0] * max(abs(end[0] - start[0]), self.curve_type.start_length),
-                end[1] + end_dir[1] * max(abs(end[1] - start[1]), self.curve_type.end_length),
-            ),
-            (
-                end[0] + end_dir[0] * max(abs(end[0] - start[0]), self.curve_type.end_length),
-                start[1] + start_dir[1] * max(abs(end[1] - start[1]), self.curve_type.start_length),
-            ),
-        ]
-
-        for corner in corners:
-            # check if both components can reach corner in their respective directions
-            can_reach = True
-
-            if start_dir[0] != 0:  # horizontal start direction
-                if (corner[0] - start[0]) * start_dir[0] <= 0:
-                    can_reach = False
-            else:  # vertical start direction
-                if (corner[1] - start[1]) * start_dir[1] <= 0:
-                    can_reach = False
-
-            if end_dir[0] != 0:  # horizontal end direction
-                if (end[0] - corner[0]) * end_dir[0] <= 0:
-                    can_reach = False
-            else:  # vertical end direction
-                if (end[1] - corner[1]) * end_dir[1] <= 0:
-                    can_reach = False
-
-            if can_reach:
-                # found valid corner
-                return corner
-
-        return None  # no valid corner
-
-    def _connect_segments(self, start, first_end, last_start, end):
-        """Connect points with minimal number of turns"""
-        # check if middle points are aligned (can connect directly)
-        if first_end[0] == last_start[0] or first_end[1] == last_start[1]:
-            return [start, first_end, last_start, end]
-
-        # try single turn between middle points
-        corner1 = (first_end[0], last_start[1])
-        corner2 = (last_start[0], first_end[1])
-
-        # choose the first valid corner (both should be valid in this context)
-        return [start, first_end, corner1, last_start, end]
-
-    def _path_with_checkpoints(self, start, end, start_dir, end_dir):
-        """Create path from start to end through checkpoints"""
-        # use local checkpoints that have been transformed from world space
-        checkpoints = self._local_checkpoints
-
-        start_len = self.curve_type.start_length
-        end_len = self.curve_type.end_length
-
-        first_segment_end = (
-            start[0] + start_dir[0] * start_len,
-            start[1] + start_dir[1] * start_len,
-        )
-
-        last_segment_start = (
-            end[0] - end_dir[0] * end_len,
-            end[1] - end_dir[1] * end_len,
-        )
-
-        path = [start, first_segment_end]
-
-        # route through each checkpoint
-        current = first_segment_end
-        for cp in checkpoints:
-            segments = self._connect_points(current, cp)
-            path.extend(segments[1:])  # skip first point (already in path)
-            current = cp
-
-        # connect last checkpoint to end segment
-        segments = self._connect_points(current, last_segment_start)
-        path.extend(segments[1:])
-
-        path.append(end)
-
-        return path
-
-    def _connect_points(self, p1, p2):
-        """Connect two points with minimal orthogonal path"""
-        # if points are aligned, connect directly
-        if p1[0] == p2[0] or p1[1] == p2[1]:
-            return [p1, p2]
-
-        corner = (p1[0], p2[1])
-
-        return [p1, corner, p2]
-
-    def _create_rounded_orthogonal_path(self, points):
-        """Create path string with rounded corners"""
-        if len(points) < 3:
-            return f"M {points[0][0]} {points[0][1]} L {points[-1][0]} {points[-1][1]}"
-
-        radius = self.curve_type.corner_radius
-        path = f"M {points[0][0]} {points[0][1]}"
-
-        for i in range(1, len(points) - 1):
-            prev = points[i - 1]
-            curr = points[i]
-            next_pt = points[i + 1]
-
-            # check if this is actually a corner (direction changes)
-            v1 = (curr[0] - prev[0], curr[1] - prev[1])
-            v2 = (next_pt[0] - curr[0], next_pt[1] - curr[1])
-
-            # only consider actual corners (where direction changes)
-            is_corner = (v1[0] == 0 and v2[0] != 0) or (v1[0] != 0 and v2[0] == 0)
-
-            if is_corner:
-                # calculate actual radius (can't exceed half of segment length)
-                v1_len = np.sqrt(v1[0] ** 2 + v1[1] ** 2)
-                v2_len = np.sqrt(v2[0] ** 2 + v2[1] ** 2)
-                max_radius = min(v1_len, v2_len) / 2
-                r = min(radius, max_radius)
-
-                if r > 0:
-                    v1_norm = (v1[0] / v1_len, v1[1] / v1_len) if v1_len > 0 else (0, 0)
-                    v2_norm = (v2[0] / v2_len, v2[1] / v2_len) if v2_len > 0 else (0, 0)
-
-                    arc_start = (curr[0] - v1_norm[0] * r, curr[1] - v1_norm[1] * r)
-                    arc_end = (curr[0] + v2_norm[0] * r, curr[1] + v2_norm[1] * r)
-
-                    # determine sweep flag based on turn direction
-                    cross_z = v1_norm[0] * v2_norm[1] - v1_norm[1] * v2_norm[0]
-                    sweep = 0 if cross_z < 0 else 1
-
-                    # add line to arc start then arc
-                    path += f" L {arc_start[0]} {arc_start[1]}"
-                    path += f" A {r} {r} 0 0 {sweep} {arc_end[0]} {arc_end[1]}"
-                    continue
-
-            # not a corner or no rounding, just add line
-            path += f" L {curr[0]} {curr[1]}"
-
-        # add final point
-        path += f" L {points[-1][0]} {points[-1][1]}"
-        return path
-
-    def _add_end_caps(self, paths, start, end, control_points=None):
+    def _add_end_caps(
+        self,
+        paths: List[SVGPathData],
+        start: Tuple[float, float],
+        end: Tuple[float, float],
+        control_points: Optional[List[Tuple[float, float]]] = None,
+    ):
         """add end caps to the paths list"""
         if not (self.start_cap or self.end_cap):
             return
 
-        # calculate direction vectors
-        if isinstance(self.curve_type, StraightCurve):
-            # straight line
-            dx, dy = end[0] - start[0], end[1] - start[1]
-            length = np.sqrt(dx**2 + dy**2)
-            if length > 0:
-                direction = (dx / length, dy / length)
-                start_dir = (-direction[0], -direction[1])
-                end_dir = direction
-            else:
-                return  # can't determine direction
-        elif isinstance(self.curve_type, (SimpleBezierCurve, AdvancedBezierCurve)):
-            # bezier curve - use control points for direction
-            if control_points:
-                # start direction - from first control point
-                dx1, dy1 = control_points[0][0] - start[0], control_points[0][1] - start[1]
-                len1 = np.sqrt(dx1**2 + dy1**2)
-                start_dir = (-dx1 / len1, -dy1 / len1) if len1 > 0 else (0, -1)
+        # get directions from curve type
+        try:
+            start_dir, end_dir = self.curve_type.get_directions(start, end, control_points or [])
+        except Exception:
+            return  # skip caps if directions can't be determined
 
-                # end direction - from last control point
-                if len(control_points) > 1:
-                    dx2 = end[0] - control_points[-1][0]
-                    dy2 = end[1] - control_points[-1][1]
-                else:
-                    dx2 = end[0] - control_points[0][0]
-                    dy2 = end[1] - control_points[0][1]
+        # map cap types to creation functions
+        cap_creators = {
+            LineEndArrow: create_arrow_cap,
+            LineEndCircle: create_circle_cap,
+            LineEndFlat: create_flat_cap,
+        }
 
-                len2 = np.sqrt(dx2**2 + dy2**2)
-                end_dir = (dx2 / len2, dy2 / len2) if len2 > 0 else (0, 1)
-            else:
-                # fallback to straight line
-                dx, dy = end[0] - start[0], end[1] - start[1]
-                length = np.sqrt(dx**2 + dy**2)
-                if length > 0:
-                    direction = (dx / length, dy / length)
-                    start_dir = (-direction[0], -direction[1])
-                    end_dir = direction
-                else:
-                    return
-        elif isinstance(self.curve_type, OrthogonalCurve):
-            # get from direction map
-            direction_map = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
-            start_dir = direction_map[self.curve_type.start_direction]
-            end_dir = direction_map[self.curve_type.end_direction]
-            # flip start direction
-            start_dir = (-start_dir[0], -start_dir[1])
-        else:
-            # default to straight line
-            dx, dy = end[0] - start[0], end[1] - start[1]
-            length = np.sqrt(dx**2 + dy**2)
-            if length > 0:
-                direction = (dx / length, dy / length)
-                start_dir = (-direction[0], -direction[1])
-                end_dir = direction
-            else:
-                return
-
-        # add start cap
+        # add start cap if specified
         if self.start_cap:
-            if isinstance(self.start_cap, LineEndArrow):
-                paths.append(create_arrow_cap(start, start_dir, self.start_cap))
-            elif isinstance(self.start_cap, LineEndCircle):
-                paths.append(create_circle_cap(start, self.start_cap))
-            elif isinstance(self.start_cap, LineEndFlat):
-                paths.append(create_flat_cap(start, start_dir, self.start_cap))
+            for cap_type, creator in cap_creators.items():
+                if isinstance(self.start_cap, cap_type):
+                    try:
+                        paths.append(creator(start, start_dir, self.start_cap))
+                    except Exception:
+                        pass  # skip if creation fails
+                    break
 
-        # add end cap
+        # add end cap if specified
         if self.end_cap:
-            if isinstance(self.end_cap, LineEndArrow):
-                paths.append(create_arrow_cap(end, end_dir, self.end_cap))
-            elif isinstance(self.end_cap, LineEndCircle):
-                paths.append(create_circle_cap(end, self.end_cap))
-            elif isinstance(self.end_cap, LineEndFlat):
-                paths.append(create_flat_cap(end, end_dir, self.end_cap))
+            for cap_type, creator in cap_creators.items():
+                if isinstance(self.end_cap, cap_type):
+                    try:
+                        paths.append(creator(end, end_dir, self.end_cap))
+                    except Exception:
+                        pass  # skip if creation fails
+                    break
 
-    def render(self, renderer, context, matrix: np.ndarray):
-        """render connection as SVG element"""
-        self._log_debug("Rendering connection")
-        self._resolve_components()
+    def measure_and_layout(self, renderer=None) -> Size:
+        """measure and layout the connection"""
+        # apply styles if parent exists
+        if hasattr(self, "parent") and self.parent:
+            from .style import jstyle
 
-        # recalculate world coordinates to get latest positions
-        start_world, end_world = self._calculate_world_connection_points()
+            jstyle.apply(self)
+            self._resolve_attachment()
 
-        positions_changed = start_world != getattr(
-            self, "_last_start_world", None
-        ) or end_world != getattr(self, "_last_end_world", None)
+        # measure calculates dimensions, offset, and svg content
+        measured_size = self.measure(renderer)
 
-        if positions_changed:
-            self._log_debug("World points changed, updating connection")
-            self._last_start_world = start_world
-            self._last_end_world = end_world
+        # apply layout (no-op for Connection)
+        self.apply_layout()
 
-            # transform world points to scene space
-            if self.parent:
-                parent_matrix = self.parent.compute_world_matrix()
-                try:
-                    parent_inv = np.linalg.inv(parent_matrix)
-                except np.linalg.LinAlgError:
-                    parent_inv = np.eye(3)
-
-                # transform world points to parent space
-                start_parent_coords = np.dot(parent_inv, [start_world[0], start_world[1], 1])
-                end_parent_coords = np.dot(parent_inv, [end_world[0], end_world[1], 1])
-                start_parent = (start_parent_coords[0], start_parent_coords[1])
-                end_parent = (end_parent_coords[0], end_parent_coords[1])
-
-                # transform world checkpoints to parent space
-                self._local_checkpoints = []
-                if isinstance(self.curve_type, OrthogonalCurve) and self.curve_type.checkpoints:
-                    for cp_world in self.curve_type.checkpoints:
-                        cp_parent_coords = np.dot(parent_inv, [cp_world[0], cp_world[1], 1])
-                        self._local_checkpoints.append((cp_parent_coords[0], cp_parent_coords[1]))
-
-                self._update_connection_geometry(start_parent, end_parent)
-
-        if self._svg_element:
-            self._svg_element._dimensions = self._dimensions
-            self._svg_element.render(renderer, context, matrix)
-        else:
-            self._log_debug("No SVG element to render")
-
-        if self.debug:
-            renderer.render_debug(context, self, matrix)
-            # also render connection points when debugging
-            if hasattr(self, "_local_start") and hasattr(self, "_local_end") and renderer:
-                try:
-                    # draw marker at connection points for debugging
-                    import matplotlib.pyplot as plt
-                    import matplotlib.transforms as mtransforms
-
-                    transform = mtransforms.Affine2D(matrix=matrix) + context.transData
-
-                    context.plot(
-                        [self._local_start[0]],
-                        [self._local_start[1]],
-                        "x",
-                        markersize=8,
-                        transform=transform,
-                        color="red",
-                    )
-                    context.text(
-                        self._local_start[0] + 3,
-                        self._local_start[1] + 3,
-                        "start",
-                        color="red",
-                        fontsize=8,
-                        transform=transform,
-                    )
-
-                    context.plot(
-                        [self._local_end[0]],
-                        [self._local_end[1]],
-                        "x",
-                        color="red",
-                        markersize=8,
-                        transform=transform,
-                    )
-                    context.text(
-                        self._local_end[0] + 3,
-                        self._local_end[1] + 3,
-                        "end",
-                        color="red",
-                        fontsize=8,
-                        transform=transform,
-                    )
-
-                    # also draw checkpoints when debugging
-                    for i, cp in enumerate(self._local_checkpoints):
-                        context.plot(
-                            [cp[0]],
-                            [cp[1]],
-                            "go",
-                            markersize=6,
-                            transform=transform,
-                            color="red",
-                        )
-                        context.text(
-                            cp[0] + 3,
-                            cp[1] + 3,
-                            f"CP{i}",
-                            color="red",
-                            fontsize=8,
-                            transform=transform,
-                        )
-
-                    context.plot(
-                        [self._local_start[0], self._local_end[0]],
-                        [self._local_start[1], self._local_end[1]],
-                        "g--",
-                        linewidth=1,
-                        transform=transform,
-                    )
-                except Exception as e:
-                    self._log_debug(f"Error rendering debug points: {e}")
-
-    def _update_connection_geometry(self, start_parent, end_parent):
-        """update connection geometry based on parent-space points"""
-        min_x = min(start_parent[0], end_parent[0])
-        max_x = max(start_parent[0], end_parent[0])
-        min_y = min(start_parent[1], end_parent[1])
-        max_y = max(start_parent[1], end_parent[1])
-
-        # include checkpoints in bounds calculation
-        for cp in self._local_checkpoints:
-            min_x = min(min_x, cp[0])
-            max_x = max(max_x, cp[0])
-            min_y = min(min_y, cp[1])
-            max_y = max(max_y, cp[1])
-
-        # add buffer
-        buffer = max(self.line_width * 3, 20)
-        min_x -= buffer
-        min_y -= buffer
-        max_x += buffer
-        max_y += buffer
-
-        # ensure positive dimensions
-        width = max(max_x - min_x, 1.0)
-        height = max(max_y - min_y, 1.0)
-
-        # update dimensions and position
-        self._dimensions = Size(width=width, height=height)
-        self.transform.translate = (min_x, min_y)
-
-        # update local points (relative to component origin)
-        self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
-        self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
-
-        # update local checkpoints (relative to component origin)
-        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in self._local_checkpoints]
-
-        self._create_svg_content()
-
-    def _find_best_anchor_pair(self):
-        """find best pair of anchor points with shortest distance"""
-        start_anchors = getattr(self.start_component, "anchor_points", [])
-        end_anchors = getattr(self.end_component, "anchor_points", [])
-
-        if not start_anchors or not end_anchors:
-            return None
-
-        min_distance = float("inf")
-        best_pair = None
-
-        # find pair with shortest distance
-        for start_anchor in start_anchors:
-            start_pos = start_anchor.get_world_position(self.start_component)
-
-            for end_anchor in end_anchors:
-                end_pos = end_anchor.get_world_position(self.end_component)
-
-                dx = end_pos[0] - start_pos[0]
-                dy = end_pos[1] - start_pos[1]
-                distance = math.sqrt(dx * dx + dy * dy)
-
-                if distance < min_distance:
-                    min_distance = distance
-                    best_pair = (start_anchor, end_anchor)
-
-        return best_pair
-
-    def _calculate_world_connection_points(self):
-        """calculate endpoints and update curve settings"""
-        start_anchor = None
-        end_anchor = None
-
-        if (
-            self.auto_route
-            and hasattr(self.start_component, "anchor_points")
-            and hasattr(self.end_component, "anchor_points")
-        ):
-            # find best anchor pair
-            best_pair = self._find_best_anchor_pair()
-            if best_pair:
-                start_anchor, end_anchor = best_pair
-
-                # apply anchor settings
-                if start_anchor:
-                    self.start_offset = start_anchor.offset
-
-                    if isinstance(self.curve_type, OrthogonalCurve):
-                        # convert vector to cardinal direction
-                        dir_x, dir_y = start_anchor.direction
-                        if abs(dir_x) > abs(dir_y):
-                            self.curve_type.start_direction = "right" if dir_x > 0 else "left"
-                        else:
-                            self.curve_type.start_direction = "down" if dir_y > 0 else "up"
-                        self.curve_type.start_length = start_anchor.min_segment
-
-                    elif isinstance(self.curve_type, SimpleBezierCurve):
-                        dir_x, dir_y = start_anchor.direction
-                        self.curve_type.start_vector = (
-                            dir_x * start_anchor.min_segment,
-                            dir_y * start_anchor.min_segment,
-                        )
-
-                if end_anchor:
-                    self.end_offset = end_anchor.offset
-
-                    if isinstance(self.curve_type, OrthogonalCurve):
-                        # convert vector to cardinal direction
-                        dir_x, dir_y = end_anchor.direction
-                        if abs(dir_x) > abs(dir_y):
-                            self.curve_type.end_direction = "right" if dir_x > 0 else "left"
-                        else:
-                            self.curve_type.end_direction = "down" if dir_y > 0 else "up"
-                        self.curve_type.end_length = end_anchor.min_segment
-
-                    elif isinstance(self.curve_type, SimpleBezierCurve):
-                        dir_x, dir_y = end_anchor.direction
-                        # invert direction for end point
-                        self.curve_type.end_vector = (
-                            -dir_x * end_anchor.min_segment,
-                            -dir_y * end_anchor.min_segment,
-                        )
-
-        # calculate world coordinates
-        start_world = self._get_component_world_position(self.start_component, self.start_offset)
-        end_world = self._get_component_world_position(self.end_component, self.end_offset)
-
-        return start_world, end_world
+        return measured_size

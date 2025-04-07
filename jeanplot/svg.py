@@ -483,6 +483,7 @@ class SVGElement(Component):
     def render(self, renderer, context, matrix: np.ndarray):
         """render svg using renderer"""
         self.add_renderer_option(renderer.RENDERER_NAME, "line_width_mode", self.line_width_mode)
+        print(f"Rendering SVG content: {self.svg_content}")
         renderer.render_svg(context, self, matrix)
         if self.debug:
             renderer.render_debug(context, self, matrix)

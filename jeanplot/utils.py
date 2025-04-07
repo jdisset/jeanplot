@@ -2,7 +2,7 @@ from typing import Optional
 from importlib.resources import files, as_file
 from pathlib import Path
 import logging
-from .models import AnchorPoint, Offset
+from .models import Offset
 
 logger = logging.getLogger(__name__)
 
@@ -59,46 +59,3 @@ def load_file_if_exists(path: str | Path):
         return load_file(path)
     except FileNotFoundError as e:
         return None
-
-
-def make_anchor_point(
-    position: str, min_segment: float = 10.0, offset: Optional[Offset] = None
-) -> AnchorPoint:
-    """create anchor at standard position"""
-    directions = {
-        "top": (0, -1),
-        "bottom": (0, 1),
-        "left": (-1, 0),
-        "right": (1, 0),
-        "top_left": (-0.707, -0.707),
-        "top_right": (0.707, -0.707),
-        "bottom_left": (-0.707, 0.707),
-        "bottom_right": (0.707, 0.707),
-    }
-
-    offsets = {
-        "top": Offset(relative=(0.5, 0)),
-        "bottom": Offset(relative=(0.5, 1)),
-        "left": Offset(relative=(0, 0.5)),
-        "right": Offset(relative=(1, 0.5)),
-        "top_left": Offset(relative=(0, 0)),
-        "top_right": Offset(relative=(1, 0)),
-        "bottom_left": Offset(relative=(0, 1)),
-        "bottom_right": Offset(relative=(1, 1)),
-    }
-
-    return AnchorPoint(
-        offset=offset or offsets.get(position, Offset(relative=(0.5, 0.5))),
-        direction=directions.get(position, (0, 1)),
-        min_segment=min_segment,
-    )
-
-
-def standard_anchors(min_segment: float = 10.0) -> list[AnchorPoint]:
-    """get standard anchor points"""
-    return [
-        make_anchor_point("top", min_segment),
-        make_anchor_point("right", min_segment),
-        make_anchor_point("bottom", min_segment),
-        make_anchor_point("left", min_segment),
-    ]
