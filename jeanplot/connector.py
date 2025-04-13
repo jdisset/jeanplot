@@ -1,44 +1,38 @@
-from typing import Optional, Any, List, Tuple
-from pydantic import Field, BeforeValidator, PrivateAttr
-from typing_extensions import Annotated
+"""Component for drawing connections (lines/curves) between other components."""
+
+from typing import Optional, Any, List, Tuple, Union
+from pydantic import Field, PrivateAttr, model_validator
 import numpy as np
 import math
+import copy
+import logging
 
-from .path_utils import resolve_component_ref
-from .curve import (
+from jeanplot.path_utils import find_component_by_path
+from jeanplot.curve import (
     CurveDefinition,
     OrthogonalCurve,
     SimpleBezierCurve,
     StraightCurve,
 )
-from .component import Component, Overlay, AnchorComponent, get_world_origin
-from .models import Size, Offset
-from .svg import (
-    SVGElement,
-    SVGContent,
-    SVGPathData,
-    LineEndArrow,
-    LineEndType,
-    LineStyle,
-    LineEndCircle,
-    LineEndFlat,
-    create_arrow_cap,
-    create_circle_cap,
-    create_flat_cap,
-)
-from .debug import debug_print
+from jeanplot.component import Component, Overlay, AnchorComponent
+from jeanplot.models import Size, Offset
+from jeanplot.svg import LineEndType, LineStyle
+from jeanplot.debug import debug_print
+from jeanplot.style import jstyle
 
-ValidatedComponentRef = Annotated[Component, BeforeValidator(resolve_component_ref)]
+logger = logging.getLogger(__name__)
 
 
 class Connection(Overlay):
-    """connects two components with a styled line/curve"""
+    """connects two components with a styled line/curve."""
 
-    start_component: ValidatedComponentRef
-    end_component: ValidatedComponentRef
+    start_component: Union[str, Component]
+    end_component: Union[str, Component]
+    # offset from the resolved start component's origin
+    start_offset: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
+    # offset from the resolved end component's origin
+    end_offset: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
 
-    start_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
-    end_offset: Offset = Field(default_factory=lambda: Offset(relative=(0.5, 0.5)))
     color: str = "#000000"
     line_width: float = 1.0
     curve_type: CurveDefinition = Field(default_factory=StraightCurve)
@@ -47,486 +41,343 @@ class Connection(Overlay):
     dash_offset: float = 0.0
     start_cap: Optional[LineEndType] = None
     end_cap: Optional[LineEndType] = None
+    # enable automatic selection of best anchor points if available
     auto_route: bool = True
 
-    _svg_element: Optional[SVGElement] = PrivateAttr(default=None)
+    # --- Internal State ---
+    # store modified curve instance used for the last calculation
+    _current_curve_instance: Optional[CurveDefinition] = PrivateAttr(default=None)
+    # resolved component references
+    _resolved_start_component: Optional[Component] = PrivateAttr(default=None)
+    _resolved_end_component: Optional[Component] = PrivateAttr(default=None)
+    # cached points from last calculation (relative to connection's own origin)
     _local_start: Optional[Tuple[float, float]] = PrivateAttr(default=None)
     _local_end: Optional[Tuple[float, float]] = PrivateAttr(default=None)
-    _world_start: Optional[Tuple[float, float]] = PrivateAttr(default=None)
-    _world_end: Optional[Tuple[float, float]] = PrivateAttr(default=None)
-    _local_checkpoints: List[Tuple[float, float]] = PrivateAttr(default_factory=list)
+    _local_control_points: List[Tuple[float, float]] = PrivateAttr(default_factory=list)
 
-    def _log_debug(self, message: str, data: Any = None, matrix: Optional[np.ndarray] = None):
-        """concise debug logging with connection identity"""
-        comp_id = (
-            self.id
-            or f"Conn({getattr(self.start_component, 'id', '?')}->{getattr(self.end_component, 'id', '?')})"
-        )
-        if matrix is not None:
-            data_str = (
-                f"{data}\nMatrix:\n{np.round(matrix, 3)}"
-                if data
-                else f"Matrix:\n{np.round(matrix, 3)}"
-            )
-            debug_print(comp_id, message, data_str)
-        else:
-            debug_print(comp_id, message, data)
+    @model_validator(mode="after")
+    def _init_curve_instance(self):
+        """ensure a copy of the curve definition is made."""
+        self._current_curve_instance = copy.deepcopy(self.curve_type)
+        return self
 
-    def _transform_world_to_parent(
-        self, world_point: Tuple[float, float]
-    ) -> Optional[Tuple[float, float]]:
-        """transform point from world to parent coordinates"""
+    def _get_active_curve(self) -> CurveDefinition:
+        """returns the curve instance to use for calculations."""
+        if self._current_curve_instance is None or type(self._current_curve_instance) != type(
+            self.curve_type
+        ):
+            self._current_curve_instance = copy.deepcopy(self.curve_type)
+        return self._current_curve_instance
+
+    def _resolve_references(self):
+        """resolve string paths for start/end_component."""
+        resolved_start = self._resolved_start_component
+        resolved_end = self._resolved_end_component
+
+        if isinstance(self.start_component, str) and resolved_start is None:
+            resolved_start = self._resolve_single_ref(self.start_component, "start")
+        elif isinstance(self.start_component, Component):
+            resolved_start = self.start_component
+
+        if isinstance(self.end_component, str) and resolved_end is None:
+            resolved_end = self._resolve_single_ref(self.end_component, "end")
+        elif isinstance(self.end_component, Component):
+            resolved_end = self.end_component
+
+        self._resolved_start_component = resolved_start
+        self._resolved_end_component = resolved_end
+
+    def _resolve_single_ref(self, path: str, which: str) -> Optional[Component]:
+        """helper to resolve a single string reference."""
         if not self.parent:
-            return world_point
-
-        parent_matrix = self.parent.compute_world_matrix()
+            self._log_debug(f"cannot resolve {which} path '{path}' without parent.")
+            return None
         try:
-            parent_inv = np.linalg.inv(parent_matrix)
-        except np.linalg.LinAlgError:
-            self._log_debug("warning: parent matrix not invertible, using identity")
-            parent_inv = np.eye(3)
+            root = self.parent
+            while root.parent is not None:
+                root = root.parent
+            resolved = find_component_by_path(root, path)
+            if resolved:
+                self._log_debug(f"resolved {which} path '{path}' to {resolved.id}")
+                return resolved
+            else:  # find_component_by_path raises error if not found
+                return None
+        except ValueError as e:
+            self._log_debug(f"error resolving {which} path '{path}': {e}")
+            return None
 
-        parent_coords = np.dot(parent_inv, [world_point[0], world_point[1], 1])
-        return (parent_coords[0], parent_coords[1])
-
-    def measure(self, renderer=None) -> Size:
-        """calculate dimensions based on connected components positions"""
-        self._log_debug("measure: starting")
-
-        # early exit checks
-        if not self.parent or not self.start_component or not self.end_component:
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # ensure components are measured
-        for comp in [self.start_component, self.end_component]:
-            if (
-                not hasattr(comp, "_dimensions")
-                or comp._dimensions.width <= 0
-                or comp._dimensions.height <= 0
-            ):
-                comp.measure_and_layout(renderer)
-            if comp._dimensions.width <= 0 or comp._dimensions.height <= 0:
-                self._log_debug(f"warning: component {comp.id} has zero dimensions after measure")
-                self._dimensions = Size()
-                self._transformed_aabb = Size()
-                return self._dimensions
-
-        # calculate connection points
-        self._world_start, self._world_end = self._calculate_world_connection_points()
-        if not self._world_start or not self._world_end:
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # transform points to parent coordinates
-        start_parent = self._transform_world_to_parent(self._world_start)
-        end_parent = self._transform_world_to_parent(self._world_end)
-        if start_parent is None or end_parent is None:
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # transform checkpoints if present
-        self._local_checkpoints = []
-        world_checkpoints = []
-        parent_checkpoints = []
-        if isinstance(self.curve_type, OrthogonalCurve) and self.curve_type.checkpoints:
-            world_checkpoints = self.curve_type.checkpoints
-            parent_checkpoints = [self._transform_world_to_parent(cp) for cp in world_checkpoints]
-            if any(p is None for p in parent_checkpoints):
-                self._log_debug("warning: failed to transform checkpoints, ignoring them")
-                parent_checkpoints = []
-
-        # calculate bounds with buffer
-        points = [start_parent, end_parent] + parent_checkpoints
-        try:
-            min_x = min(p[0] for p in points)
-            max_x = max(p[0] for p in points)
-            min_y = min(p[1] for p in points)
-            max_y = max(p[1] for p in points)
-        except Exception as e:
-            self._log_debug(f"error calculating bounds: {e}")
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
-
-        # add buffer for visual padding and end caps
-        buffer = max(self.line_width * 3, 10)
-        min_x -= buffer
-        min_y -= buffer
-        max_x += buffer
-        max_y += buffer
-
-        # update dimensions and offset
-        width = max(max_x - min_x, 1.0)
-        height = max(max_y - min_y, 1.0)
-        self._dimensions = Size(width=width, height=height)
-        self.offset = Offset(absolute=(min_x, min_y))
-
-        # calculate local coordinates relative to offset
-        self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
-        self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
-        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in parent_checkpoints]
-
-        # create svg content and calculate final aabb
-        self._create_svg_content()
-        self._transformed_aabb = self.compute_transformed_aabb()
-
-        self._log_debug(f"measure: complete, dims={self._dimensions}, offset={self.offset}")
-        return self._dimensions
-
-    def _get_component_offset_world_position(
-        self, component: Component, offset: Offset
-    ) -> Optional[Tuple[float, float]]:
-        """get world position of an offset point relative to a component"""
-        if not hasattr(component, "_dimensions") or component._dimensions.width <= 0:
-            component.measure_and_layout()
-
-        # compute local position using offset
-        dims = component._dimensions
-        if dims.width <= 0 or dims.height <= 0:
-            self._log_debug(f"warning: component {component.id} has zero dimensions")
-            local_pos = (0, 0)
-        else:
-            local_pos = offset.compute(dims, dims)
-
-        # transform to world space
-        world_matrix = component.compute_world_matrix()
-        world_point = world_matrix @ np.array([local_pos[0], local_pos[1], 1])
-        return (world_point[0], world_point[1])
-
-    def _find_best_target_anchor(
+    def _find_best_anchor(
         self, component: Component, reference_point_world: Tuple[float, float]
     ) -> Optional[AnchorComponent]:
-        """find best anchor on component based on distance to a reference point"""
+        """find best anchor on component closest to a world reference point."""
         anchors = [
             a for a in getattr(component, "anchor_points", []) if isinstance(a, AnchorComponent)
         ]
         if not anchors:
             return None
 
-        best_anchor = None
-        min_dist_sq = float("inf")
-
+        best_anchor, min_dist_sq = None, float("inf")
         for anchor in anchors:
-            # ensure anchor is measured
-            if not hasattr(anchor, "_dimensions") or anchor._dimensions.width <= 0:
-                anchor.measure_and_layout()
-
             try:
-                anchor_pos = get_world_origin(anchor)
+                anchor_pos = anchor.get_world_origin()
                 dist_sq = math.dist(anchor_pos, reference_point_world) ** 2
                 if dist_sq < min_dist_sq:
                     min_dist_sq = dist_sq
                     best_anchor = anchor
-            except Exception:
-                continue  # skip anchor if error occurs
-
+            except Exception as e:
+                self._log_debug(f"error getting origin for anchor {anchor.id}: {e}")
         return best_anchor
 
-    def _calculate_world_connection_points(
+    def _update_curve_params_from_anchor(self, anchor: AnchorComponent, is_start: bool):
+        """updates the ACTIVE curve's parameters based on anchor properties."""
+        if not isinstance(anchor, AnchorComponent) or anchor.direction is None:
+            return
+
+        active_curve = self._get_active_curve()
+        prefix = "start" if is_start else "end"
+        anchor_dir = anchor.direction
+        anchor_len = anchor.min_segment
+        updated = False
+
+        self._log_debug(
+            f"updating curve from anchor '{anchor.id}': dir={anchor_dir}, len={anchor_len} for side '{prefix}'"
+        )
+
+        if isinstance(active_curve, OrthogonalCurve):
+            ortho_dir_name = OrthogonalCurve.get_direction(anchor_dir)
+            if getattr(active_curve, f"{prefix}_direction") != ortho_dir_name:
+                setattr(active_curve, f"{prefix}_direction", ortho_dir_name)
+                updated = True
+            if getattr(active_curve, f"{prefix}_length") != anchor_len:
+                setattr(active_curve, f"{prefix}_length", anchor_len)
+                updated = True
+        elif isinstance(active_curve, SimpleBezierCurve):
+            vector = (anchor_dir[0] * anchor_len, anchor_dir[1] * anchor_len)
+            if getattr(active_curve, f"{prefix}_mode") != "vector":
+                setattr(active_curve, f"{prefix}_mode", "vector")
+                updated = True
+            if getattr(active_curve, f"{prefix}_vector") != vector:
+                setattr(active_curve, f"{prefix}_vector", vector)
+                updated = True
+
+    def _get_world_connection_points(
         self,
-    ) -> Tuple[Optional[Tuple[float, float]], Optional[Tuple[float, float]]]:
-        """calculate endpoints in world coordinates with auto-routing"""
-        start_comp = self.start_component
-        end_comp = self.end_component
-        if not start_comp or not end_comp:
-            return None, None
+    ) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+        """
+        calculates connection world points, handling auto-routing and anchor updates.
+        returns (world_start, world_end) or None on failure.
+        """
+        self._resolve_references()  # ensure components are resolved first
+        start_comp_orig = self._resolved_start_component
+        end_comp_orig = self._resolved_end_component
 
-        # ensure components are measured
-        for comp in [start_comp, end_comp]:
-            if not hasattr(comp, "_dimensions") or comp._dimensions.width <= 0:
-                comp.measure_and_layout()
+        if not start_comp_orig or not end_comp_orig:
+            self._log_debug("cannot calculate points: missing resolved components.")
+            return None
 
-        # default targets are the components with specified offsets
-        start_target, end_target = start_comp, end_comp
+        # reset active curve instance to base type before potentially modifying it
+        self._current_curve_instance = copy.deepcopy(self.curve_type)
+
+        # ensure target components have dimensions (needed for offset calculation)
+        # ideally measure_and_layout has run, but check just in case
+        for comp in [start_comp_orig, end_comp_orig]:
+            if comp._dimensions.width <= 0 or comp._dimensions.height <= 0:
+                self._log_debug(
+                    f"warning: target component {comp.id} has zero size for connection calc."
+                )
+                # attempt measure? might cause loops if called during layout
+                # comp.measure_and_layout() # careful with this
+
+        start_target, end_target = start_comp_orig, end_comp_orig
         start_offset, end_offset = self.start_offset, self.end_offset
 
-        # get initial world positions for anchor finding
-        start_world_initial = self._get_component_offset_world_position(start_target, start_offset)
-        end_world_initial = self._get_component_offset_world_position(end_target, end_offset)
-        if not start_world_initial or not end_world_initial:
-            return None, None
-
-        def update_curve_from_anchor(anchor: AnchorComponent, is_start: bool):
-            """update curve parameters based on anchor properties"""
-            prefix = "start" if is_start else "end"
-            anchor_dir = getattr(anchor, "direction", (0, 1))
-            anchor_len = getattr(anchor, "min_segment", 10.0)
-
-            if isinstance(self.curve_type, OrthogonalCurve):
-                setattr(
-                    self.curve_type,
-                    f"{prefix}_direction",
-                    OrthogonalCurve.get_direction(anchor_dir),
-                )
-                setattr(self.curve_type, f"{prefix}_length", anchor_len)
-            elif isinstance(self.curve_type, SimpleBezierCurve):
-                setattr(
-                    self.curve_type,
-                    f"{prefix}_vector",
-                    (anchor_dir[0] * anchor_len, anchor_dir[1] * anchor_len),
-                )
-
-        # find best anchors if auto-routing is enabled
         if self.auto_route:
-            # find best anchor on end component
-            best_end_anchor = self._find_best_target_anchor(end_comp, start_world_initial)
-            if best_end_anchor:
-                end_target = best_end_anchor
-                end_offset = Offset()  # use anchor's origin
-                update_curve_from_anchor(best_end_anchor, False)
+            # get initial positions using original components/offsets for anchor finding
+            world_start_initial = self._get_offset_world_position(start_target, start_offset)
+            world_end_initial = self._get_offset_world_position(end_target, end_offset)
 
-            # find best anchor on start component
-            ref_point = (
-                self._get_component_offset_world_position(end_target, end_offset)
-                or end_world_initial
+            if world_start_initial and world_end_initial:
+                best_end_anchor = self._find_best_anchor(end_comp_orig, world_start_initial)
+                if best_end_anchor:
+                    end_target = best_end_anchor
+                    end_offset = Offset()  # connect to anchor origin
+
+                # use potentially updated end target position to find start anchor
+                ref_point_for_start = (
+                    self._get_offset_world_position(end_target, end_offset) or world_end_initial
+                )
+                best_start_anchor = self._find_best_anchor(start_comp_orig, ref_point_for_start)
+                if best_start_anchor:
+                    start_target = best_start_anchor
+                    start_offset = Offset()  # connect to anchor origin
+            else:
+                self._log_debug("skipping anchor finding due to missing initial positions.")
+
+        # update curve parameters based on final targets (if anchors)
+        self._update_curve_params_from_anchor(start_target, is_start=True)
+        self._update_curve_params_from_anchor(end_target, is_start=False)
+
+        # calculate final world positions using final targets/offsets
+        world_start = self._get_offset_world_position(start_target, start_offset)
+        world_end = self._get_offset_world_position(end_target, end_offset)
+
+        if world_start and world_end:
+            # self._log_debug(f"calculated world points: start={world_start}, end={world_end}")
+            return world_start, world_end
+        else:
+            self._log_debug(
+                f"failed to calculate final world positions (start={world_start}, end={world_end})"
             )
-            best_start_anchor = self._find_best_target_anchor(start_comp, ref_point)
-            if best_start_anchor:
-                start_target = best_start_anchor
-                start_offset = Offset()  # use anchor's origin
-                update_curve_from_anchor(best_start_anchor, True)
+            return None
 
-        # calculate final world positions
-        start_world = self._get_component_offset_world_position(start_target, start_offset)
-        end_world = self._get_component_offset_world_position(end_target, end_offset)
+    def _get_offset_world_position(
+        self, component: Component, offset: Offset
+    ) -> Optional[Tuple[float, float]]:
+        """gets the world position corresponding to an offset on a component."""
+        try:
+            comp_dims = component._dimensions
+            if comp_dims.width <= 0 or comp_dims.height <= 0:
+                # try natural dims as fallback for offset calculation
+                nat_dims = getattr(component, "_natural_dimensions", Size())
+                comp_dims = nat_dims if nat_dims.width > 0 else Size()
+                self._log_debug(
+                    f"using {'natural' if comp_dims.width > 0 else 'zero'} dims for offset on {component.id}"
+                )
 
-        return start_world, end_world
+            # connection offsets use the component itself as the reference frame
+            local_pos = offset.compute(self_dims=comp_dims, reference_dims=comp_dims)
+
+            world_matrix = component.compute_world_matrix()
+            world_point = world_matrix @ np.array([local_pos[0], local_pos[1], 1])
+            return (world_point[0], world_point[1])
+        except Exception as e:
+            self._log_debug(f"error getting offset world pos for {component.id}: {e}")
+            return None  # return None on any error
+
+    def _get_local_points_and_curve(
+        self,
+    ) -> Optional[
+        Tuple[Tuple[float, float], Tuple[float, float], List[Tuple[float, float]], CurveDefinition]
+    ]:
+        """
+        calculates world points, transforms them to connection's local space,
+        and returns local start, end, control points, and the active curve instance.
+        returns None if points cannot be calculated.
+        """
+        world_points = self._get_world_connection_points()
+        if not world_points:
+            return None
+        world_start, world_end = world_points
+
+        active_curve = self._get_active_curve()
+
+        # get connection's own inverse world matrix to transform points to local
+        try:
+            # connection itself has identity local matrix unless explicitly transformed
+            conn_world_matrix = self.compute_world_matrix()
+            conn_inv_world = np.linalg.inv(conn_world_matrix)
+        except np.linalg.LinAlgError:
+            self._log_debug("warning: connection matrix not invertible, using identity.")
+            conn_inv_world = np.identity(3)
+
+        # transform world points to connection's local coordinate system
+        local_start_h = conn_inv_world @ np.array([world_start[0], world_start[1], 1])
+        local_end_h = conn_inv_world @ np.array([world_end[0], world_end[1], 1])
+        local_start = (local_start_h[0], local_start_h[1])
+        local_end = (local_end_h[0], local_end_h[1])
+
+        # get path string and control points (in local coords) from curve instance
+        # note: get_path uses local points directly
+        try:
+            # get_path currently assumes points are already local
+            _, control_points = active_curve.get_path(local_start, local_end)
+        except Exception as e:
+            self._log_debug(f"error getting path/control points from curve: {e}")
+            control_points = []  # fallback
+
+        # self._log_debug(f"local points: start={local_start}, end={local_end}, cp={control_points}")
+        return local_start, local_end, control_points, active_curve
+
+    def measure_and_layout(self, renderer=None):
+        """
+        measure connection bounds. connections are overlays, so layout is trivial.
+        bounds are calculated based on the potential curve path.
+        """
+        self._apply_style()
+        self._resolve_references()
+
+        if not self._resolved_start_component or not self._resolved_end_component:
+            self._log_debug("measure skipped: missing resolved components.")
+            self._dimensions = Size()
+            return self._dimensions
+
+        # calculate world points to estimate bounds
+        # this also updates the curve instance if auto-routing/anchors are used
+        world_pts = self._get_world_connection_points()
+        if not world_pts:
+            self._dimensions = Size()
+            return self._dimensions
+        world_start, world_end = world_pts
+
+        # use a rough bounding box based on world start/end for simplicity
+        # a more accurate measure would trace the curve, but less performant
+        # add buffer for line width and caps
+        buffer = max(self.line_width * 3, 10)
+        min_x = min(world_start[0], world_end[0]) - buffer
+        min_y = min(world_start[1], world_end[1]) - buffer
+        max_x = max(world_start[0], world_end[0]) + buffer
+        max_y = max(world_start[1], world_end[1]) + buffer
+
+        # set dimensions and offset based on world bounds
+        # offset will position the connection container's origin at world (min_x, min_y)
+        width = max(1.0, max_x - min_x)
+        height = max(1.0, max_y - min_y)
+        self._dimensions = Size(width=width, height=height)
+        self.offset = Offset(absolute=(min_x, min_y))  # use absolute offset for positioning
+
+        self._log_debug(f"measured bounds: dims={self._dimensions}, offset={self.offset}")
+
+        # no internal layout needed for connection itself
+        return self._dimensions
 
     def render(self, renderer, context, matrix: np.ndarray):
-        """render connection as SVG element"""
-        if not self.show or not self.start_component or not self.end_component:
+        """render the connection curve and caps."""
+        if not self.show or not self._resolved_start_component or not self._resolved_end_component:
             return
 
-        # calculate current target world points
-        start_world_target, end_world_target = self._calculate_world_connection_points()
-        if not start_world_target or not end_world_target:
+        # calculate local points relative to connection's origin just before rendering
+        local_point_data = self._get_local_points_and_curve()
+        if not local_point_data:
+            self._log_debug("render skipped: could not calculate local points.")
+            return
+        local_start, local_end, local_cp, active_curve = local_point_data
+
+        # get path string using local points
+        try:
+            path_str, _ = active_curve.get_path(local_start, local_end)
+        except Exception as e:
+            self._log_debug(f"render skipped: error getting path string from curve: {e}")
             return
 
-        # check if geometry update is needed
-        tolerance = 1e-4
-        needs_update = (
-            not self._world_start
-            or not self._world_end
-            or math.dist(start_world_target, self._world_start) > tolerance
-            or math.dist(end_world_target, self._world_end) > tolerance
-            or not hasattr(self, "_dimensions")
-            or self._dimensions.width <= 0
+        # delegate drawing the path to the renderer
+        renderer.render_connection_curve(
+            context, self, local_start, local_end, local_cp, path_str, matrix
         )
 
-        # update geometry if needed
-        if needs_update:
-            self._world_start, self._world_end = start_world_target, end_world_target
-            if self.parent:
-                start_parent = self._transform_world_to_parent(start_world_target)
-                end_parent = self._transform_world_to_parent(end_world_target)
-                if start_parent is not None and end_parent is not None:
-                    self._update_connection_geometry(start_parent, end_parent)
-                else:
-                    return  # can't proceed without valid transforms
-            else:
-                return  # can't proceed without parent
-
-        # render SVG element
-        if self._svg_element:
-            self._svg_element.render(renderer, context, matrix)
-
-        # render debug visualization if enabled
         if self.debug:
-            # verify point mapping in debug mode
-            if self._local_start is not None and self._world_start is not None:
-                self._debug_check_transform(matrix)
+            renderer.render_debug(context, self, matrix)  # debug for connection container
 
-            # render debug box
-            if hasattr(self, "_dimensions") and self._dimensions.width > 0:
-                renderer.render_debug(context, self, matrix)
-
-    def _debug_check_transform(self, matrix: np.ndarray):
-        """verify world/local point transformations in debug mode"""
-        local_start_h = np.array([self._local_start[0], self._local_start[1], 1])
-        transformed_start = (matrix @ local_start_h)[:2]
-        start_match = np.allclose(transformed_start, self._world_start, atol=1e-5)
-
-        local_end_h = np.array([self._local_end[0], self._local_end[1], 1])
-        transformed_end = (matrix @ local_end_h)[:2]
-        end_match = np.allclose(transformed_end, self._world_end, atol=1e-5)
-
-        print(f"--- Debug Connection {self.id or 'unnamed'} ---")
-        parent_matrix = self.parent.compute_world_matrix() if self.parent else np.identity(3)
-        print(f"Parent World Matrix:\n{np.round(parent_matrix, 3)}")
-        print(f"Connection Offset: {self.offset}")
-        print(f"Connection Dimensions: {self._dimensions}")
-        try:
-            local_mat = self.compute_local_matrix()
-            print(f"Connection Local Matrix:\n{np.round(local_mat, 3)}")
-        except Exception as e:
-            print(f"Connection Local Matrix: Error - {e}")
-
-        print(f"Connection World Matrix:\n{np.round(matrix, 3)}")
-        print(f"World Start: {np.round(self._world_start, 3)}")
-        print(f"World End: {np.round(self._world_end, 3)}")
-        print(f"Local Start: {np.round(self._local_start, 3)}")
-        print(f"Local End: {np.round(self._local_end, 3)}")
-        print(f"Transformed Start: {np.round(transformed_start, 3)}")
-        print(f"Transformed End: {np.round(transformed_end, 3)}")
-        print(
-            f"Start Match: {start_match} (Diff: {np.linalg.norm(transformed_start - self._world_start):.4e})"
+    def _log_debug(self, message: str, data: Any = None):
+        """concise debug logging with connection identity"""
+        start_id = (
+            getattr(self._resolved_start_component, "id", "?")
+            if self._resolved_start_component
+            else "?"
         )
-        print(
-            f"End Match: {end_match} (Diff: {np.linalg.norm(transformed_end - self._world_end):.4e})"
+        end_id = (
+            getattr(self._resolved_end_component, "id", "?")
+            if self._resolved_end_component
+            else "?"
         )
-
-    def _update_connection_geometry(
-        self, start_parent: Tuple[float, float], end_parent: Tuple[float, float]
-    ):
-        """update connection dimensions, offset and svg content"""
-        # recalculate local checkpoints if present
-        parent_checkpoints = []
-        if isinstance(self.curve_type, OrthogonalCurve) and self.curve_type.checkpoints:
-            world_checkpoints = self.curve_type.checkpoints
-            parent_checkpoints_temp = [
-                self._transform_world_to_parent(cp) for cp in world_checkpoints
-            ]
-            if not any(p is None for p in parent_checkpoints_temp):
-                parent_checkpoints = parent_checkpoints_temp
-
-        # calculate bounds with all points
-        points = [start_parent, end_parent] + parent_checkpoints
-        try:
-            min_x = min(p[0] for p in points)
-            max_x = max(p[0] for p in points)
-            min_y = min(p[1] for p in points)
-            max_y = max(p[1] for p in points)
-        except Exception as e:
-            self._log_debug(f"error calculating bounds: {e}")
-            return
-
-        # add buffer and calculate dimensions
-        buffer = max(self.line_width * 3, 10)
-        min_x -= buffer
-        min_y -= buffer
-        max_x += buffer
-        max_y += buffer
-
-        # update dimensions and offset
-        self._dimensions = Size(width=max(max_x - min_x, 1.0), height=max(max_y - min_y, 1.0))
-        self.offset = Offset(absolute=(min_x, min_y))
-
-        # calculate local coordinates relative to offset
-        self._local_start = (start_parent[0] - min_x, start_parent[1] - min_y)
-        self._local_end = (end_parent[0] - min_x, end_parent[1] - min_y)
-        self._local_checkpoints = [(cp[0] - min_x, cp[1] - min_y) for cp in parent_checkpoints]
-
-        # create svg content with updated coordinates
-        self._create_svg_content()
-
-    def _create_svg_content(self):
-        """create SVG content based on connection points and curve type"""
-        if not self._local_start or not self._local_end or not hasattr(self, "_dimensions"):
-            self._svg_element = None
-            return
-
-        width = max(self._dimensions.width, 1.0)
-        height = max(self._dimensions.height, 1.0)
-
-        # generate path from curve type
-        try:
-            path_str, control_points = self.curve_type.get_path(
-                self._local_start, self._local_end, self._local_checkpoints
-            )
-        except Exception as e:
-            self._log_debug(f"error getting path: {e}")
-            self._svg_element = None
-            return
-
-        # create svg path
-        path_data = SVGPathData(
-            d=path_str,
-            stroke=self.color,
-            stroke_width=self.line_width,
-            fill="none",
-            line_style=self.line_style,
-            dash_array=self.dash_array,
-            dash_offset=self.dash_offset,
-        )
-
-        # add end caps if needed
-        paths = [path_data]
-        if self.start_cap or self.end_cap:
-            self._add_end_caps(paths, self._local_start, self._local_end, control_points)
-
-        # create svg content with viewBox
-        svg_content = SVGContent(
-            width=width,
-            height=height,
-            viewBox=(0, 0, width, height),
-            paths=paths,
-        )
-
-        # create svg element and set dimensions
-        self._svg_element = SVGElement(svg_content=svg_content, id=f"svg_{self.id or 'conn'}")
-        self._svg_element._dimensions = Size(width=width, height=height)
-
-    def _add_end_caps(
-        self,
-        paths: List[SVGPathData],
-        start: Tuple[float, float],
-        end: Tuple[float, float],
-        control_points: Optional[List[Tuple[float, float]]] = None,
-    ):
-        """add end caps to the paths list"""
-        if not (self.start_cap or self.end_cap):
-            return
-
-        # get directions from curve type
-        try:
-            start_dir, end_dir = self.curve_type.get_directions(start, end, control_points or [])
-        except Exception:
-            return  # skip caps if directions can't be determined
-
-        # map cap types to creation functions
-        cap_creators = {
-            LineEndArrow: create_arrow_cap,
-            LineEndCircle: create_circle_cap,
-            LineEndFlat: create_flat_cap,
-        }
-
-        # add start cap if specified
-        if self.start_cap:
-            for cap_type, creator in cap_creators.items():
-                if isinstance(self.start_cap, cap_type):
-                    try:
-                        paths.append(creator(start, start_dir, self.start_cap))
-                    except Exception:
-                        pass  # skip if creation fails
-                    break
-
-        # add end cap if specified
-        if self.end_cap:
-            for cap_type, creator in cap_creators.items():
-                if isinstance(self.end_cap, cap_type):
-                    try:
-                        paths.append(creator(end, end_dir, self.end_cap))
-                    except Exception:
-                        pass  # skip if creation fails
-                    break
-
-    def measure_and_layout(self, renderer=None) -> Size:
-        """measure and layout the connection"""
-        # apply styles if parent exists
-        if hasattr(self, "parent") and self.parent:
-            from .style import jstyle
-
-            jstyle.apply(self)
-            self._resolve_attachment()
-
-        # measure calculates dimensions, offset, and svg content
-        measured_size = self.measure(renderer)
-
-        # apply layout (no-op for Connection)
-        self.apply_layout()
-
-        return measured_size
+        comp_id = self.id or f"Conn({start_id}->{end_id})"
+        debug_print(comp_id, message, data)

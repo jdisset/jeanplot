@@ -8,6 +8,7 @@ import numpy as np
 
 from jeanplot.svg import SVGElement, get_svg_data_from_string, make_svg_line, SVGContent
 from jeanplot.container import Container
+from .style import jstyle
 
 # Updated import: Import AnchorComponent
 from jeanplot.component import Component, AnchorComponent
@@ -135,14 +136,12 @@ class Source(Container):
         return self
 
 
-# GeneticPart remains largely the same, but anchor points change type
-class GeneticPart(SVGElement):
+class GeneticPart(SVGElement, Container):
     """base class for genetic parts, extends SVGElement with biological features."""
 
     part_type: str
     part_name: Optional[str] = None
     label: Optional[Text] = None
-    # anchor_points defined in Component base class (List[Component])
 
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(justify_content="center", align_items="start")
@@ -163,20 +162,16 @@ class GeneticPart(SVGElement):
                 svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.{self.part_name}.svg"
                 svg_content = load_file_if_exists(svg_path)
                 if svg_content:
-                    # print(f"found svg content for {self.part_name} at {svg_path}") # debug
                     self.svg_content = get_svg_data_from_string(svg_content)
 
             if not isinstance(self.svg_content, SVGContent):  # Check if loaded above or still None
                 svg_path = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
                 svg_content = load_file_if_exists(svg_path)
                 if svg_content:
-                    # print(f"found svg content for {self.part_name} at {svg_path}") # debug
                     self.svg_content = get_svg_data_from_string(svg_content)
                 else:
-                    # print(f"svg content not found for {self.part_name} of type {self.part_type}") # debug
                     self.svg_content = SVGContent()  # Ensure it's valid SVGContent
 
-            # Set dimensions based on loaded SVG content
             self._dimensions = Size(width=self.svg_content.width, height=self.svg_content.height)
 
     @model_validator(mode="after")
@@ -185,7 +180,6 @@ class GeneticPart(SVGElement):
         if self.label and not any(isinstance(c, Text) for c in self.children):
             self.add_child(self.label)
 
-        # Ensure anchor points (which are now components) are also in children
         for anchor in self.anchor_points:
             if anchor not in self.children:
                 self.children.append(anchor)  # Add anchor to children
@@ -197,16 +191,8 @@ class GeneticPart(SVGElement):
         """render genetic part and optional label"""
         if not self.show:
             return
-        # Render the SVG part itself
         SVGElement.render(self, renderer, context, matrix)
-        # Render children (label, anchors if shown) using Container logic
-        # This assumes GeneticPart might need to render children like label/visible anchors
-        for child in self.children:
-            child_matrix = child.compute_world_matrix(parent_matrix=matrix)
-            child.render(renderer, context, child_matrix)
-
-
-# --- Update specific genetic parts with AnchorComponent ---
+        Container.render(self, renderer, context, matrix)
 
 
 class ERN(GeneticPart):
@@ -214,7 +200,6 @@ class ERN(GeneticPart):
     main_color: str = "#AAAAAA"
     secondary_color: str = "#111111"
 
-    # Define anchors as AnchorComponent instances
     anchor_points: List[AnchorComponent] = Field(
         default_factory=lambda: [
             AnchorComponent(

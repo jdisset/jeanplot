@@ -7,58 +7,29 @@ from sqlmodel import Session
 import biocomptools.toollib.common as cm
 import biocomptools.toollib.models as md
 from biocomptools.toollib.networkselector import NetworkSet, NetworkSelector
-import pandas as pd
 from jeanplot.debug import set_debug
 from jeanplot.style import jstyle
 import dracon as dr
-import random
-import json
-from jeanplot.component import Component
 from jeanplot.container import Container
 from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset, Shadow
 from jeanplot.text import Text
-from jeanplot.svg import SVGElement  # Keep import
 from jeanplot.connector import (
     Connection,
-    StraightCurve,
-    LineEndArrow,
     SimpleBezierCurve,
     OrthogonalCurve,
 )
-from jeanplot.network_utils import get_tu_informations, TUInfo
-from jeanplot.debug import debug_print
-from jeanplot.component import Component
 import numpy as np
-import matplotlib.pyplot as plt
-from jeanplot.models import Transform, Size, BoxStyle, LayoutConstraints, Offset
 from jeanplot.matplotlib_renderer import MatplotlibRenderer
-from jeanplot.container import Container
-from jeanplot.component import Component, Overlay, AnchorComponent, get_world_origin
-from jeanplot.text import Text
-from jeanplot.svg import (
-    SVGElement,
-    SVGContent,
-    SVGPathData,
-    LineEndArrow,
-    LineEndType,
-    LineStyle,
-    LineEndCircle,
-    LineEndFlat,
-    create_arrow_cap,
-    create_circle_cap,
-    create_flat_cap,
-)
+from jeanplot.component import AnchorComponent
+from jeanplot.svg import LineEndFlat
 
-# Import the new diagram class
-from jeanplot.network_diagram import draw_network_diagram
 
 # theme loading remains the same
 theme = dr.load("pkg:jeanplot:resources/themes/default", enable_interpolation=True, raw_dict=True)
 dr.resolve_all_lazy(theme)
 jstyle.styles = theme
 
-# only enable for debugging
-# set_debug(True)
+set_debug(True)
 
 
 lib = load_lib()
@@ -100,14 +71,6 @@ networks = list(networks)
 # print("Diagram generation complete.")
 
 
-# TODO:
-# start with a function to annotate erns layer
-# something that spits out ERN node number in topological order (e.g. [[0,1],[2]] for a bandpass)
-# that will also be used to annotate the ERN node themselves in their extra field (which will be used by the comp nodes)
-# then make a function that draws an ERN node cleanly
-# then an aggregation that can be collapsed (a single TU dash) or expanded (the full vertical rounded rectangle with all TUs in it)
-# then from there it should be pretty easy to draw the whole network
-
 mnet = networks[23]
 mnet.build(lib)
 net = mnet._network
@@ -133,14 +96,14 @@ style = {
         "layout.align_items": "center",
         "layout.justify_content": "center",
         "Text": {
-            "font_size": 8,
+            "font_size": 7,
             "color": "#fff",
             "vertical_align": "middle",
             "align": "center",
         },
     },
     "TranscriptionNode": {
-        "style.background_color": "#777",
+        "style.background_color": "#555",
     },
     "TranslationNode": {  # Global style for Tl
         "style.background_color": "#333",
@@ -150,24 +113,21 @@ style = {
         "max_dimensions": ERN_SIZE,
         "style.background_color": "#eee",
         "style.border_color": "#111",
-        "style.border_style": "dashed",
-        "style.dash_sequence": (4, 3),
-        "style.border_width": 2,  # or same
-        "TranslationNode": {  # Override global Tl style for children of ERNNode
+        "style.border_style": "custom",
+        "style.dash_sequence": (4, 4),
+        "style.border_width": 2,
+        "TranslationNode": {
             "style.background_color": "#ee3350",
             "offset": Offset(parent_relative=(0, 0.9), relative=(0, -1)),
-            "is_overlay": True,
         },
-        "TranscriptionNode": {  # Style for Tx children of ERNNode
-            "style.background_color": "#555",
+        "TranscriptionNode": {
             "offset": Offset(parent_relative=(0, 0.1), relative=(0, 0)),
-            "is_overlay": True,
         },
         "Connection[style_class=tlconn]": {
             "color": "#ee3350",
             "line_width": 3,
-            "start_offset": Offset(parent_relative=(0, 0), relative=(1, 0.5)),
-            "end_offset": Offset(absolute=(12, 5)),
+            # "start_offset": Offset(parent_relative=(0, 0), relative=(1, 0.5)),
+            "end_offset": Offset(parent_relative=(0.5, 0.5)),
             "end_cap": LineEndFlat(
                 stroke_color="#ee3350",
                 stroke_width=3,
@@ -177,7 +137,7 @@ style = {
         "Connection[style_class=txconn]": {
             "color": "#111",
             "line_width": 2,
-            "start_offset": Offset(parent_relative=(0, 0), relative=(0.8, 0.88)),
+            # "start_offset": Offset(parent_relative=(0, 0), relative=(0.8, 0.88)),
             "curve_type.start_vector": (15, 15),
             "curve_type.end_vector": (-35, 0),
         },
@@ -193,7 +153,7 @@ style = {
         "Text": {"color": "#222"},
     },
     "TUNode": {  # Base style for all TUs
-        "min_dimensions": Size(width=17, height=4.5),
+        "min_dimensions": Size(width=15, height=4),
         "style.background_color": "#111",
         "style.border_width": 0,
         "style.margin": (0, 0, 0, 0),  # Ensure no default margins interfere with centering
@@ -202,23 +162,23 @@ style = {
     "AggregationNode": {  # Base style for Aggregation (applies to both states unless overridden)
         "style.shadow": Shadow(color="#FFA068aa", blur_radius=15, resolution=1),
     },
-    "AggregationNode[!collapsed]": {  # Expanded state
-        "style.background_color": "#FFE2D1",
+    "AggregationNode[!collapsed]": {  # expanded state
+        "style.background_color": "#FFFFFFDD",
         "style.border_color": "#FFA068",
         "style.border_width": 1.5,
         "style.padding": (12, 4, 12, 4),
         "layout": LayoutConstraints(
             direction="column",
-            justify_content="center",
+            justify_content="space-around",
             gap=5,
         ),
         "TUNode": {
             "is_overlay": False,
         },
     },
-    "AggregationNode[collapsed]": {  # Collapsed state
-        "min_dimensions": Size(width=17, height=4.5),
-        "max_dimensions": Size(width=17, height=4.5),
+    "AggregationNode[collapsed]": {  # collapsed state
+        "min_dimensions": Size(width=15, height=4),
+        "max_dimensions": Size(width=15, height=4),
         "style.border_width": 0,
         "style.padding": (0, 0, 0, 0),
         "style.shadow": {  # Use dict for partial update
@@ -242,11 +202,22 @@ class ComputeNode(Container):
     node_type: str = "unknown"
     node_label: Optional[str] = None
 
+    layout: LayoutConstraints = LayoutConstraints(align_items="center", justify_content="center")
+
     def model_post_init(self, *args, **kwargs):
         super().model_post_init(*args, **kwargs)
         self.style_class.append(f"node-type-{self.node_type}")
         if self.node_label:
-            self.add_child(Text(text=self.node_label, id=f"lbl_{self.id}"))
+            self.add_child(
+                Text(
+                    text=self.node_label,
+                    id=f"lbl_{self.id}",
+                    style_class=["label"],
+                    vertical_align="middle",
+                    align="center",
+                    offset=Offset(parent_relative=(0, 0), relative=(0, 0)),
+                )
+            )
 
 
 class TranscriptionNode(ComputeNode):
@@ -274,18 +245,23 @@ class ERNNode(ComputeNode):
         self._out = AnchorComponent(
             style_class=["ernout"],
             id=f"ernout_{self.id}",
-            offset=Offset(parent_relative=(1.0, 0.5)),
+            offset=Offset(reference_relative=(1.0, 0.5)),
+            direction=(-1, 0),
+            min_segment=50,
         )
 
         self._center = AnchorComponent(
             style_class=["erncenter"],
             id=f"erncenter_{self.id}",
+            offset=Offset(reference_relative=(0.5, 0.5)),
+            direction=(0, -1),
         )
         self._tx_connector = Connection(
             start_component=self._tx_node,
             end_component=self._out,
             style_class=["txconn"],
-            curve_type=SimpleBezierCurve(start_vector=(10, 15), end_vector=(-25, 0)),
+            curve_type=SimpleBezierCurve(),
+            start_offset=Offset(relative=(0.9, 0.8)),
             auto_route=False,
         )
 
@@ -294,7 +270,7 @@ class ERNNode(ComputeNode):
             end_component=self._center,
             style_class=["tlconn"],
             curve_type=OrthogonalCurve(
-                start_direction="right", start_length=15, end_direction="down", end_length=15
+                # start_direction="right", start_length=15, end_direction="down", end_length=15
             ),
             end_cap=LineEndFlat(),
             auto_route=False,
@@ -327,32 +303,31 @@ class AggregationNode(ComputeNode):
     collapsed: bool = False
 
 
+ern = ERNNode()
 n1 = TranslationNode()
 n2 = TranscriptionNode()
-ern = ERNNode()
 fl = FluoNode()
 inv = InvNode()
 
 agg = AggregationNode()
+
 agg.children = [
     TUNode(id="A"),
     TUNode(id="B"),
     TUNode(id="C"),
 ]
-
-
 agg2 = copy.deepcopy(agg)
 agg2.collapsed = True
-
 root = Container(
     children=[n1, n2, ern, fl, inv, agg, agg2],
     layout=LayoutConstraints(direction="row", gap=10, align_items="center"),
 )
+
+print(f"{agg._dimensions=}")
 
 
 renderer = MatplotlibRenderer()
 fig, ax = plt.subplots(figsize=(10, 10), dpi=200)
 ax.set_aspect("equal")
 root.measure_and_layout(renderer)
-ern._tl_connector._world_start
-renderer.render_component(ax, root)
+renderer.render_component(ax, root, adjust_lims=True)

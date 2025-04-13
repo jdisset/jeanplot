@@ -7,8 +7,8 @@ import numpy as np
 import logging
 import re  # For parsing ERN names
 
-from .component import Component
-from .container import Container, Overlay
+from .component import Component, Overlay
+from .container import Container
 from .models import Size, BoxStyle, LayoutConstraints, Offset
 from .text import Text
 from .svg import SVGElement  # Keep import

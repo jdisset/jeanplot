@@ -1,14 +1,15 @@
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 import numpy as np
 from .component import Component
 from .models import Size
 from .style import jstyle
+from .svg import SVGTextContent
 
 
 class Text(Component):
     """text component rendered via svg path conversion"""
 
-    text: str
+    text: str = ""  # default to empty string
     font_name: Optional[str] = None
     font_size: float = 12.0
     font_weight: Literal["normal", "bold"] = "normal"
@@ -16,37 +17,26 @@ class Text(Component):
     color: str = "black"
     align: Literal["left", "center", "right"] = "left"
     vertical_align: Literal["top", "middle", "bottom"] = "top"
-    line_spacing: float = 0.2  # controls extra space between lines (0.0 = no extra space)
+    line_spacing: float = 0.2  # factor of base line height
 
-    def measure(self, renderer=None) -> Size:
-        jstyle.apply(self)
-        if not self.text:
-            self._dimensions = Size()
-            self._transformed_aabb = Size()
-            return self._dimensions
+    _svg_cache: Optional[SVGTextContent] = None
 
-        # use renderer's measurement if available
-        if renderer and hasattr(renderer, "measure_text"):
-            measured_size = renderer.measure_text(self)
-            self._dimensions = Size(
-                width=max(self.min_dimensions.width, measured_size.width),
-                height=max(self.min_dimensions.height, measured_size.height),
-            )
-        else:
-            self._dimensions = Size(
-                width=self.min_dimensions.width, height=self.min_dimensions.height
-            )
+    def _measure_natural(self, renderer) -> Size:
+        """calculates the natural size of the text using the renderer."""
+        if not self.text or not renderer or not hasattr(renderer, "measure_text"):
+            self._svg_cache = None
+            return Size(0, 0)
 
-        # respect max dimensions
-        self._dimensions = Size(
-            width=min(self._dimensions.width, self.max_dimensions.width),
-            height=min(self._dimensions.height, self.max_dimensions.height),
-        )
+        # use renderer's measurement - this will also populate _svg_cache
+        measured_size = renderer.measure_text(self)
+        self._log_debug(f"_measure_natural: measured size = {measured_size}")
+        return measured_size
 
-        self._transformed_aabb = self.compute_transformed_aabb()
-        return self._dimensions
+    def render(self, renderer, context: Any, matrix: np.ndarray):
+        """render text using the renderer."""
 
-    def render(self, renderer, context, matrix: np.ndarray):
-        renderer.render_text(context, self, matrix)
+        if self.show and self.text:
+            renderer.render_text(context, self, matrix)
+
         if self.debug:
             renderer.render_debug(context, self, matrix)

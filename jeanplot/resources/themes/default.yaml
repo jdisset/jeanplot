@@ -125,7 +125,7 @@ Source[source_type=cotx]:
       main_color: "#0000ff"
 
 NetworkGeneticSchematic:
-  grid_gap: [40, 40]
+  grid_gap: [50, 50]
   style.padding: [5,5,5,5]
 
 Connection:
@@ -166,3 +166,6 @@ Table:
     style.background_color: "#eee"
     Text:
       font_weight: bold
+
+
+

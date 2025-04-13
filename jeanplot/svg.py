@@ -1,34 +1,47 @@
+# File: jeanplot/svg.py
+# -*- coding: utf-8 -*-
+"""SVG data models and utilities for parsing and creating SVG elements."""
+
 from typing import Optional, Union, Any, List, Tuple, Literal, Sequence
-from jeanplot.utils import load_file_if_exists, load_file
-from pathlib import Path
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, PrivateAttr
 import numpy as np
 import re
 from lxml import etree
-from .component import Component
-from .models import Size, LineWidthMode
+from pathlib import Path
+import logging
 
-# line style enum
+# use absolute imports
+from jeanplot.utils import load_file, load_file_if_exists
+from jeanplot.path_utils import normalize_vector
+from jeanplot.component import Component
+from jeanplot.models import Size, LineWidthMode
+from jeanplot.debug import debug_print
+
+logger = logging.getLogger(__name__)
+
+# types
 LineStyle = Literal["solid", "dashed", "dotted", "custom"]
 
 
 class SVGPathData(BaseModel):
-    """represents a single SVG path with its attributes"""
+    """represents a single SVG path with styling attributes."""
 
-    d: str
+    d: str  # path definition string
     fill: str = "none"
     stroke: str = "none"
     stroke_width: float = 1.0
-    transform: Optional[str] = None
+    transform: Optional[str] = None  # raw svg transform string (applied before component transform)
+    # flags for theme color application (e.g., for genetic parts)
     is_main_color: bool = False
     is_secondary_color: bool = False
+    # line styling attributes
     line_style: LineStyle = "solid"
     dash_array: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
 
 
 class SVGContent(BaseModel):
-    """structured representation of SVG data"""
+    """structured representation of parsed or generated SVG data."""
 
     width: float = 100
     height: float = 100
@@ -37,25 +50,25 @@ class SVGContent(BaseModel):
 
 
 class LineEndArrow(BaseModel):
-    """arrow end cap for lines"""
+    """arrow end cap definition."""
 
     stroke_color: str = "#000000"
     stroke_width: float = 1.0
-    fill_color: str = "#FFFFFF"
-    size: float = 8.0
-    angle: float = 30.0
-    closed: bool = True
+    fill_color: str = "none"  # default to no fill
+    size: float = 8.0  # length along the line direction
+    angle: float = 30.0  # angle of the arrowhead sides
+    closed: bool = False  # whether to draw the closing line segment
     line_style: LineStyle = "solid"
     dash_array: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
 
 
 class LineEndCircle(BaseModel):
-    """circle end cap for lines"""
+    """circle end cap definition."""
 
     stroke_color: str = "#000000"
     stroke_width: float = 1.0
-    fill_color: str = "#FFFFFF"
+    fill_color: str = "none"  # default to no fill
     radius: float = 4.0
     line_style: LineStyle = "solid"
     dash_array: Optional[Tuple[float, ...]] = None
@@ -63,11 +76,11 @@ class LineEndCircle(BaseModel):
 
 
 class LineEndFlat(BaseModel):
-    """flat end cap for lines"""
+    """flat ('T') end cap definition."""
 
     stroke_color: str = "#000000"
     stroke_width: float = 1.0
-    length: float = 6.0
+    length: float = 6.0  # width of the flat cap perpendicular to line
     line_style: LineStyle = "solid"
     dash_array: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
@@ -76,40 +89,55 @@ class LineEndFlat(BaseModel):
 LineEndType = Union[LineEndArrow, LineEndCircle, LineEndFlat]
 
 
-def _normalize_vector(v, default=(1, 0)):
-    """normalize a 2D vector, with fallback"""
-    length = np.sqrt(v[0] ** 2 + v[1] ** 2)
-    return (v[0] / length, v[1] / length) if length > 0 else default
-
-
-def arc_to_bezier(center_x, center_y, radius, start_angle_deg, end_angle_deg):
+def arc_to_bezier(
+    center_x: float, center_y: float, radius: float, start_angle_deg: float, end_angle_deg: float
+) -> Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float]]:
     """
     Convert a 90-degree circular arc to a cubic Bezier curve approximation.
     Angles are in degrees, counter-clockwise from positive x-axis.
-    Includes debug prints. Attempts different control point offset.
+    Uses the standard kappa approximation.
     """
     start_rad = np.radians(start_angle_deg)
     end_rad = np.radians(end_angle_deg)
+    delta_angle = end_rad - start_rad
 
-    angle_diff = abs(end_angle_deg - start_angle_deg)
-    if not np.isclose(angle_diff, 90.0, atol=1e-6) and not np.isclose(angle_diff, 270.0, atol=1e-6):
-        raise ValueError(f"this bezier approximation is only for 90-degree arcs, got {angle_diff}")
+    # ensure it's approximately a 90-degree sweep (either direction)
+    if not (
+        np.isclose(abs(delta_angle), np.pi / 2, atol=1e-6)
+        or np.isclose(abs(delta_angle), 3 * np.pi / 2, atol=1e-6)
+    ):
+        # Fallback for non-90 deg arcs? Could return straight line segment or raise error
+        # For now, let's assume caller ensures 90-deg segments for rounded rects
+        pass  # Or raise ValueError("arc_to_bezier approximation is best for 90-degree arcs.")
 
     kappa = 0.5522847498
     dist = kappa * radius
 
-    p_start = (center_x + radius * np.cos(start_rad), center_y + radius * np.sin(start_rad))
-    p_end = (center_x + radius * np.cos(end_rad), center_y + radius * np.sin(end_rad))
+    # Calculate start and end points
+    p0_x = center_x + radius * np.cos(start_rad)
+    p0_y = center_y + radius * np.sin(start_rad)
+    p3_x = center_x + radius * np.cos(end_rad)
+    p3_y = center_y + radius * np.sin(end_rad)
 
-    # tangent vector at start point
-    tx1, ty1 = -np.sin(start_rad), np.cos(start_rad)
-    # *** Try subtracting offset from start ***
-    cp1 = (p_start[0] - dist * tx1, p_start[1] - dist * ty1)
+    # calculate tangent vectors (normalized vector pointing counter-clockwise along the tangent)
+    # tangent at start angle alpha is (-sin(alpha), cos(alpha))
+    t0_x, t0_y = -np.sin(start_rad), np.cos(start_rad)
+    t3_x, t3_y = -np.sin(end_rad), np.cos(end_rad)
 
-    # tangent vector at end point
-    tx2, ty2 = -np.sin(end_rad), np.cos(end_rad)
-    # *** Try adding offset relative to end tangent ***
-    cp2 = (p_end[0] + dist * tx2, p_end[1] + dist * ty2)
+    # P1 = P0 - dist * T0
+    p1_x = p0_x - dist * t0_x
+    p1_y = p0_y - dist * t0_y
+    cp1 = (p1_x, p1_y)
+
+    # P2 = P3 + dist * T3
+    p2_x = p3_x + dist * t3_x
+    p2_y = p3_y + dist * t3_y
+    cp2 = (p2_x, p2_y)
+
+    p_start = (p0_x, p0_y)
+    cp1 = (p1_x, p1_y)
+    cp2 = (p2_x, p2_y)
+    p_end = (p3_x, p3_y)
 
     return p_start, cp1, cp2, p_end
 
@@ -117,24 +145,23 @@ def arc_to_bezier(center_x, center_y, radius, start_angle_deg, end_angle_deg):
 def create_arrow_cap(
     point: Tuple[float, float], direction: Tuple[float, float], arrow: LineEndArrow
 ) -> SVGPathData:
-    """create arrow end cap"""
-    # normalize direction vector
-    dx, dy = _normalize_vector(direction)
+    """create SVGPathData for an arrow cap."""
+    # direction points outwards from the line end
+    dx, dy = normalize_vector(direction)
     perp_x, perp_y = -dy, dx  # perpendicular vector
 
-    # arrow points
-    size = arrow.size
-    angle_rad = np.radians(arrow.angle)
-    back_x = np.cos(angle_rad) * size
-    back_y = np.sin(angle_rad) * size
+    angle_rad = np.radians(arrow.angle / 2.0)  # half angle
+    back_dist = arrow.size * np.cos(angle_rad)
+    half_width = arrow.size * np.sin(angle_rad)
 
-    left_x = point[0] - dx * back_x + perp_x * back_y
-    left_y = point[1] - dy * back_x + perp_y * back_y
-    right_x = point[0] - dx * back_x - perp_x * back_y
-    right_y = point[1] - dy * back_x - perp_y * back_y
+    # calculate points relative to the tip (point)
+    left_x = point[0] - dx * back_dist + perp_x * half_width
+    left_y = point[1] - dy * back_dist + perp_y * half_width
+    right_x = point[0] - dx * back_dist - perp_x * half_width
+    right_y = point[1] - dy * back_dist - perp_y * half_width
 
-    # create path
-    path = f"M {point[0]} {point[1]} L {left_x} {left_y} L {right_x} {right_y}"
+    # create path string
+    path = f"M {left_x} {left_y} L {point[0]} {point[1]} L {right_x} {right_y}"
     if arrow.closed:
         path += " Z"
 
@@ -150,10 +177,10 @@ def create_arrow_cap(
 
 
 def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGPathData:
-    """create circle end cap"""
+    """create SVGPathData for a circle cap."""
     r = circle.radius
+    # use two 180-degree arcs to draw the circle
     path = f"M {point[0] - r} {point[1]} A {r} {r} 0 1 1 {point[0] + r} {point[1]} A {r} {r} 0 1 1 {point[0] - r} {point[1]} Z"
-
     return SVGPathData(
         d=path,
         fill=circle.fill_color,
@@ -168,20 +195,15 @@ def create_circle_cap(point: Tuple[float, float], circle: LineEndCircle) -> SVGP
 def create_flat_cap(
     point: Tuple[float, float], direction: Tuple[float, float], flat: LineEndFlat
 ) -> SVGPathData:
-    """create flat end cap"""
-    # normalize direction vector
-    dx, dy = _normalize_vector(direction, (0, 1))
-    perp_x, perp_y = -dy, dx  # perpendicular vector
-
-    # endpoints
-    half_len = flat.length / 2
-    p1_x = point[0] + perp_x * half_len
-    p1_y = point[1] + perp_y * half_len
-    p2_x = point[0] - perp_x * half_len
-    p2_y = point[1] - perp_y * half_len
-
+    """create SVGPathData for a flat ('T') cap."""
+    dx, dy = normalize_vector(direction, (0, 1))  # direction pointing outwards
+    perp_x, perp_y = -dy, dx
+    half_len = flat.length / 2.0
+    p1 = (point[0] + perp_x * half_len, point[1] + perp_y * half_len)
+    p2 = (point[0] - perp_x * half_len, point[1] - perp_y * half_len)
+    path = f"M {p1[0]} {p1[1]} L {p2[0]} {p2[1]}"
     return SVGPathData(
-        d=f"M {p1_x} {p1_y} L {p2_x} {p2_y}",
+        d=path,
         fill="none",
         stroke=flat.stroke_color,
         stroke_width=flat.stroke_width,
@@ -191,327 +213,207 @@ def create_flat_cap(
     )
 
 
-def svg_line_path(
-    length: float,
-    thickness: float = 1.0,
-    color: str = "#000000",
-    line_style: LineStyle = "solid",
-    dash_array: Optional[Tuple[float, ...]] = None,
-    dash_offset: float = 0.0,
-) -> SVGPathData:
-    """create single path data for a line"""
-    if line_style == "dashed" and not dash_array:
-        dash_array = (thickness * 3, thickness * 2)
-    elif line_style == "dotted" and not dash_array:
-        dash_array = (thickness, thickness)
-
-    return SVGPathData(
-        d=f"M 0 {thickness / 2} L {length} {thickness / 2}",
-        stroke=color,
-        stroke_width=thickness,
-        fill="none",
-        line_style=line_style,
-        dash_array=dash_array,
-        dash_offset=dash_offset,
-    )
+def _parse_svg_dimension(dim_str: str, ppi: float) -> float:
+    """parse svg dimension string (e.g., "100px", "50")"""
+    match = re.match(r"[\d\.]+", dim_str)
+    val = float(match.group()) if match else 0.0
+    # rudimentary unit handling (assume px or unitless is points/ppi)
+    if "mm" in dim_str:
+        val *= ppi / 25.4
+    elif "cm" in dim_str:
+        val *= ppi / 2.54
+    elif "in" in dim_str:
+        val *= ppi
+    # default assumption: px or unitless are scaled by ppi relative to points (e.g. ppi=1 for points)
+    return val / ppi
 
 
-def make_svg_line(
-    length: float,
-    thickness: float = 1.0,
-    color: str = "#000000",
-    line_style: LineStyle = "solid",
-    dash_array: Optional[Tuple[float, ...]] = None,
-    dash_offset: float = 0.0,
+def get_svg_data(
+    source: Union[str, Path, bytes],
+    ppi: float = 1.0,  # points per inch (for unit conversion)
+    main_color: str = "#0000FF",  # color used to flag main geometry
+    secondary_color: str = "#00FF00",  # color used to flag secondary geometry
 ) -> SVGContent:
-    """create SVG content for a line"""
-    return SVGContent(
-        width=length,
-        height=thickness,
-        viewBox=(0, 0, length, thickness),
-        paths=[
-            svg_line_path(length, thickness, color, line_style, dash_array, dash_offset),
-        ],
-    )
-
-
-def _get_curve_directions(start_point, end_point, control_points):
-    """calculate direction vectors for a curve"""
-    if control_points:
-        # start direction
-        start_dir = (control_points[0][0] - start_point[0], control_points[0][1] - start_point[1])
-        if start_dir[0] == 0 and start_dir[1] == 0:
-            start_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
-
-        # end direction
-        if len(control_points) > 1:
-            end_dir = (end_point[0] - control_points[-1][0], end_point[1] - control_points[-1][1])
-        else:
-            end_dir = (end_point[0] - control_points[0][0], end_point[1] - control_points[0][1])
-
-        if end_dir[0] == 0 and end_dir[1] == 0:
-            end_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
+    """extract SVG data from string, bytes, or file path."""
+    content = None
+    if isinstance(source, (str, Path)):
+        try:
+            content = load_file(source)
+        except FileNotFoundError:
+            logger.error(f"svg source file not found: {source}")
+            return SVGContent()
+    elif isinstance(source, bytes):
+        content = source
+    elif isinstance(source, str):  # treat as svg content string
+        content = source.encode("utf-8")
     else:
-        # straight line
-        line_dir = (end_point[0] - start_point[0], end_point[1] - start_point[1])
-        start_dir = (-line_dir[0], -line_dir[1])
-        end_dir = line_dir
+        logger.error(f"invalid svg source type: {type(source)}")
+        return SVGContent()
 
-    # normalize
-    start_dir = _normalize_vector(start_dir, (1, 0))
-    end_dir = _normalize_vector(end_dir, (1, 0))
+    if not content:
+        return SVGContent()
 
-    return start_dir, end_dir
-
-
-def make_svg_bezier(
-    start_point: Tuple[float, float],
-    end_point: Tuple[float, float],
-    control_points: List[Tuple[float, float]],
-    width: float,
-    height: float,
-    color: str = "#000000",
-    line_width: float = 1.0,
-    line_style: LineStyle = "solid",
-    dash_array: Optional[Tuple[float, ...]] = None,
-    dash_offset: float = 0.0,
-    start_cap: Optional[LineEndType] = None,
-    end_cap: Optional[LineEndType] = None,
-) -> SVGContent:
-    """create SVG bezier curve with optional end caps"""
-    paths = []
-
-    # apply default dash arrays for common styles
-    if line_style == "dashed" and not dash_array:
-        dash_array = (line_width * 3, line_width * 2)
-    elif line_style == "dotted" and not dash_array:
-        dash_array = (line_width, line_width)
-
-    # create main bezier path
-    if len(control_points) == 0:
-        # straight line
-        path_str = f"M {start_point[0]} {start_point[1]} L {end_point[0]} {end_point[1]}"
-    elif len(control_points) == 1:
-        # quadratic bezier
-        path_str = f"M {start_point[0]} {start_point[1]} Q {control_points[0][0]} {control_points[0][1]}, {end_point[0]} {end_point[1]}"
-    else:
-        # cubic bezier
-        path_str = f"M {start_point[0]} {start_point[1]} C {control_points[0][0]} {control_points[0][1]}, {control_points[1][0]} {control_points[1][1]}, {end_point[0]} {end_point[1]}"
-
-    paths.append(
-        SVGPathData(
-            d=path_str,
-            stroke=color,
-            stroke_width=line_width,
-            fill="none",
-            line_style=line_style,
-            dash_array=dash_array,
-            dash_offset=dash_offset,
-        )
-    )
-
-    # add caps if needed
-    if start_cap or end_cap:
-        start_dir, end_dir = _get_curve_directions(start_point, end_point, control_points)
-
-        if start_cap:
-            if isinstance(start_cap, LineEndArrow):
-                paths.append(create_arrow_cap(start_point, start_dir, start_cap))
-            elif isinstance(start_cap, LineEndCircle):
-                paths.append(create_circle_cap(start_point, start_cap))
-            elif isinstance(start_cap, LineEndFlat):
-                paths.append(create_flat_cap(start_point, start_dir, start_cap))
-
-        if end_cap:
-            if isinstance(end_cap, LineEndArrow):
-                paths.append(create_arrow_cap(end_point, end_dir, end_cap))
-            elif isinstance(end_cap, LineEndCircle):
-                paths.append(create_circle_cap(end_point, end_cap))
-            elif isinstance(end_cap, LineEndFlat):
-                paths.append(create_flat_cap(end_point, end_dir, end_cap))
-
-    return SVGContent(width=width, height=height, viewBox=(0, 0, width, height), paths=paths)
-
-
-def get_svg_data_from_string(
-    svg_content: str,
-    ppi: float = 1.0,
-    main_color: str = "#0000FF",
-    secondary_color: str = "#00FF00",
-) -> SVGContent:
-    """extract SVG data from string"""
     try:
-        root = etree.fromstring(svg_content.encode("utf-8"))
+        # use lxml for robust parsing
+        parser = etree.XMLParser(remove_blank_text=True)
+        root = etree.fromstring(content, parser=parser)
+        ns = {"svg": "http://www.w3.org/2000/svg"}  # namespace map
 
         # extract dimensions
-        width_str = root.attrib.get("width", "100")
-        height_str = root.attrib.get("height", "100")
-        width = float(re.match(r"[\d\.]+", width_str).group()) / ppi
-        height = float(re.match(r"[\d\.]+", height_str).group()) / ppi
+        width = _parse_svg_dimension(root.attrib.get("width", "100"), ppi)
+        height = _parse_svg_dimension(root.attrib.get("height", "100"), ppi)
 
         # extract viewBox
         viewBox = None
         if "viewBox" in root.attrib:
             try:
-                viewBox = tuple(float(x) for x in root.attrib["viewBox"].split())
+                vb_parts = [float(x.strip()) for x in root.attrib["viewBox"].split()]
+                if len(vb_parts) == 4:
+                    viewBox = tuple(vb_parts)
             except ValueError:
-                pass
+                pass  # ignore invalid viewBox
 
-        # extract paths
+        # extract path data
         paths = []
-        for elem in root.findall(".//{http://www.w3.org/2000/svg}path"):
+        # find all path elements, handling potential groups and transforms
+        for elem in root.xpath(".//*[local-name()='path']", namespaces=ns):
             try:
-                fill = elem.attrib.get("fill", "none")
-                stroke = elem.attrib.get("stroke", "none")
-                stroke_width = float(elem.attrib.get("stroke-width", 1.0))
-                transform = elem.attrib.get("transform")
+                path_data = {"d": elem.attrib.get("d", "")}
+                if not path_data["d"]:
+                    continue  # skip empty paths
 
-                # parse dash array and offset
-                line_style = "solid"
+                # basic style attribute extraction (more robust would parse 'style' attribute)
+                style = elem.attrib.get("style", "")
+                style_props = {}
+                if style:
+                    try:
+                        style_props = dict(
+                            item.split(":") for item in style.split(";") if ":" in item
+                        )
+                    except ValueError:
+                        pass  # ignore malformed style string parts
+
+                def get_style_attr(name, default):
+                    return elem.attrib.get(name, style_props.get(name, default)).strip()
+
+                path_data["fill"] = get_style_attr("fill", "none")
+                path_data["stroke"] = get_style_attr("stroke", "none")
+                path_data["stroke_width"] = float(get_style_attr("stroke-width", "1.0"))
+                path_data["transform"] = elem.attrib.get("transform")  # keep raw transform string
+
+                # parse dash array/offset
+                dash_array_str = get_style_attr("stroke-dasharray", "none")
+                dash_offset_str = get_style_attr("stroke-dashoffset", "0")
+                line_style: LineStyle = "solid"
                 dash_array = None
                 dash_offset = 0.0
-
-                if "stroke-dasharray" in elem.attrib:
-                    dash_str = elem.attrib["stroke-dasharray"]
-                    if dash_str and dash_str != "none":
-                        try:
-                            dash_array = tuple(float(x) for x in dash_str.split(","))
-                            line_style = "custom"
-                        except ValueError:
-                            pass
-
-                if "stroke-dashoffset" in elem.attrib:
+                if dash_array_str != "none":
                     try:
-                        dash_offset = float(elem.attrib["stroke-dashoffset"])
+                        dash_array = tuple(float(x.strip()) for x in dash_array_str.split(","))
+                        line_style = (
+                            "custom" if dash_array else "solid"
+                        )  # Treat empty dasharray as solid
                     except ValueError:
-                        pass
+                        pass  # ignore invalid dasharray
+                try:
+                    dash_offset = float(dash_offset_str)
+                except ValueError:
+                    pass
 
-                # determine color flags
-                is_main_color = fill == main_color
-                is_secondary_color = fill == secondary_color
+                path_data["line_style"] = line_style
+                path_data["dash_array"] = dash_array
+                path_data["dash_offset"] = dash_offset
 
-                path_data = SVGPathData(
-                    d=elem.attrib["d"],
-                    fill=fill,
-                    stroke=stroke,
-                    stroke_width=stroke_width,
-                    transform=transform,
-                    is_main_color=is_main_color,
-                    is_secondary_color=is_secondary_color,
-                    line_style=line_style,
-                    dash_array=dash_array,
-                    dash_offset=dash_offset,
-                )
-                paths.append(path_data)
-            except Exception:
+                # check for theme colors
+                path_data["is_main_color"] = path_data["fill"] == main_color
+                path_data["is_secondary_color"] = path_data["fill"] == secondary_color
+
+                paths.append(SVGPathData(**path_data))
+            except Exception as e_path:
+                logger.warning(f"failed to parse path element: {e_path}")
                 continue
 
-        return SVGContent(
-            width=width,
-            height=height,
-            viewBox=viewBox,
-            paths=paths,
-        )
-    except Exception as e:
-        print(f"Failed to parse SVG string: {e}")
+        return SVGContent(width=width, height=height, viewBox=viewBox, paths=paths)
+
+    except etree.XMLSyntaxError as e_xml:
+        logger.error(f"failed to parse svg content (xml syntax error): {e_xml}")
         return SVGContent()
-
-
-def get_svg_data_from_file(
-    file_path: Union[str, Path],
-    ppi: float = 1.0,
-    main_color: str = "#0000FF",
-    secondary_color: str = "#00FF00",
-) -> SVGContent:
-    """extract SVG data from file"""
-    try:
-        return get_svg_data_from_string(load_file(file_path), ppi, main_color, secondary_color)
-    except Exception as e:
-        print(f"Failed to load SVG file: {e}")
+    except Exception as e_gen:
+        logger.error(
+            f"failed to process svg source: {e_gen}", exc_info=logger.isEnabledFor(logging.DEBUG)
+        )
         return SVGContent()
 
 
 class SVGTextContent(SVGContent):
-    """svg content for text"""
+    """svg content specialized for text, storing paths and measured size."""
 
-    text_paths: List[dict[str, Any]] = Field(default_factory=list)
-    measured_width: float = 0
-    measured_height: float = 0
+    # paths list holds the glyph outlines as SVGPathData
+    # width/height store the constrained allocated size
+    measured_width: float = 0  # natural width from glyphs
+    measured_height: float = 0  # natural height from glyphs
+    text_paths: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SVGElement(Component):
-    """svg element loaded from a file"""
+    """component that renders svg content loaded from a source."""
 
     main_color: str = "black"
     secondary_color: str = "gray"
-    svg_content: Optional[Union[str, Path, SVGContent]] = None
-    line_width_mode: LineWidthMode = "data"
+    svg_content: Optional[Union[str, Path, bytes, SVGContent]] = None
+    # controls if stroke width is in points or data units for this svg
+    line_width_mode: LineWidthMode = "point"  # prefer point default
+
+    _parsed_svg_content: Optional[SVGContent] = PrivateAttr(default=None)
 
     @model_validator(mode="after")
-    def load_svg_data(self):
-        """load svg data from file or string"""
-        if isinstance(self.svg_content, (str, Path)):
-            try:
-                svg_data = get_svg_data_from_file(self.svg_content)
-                if svg_data:
-                    self.svg_content = svg_data
-                else:
-                    print(f"Warning: Failed to load SVG data from {self.svg_content}")
-                    self.svg_content = SVGContent()
+    def _parse_and_validate_svg(self):
+        """load and parse svg data if not already done."""
+        if isinstance(self.svg_content, SVGContent):
+            self._parsed_svg_content = self.svg_content  # already parsed
+        elif self.svg_content is not None:
+            parsed = get_svg_data(
+                self.svg_content, main_color=self.main_color, secondary_color=self.secondary_color
+            )
+            if parsed:
+                self._parsed_svg_content = parsed
+            else:
+                logger.warning(f"failed to parse svg source for {self.id}")
+                self._parsed_svg_content = SVGContent()  # fallback to empty
+        else:
+            self._parsed_svg_content = SVGContent()  # no source provided
 
-            except Exception as e:
-                print(f"Error loading SVG: {e}")
-                self.svg_content = SVGContent()
-
-        if not isinstance(self.svg_content, SVGContent):
-            self.svg_content = SVGContent()  # Ensure it's always SVGContent
-
-        self._dimensions = Size(
-            width=self.svg_content.width,
-            height=self.svg_content.height,
-        )
-        self._dimensions.width = min(
-            max(self.min_dimensions.width, self._dimensions.width), self.max_dimensions.width
-        )
-        self._dimensions.height = min(
-            max(self.min_dimensions.height, self._dimensions.height), self.max_dimensions.height
-        )
-
-        self._transformed_aabb = self.compute_transformed_aabb()  # Calculate initial AABB
+        # set initial dimensions based on parsed svg, used by measure_natural
+        if self._parsed_svg_content:
+            self._dimensions = Size(
+                width=self._parsed_svg_content.width, height=self._parsed_svg_content.height
+            )
+        else:
+            self._dimensions = Size()
         return self
 
+    def _measure_natural(self, renderer=None) -> Size:
+        """return base svg dimensions, adjusted by scale transform."""
+        if not self._parsed_svg_content:
+            return Size()
+
+        base_width = self._parsed_svg_content.width
+        base_height = self._parsed_svg_content.height
+        scale_x, scale_y = self.transform.scale
+        # natural size is affected by scale, but not rotation/translation
+        natural_size = Size(width=base_width * abs(scale_x), height=base_height * abs(scale_y))
+        # self._log_debug(f"_measure_natural: base=({base_width:.1f},{base_height:.1f}), scale={self.transform.scale} -> {natural_size}")
+        return natural_size
+
     def render(self, renderer, context, matrix: np.ndarray):
-        """render svg using renderer"""
+        """render svg using the provided renderer."""
+        if not self.show or not self._parsed_svg_content or not self._parsed_svg_content.paths:
+            return
+
+        # pass line width mode to renderer via options
         self.add_renderer_option(renderer.RENDERER_NAME, "line_width_mode", self.line_width_mode)
-        print(f"Rendering SVG content: {self.svg_content}")
+        # self._log_debug("rendering svg content", self._parsed_svg_content)
         renderer.render_svg(context, self, matrix)
+
         if self.debug:
             renderer.render_debug(context, self, matrix)
-
-    def measure(self, renderer=None) -> Size:
-        """return svg dimensions, potentially adjusted by scale transform"""
-        if self.svg_content and isinstance(self.svg_content, SVGContent):  # Check type
-            base_width = self.svg_content.width
-            base_height = self.svg_content.height
-
-            scale_x, scale_y = self.transform.scale
-            scaled_width = base_width * abs(scale_x)
-            scaled_height = base_height * abs(scale_y)
-
-            # use scaled dimensions for measurement
-            measured_size = Size(width=scaled_width, height=scaled_height)
-        else:
-            measured_size = Size()  # default to zero if no content
-
-        # apply min/max constraints AFTER scaling
-        final_width = min(
-            max(self.min_dimensions.width, measured_size.width), self.max_dimensions.width
-        )
-        final_height = min(
-            max(self.min_dimensions.height, measured_size.height), self.max_dimensions.height
-        )
-
-        self._dimensions = Size(width=final_width, height=final_height)
-
-        self._transformed_aabb = self.compute_transformed_aabb()  # AABB considers rotation too
-        return self._dimensions

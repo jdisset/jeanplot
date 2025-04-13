@@ -3,34 +3,49 @@ import sys
 from typing import Optional, Any
 
 _console_handler = logging.StreamHandler(sys.stdout)
-_console_handler.setFormatter(logging.Formatter("%(name)s [%(levelname)s]: %(message)s"))
+_console_handler.setFormatter(logging.Formatter("JEANPLOT [%(name)s] [%(levelname)s]: %(message)s"))
 
 _root_logger = logging.getLogger("jeanplot")
+_root_logger.propagate = False  # prevent duplicate messages if root logger has handlers
 _root_logger.setLevel(logging.WARNING)  # default level
+# clear existing handlers to avoid duplicates if run multiple times
+if _root_logger.hasHandlers():
+    _root_logger.handlers.clear()
 _root_logger.addHandler(_console_handler)
 
-# global debug state
-_debug_enabled = True
+_debug_enabled = False
 
 
 def set_debug(enabled: bool = True):
-    """enable or disable debug logging globally"""
+    """enable or disable debug logging globally by setting the root logger level"""
     global _debug_enabled
     _debug_enabled = enabled
-    _root_logger.setLevel(logging.DEBUG if enabled else logging.WARNING)
+    level = logging.DEBUG if enabled else logging.INFO
+    _root_logger.setLevel(level)
+    for handler in _root_logger.handlers:
+        handler.setLevel(level)
+    # print(f"Jeanplot Debug Logging: {'ENABLED' if enabled else 'DISABLED'} (Level: {logging.getLevelName(level)})")
 
 
 def get_logger(name: str):
-    """get a logger for component/module"""
-    return logging.getLogger(f"jeanplot.{name}")
+    """get a logger for a component/module"""
+    # ensure loggers inherit the root logger's level
+    logger = logging.getLogger(f"jeanplot.{name}")
+    # logger.setLevel(_root_logger.level) # handled by propagation usually
+    return logger
 
 
-def debug_print(component_id: str, message: str, data: Optional[Any] = None):
-    """print debug message with optional data if debug is enabled"""
-    logger = get_logger(component_id if component_id else "unknown")
-    if data is not None:
-        logger.debug(f"{message}: {data}")
-    else:
-        logger.debug(message)
-    if _debug_enabled:
-        print(f"DEBUG [{component_id}]: {message} {data if data is not None else ''}")
+def debug_print(source_id: str, message: str, data: Optional[Any] = None):
+    """log a debug message using python's logging"""
+    import numpy as np
+
+    logger = get_logger(source_id if source_id else "unknown")
+    if logger.isEnabledFor(logging.DEBUG):
+        if data is not None:
+            if isinstance(data, np.ndarray):
+                data_str = np.array2string(data, precision=3, suppress_small=True, prefix="  ")
+                logger.debug(f"{message}\nData:\n{data_str}")
+            else:
+                logger.debug(f"{message}: {data}")
+        else:
+            logger.debug(message)
