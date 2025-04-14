@@ -1,31 +1,18 @@
 !noconstruct theme_vars: &tvars
-  fluo_colors: &fcolors
-    red:
-      dark: "#840137"
-      base: "#ef957d"
-      light: "#ffe5de"
-    green:
-      dark: "#0E633A"
-      base: "#6CCB83"
-      light: "#EFFFDD"
-    blue:
-      dark: "#006394"
-      base: "#6cafc3"
-      light: "#F3FAFD"
-    yellow:
-      dark: "#9B6600"
-      base: "#FAD26D"
-      light: "#FFF8B8"
-    ir:
-      dark: "#6c1772"
-      base: "#df9ae4"
-      light: "#ffe7f4"
-    maroon:
-      dark: "#734727"
-      base: "#D3A888"
-      light: "#F4DECD"
+  # --- Input Marker Colors (used in SVG files) ---
+  input_main_marker_color: &input_main "#0000ff" # blue
+  input_secondary_marker_color: &input_sec "#00ff00" # green
 
-  marker_colors:
+  # --- Output Theme Colors ---
+  fluo_colors: &fcolors
+    red: { dark: "#840137", base: "#ef957d", light: "#ffe5de" }
+    green: { dark: "#0e633a", base: "#6ccb83", light: "#efffdd" }
+    blue: { dark: "#006394", base: "#6cafc3", light: "#f3fafd" }
+    yellow: { dark: "#9b6600", base: "#fad26d", light: "#fff888" }
+    ir: { dark: "#6c1772", base: "#df9ae4", light: "#ffe7f4" }
+    maroon: { dark: "#734727", base: "#d3a888", light: "#f4decd" }
+
+  marker_colors: &marker_colors # define alias for easier reference below
     EYFPG5A: *fcolors@yellow
     EYFP: *fcolors@yellow
     NEONGREEN: *fcolors@green
@@ -54,110 +41,154 @@
     MMAROON1: *fcolors@maroon
     MPLUM: *fcolors@maroon
 
-  ern_colors:
-    CSY4: "#AAAAAA"
-    CASE: "#CCCCCC"
-    PGU: "#EEEEEE"
+  ern_colors: &ern_colors # define alias
+    CSY4: "#aaaaaa"
+    CASE: "#cccccc"
+    PGU: "#eeeeee"
 
-  border_color: "#222222"
-  text_color: "#222222"
-  ern_interaction_color: "#777"
+  border_color: &border_color "#222222"
+  text_color: &text_color "#222222"
+  ern_interaction_color: &ern_int_color "#777" # used for connection color
 
-ERN:
-  Text:
-    color: "${&tvars.text_color}"
-    align: center
-    verticla_align: middle
-    font_size: 9
-    offset.relative: [-0.35, 0]
 
 !define theme: ${construct(&tvars)}
-!each(e) ${theme.ern_colors.items()}:
-  ERN[part_name=~${e[0]}]:
-    main_color: ${e[1]}
-  ERN5pRecog[part_name=~${e[0]}*]:
-    main_color: ${e[1]}
 
+# Default GeneticPart
 GeneticPart:
-  main_color: "#aaaaaa"
-  secondary_color: !include tvars@border_color
+  color_remap:
+    ${theme.input_main_marker_color}: "#aaaaaa"
+    ${theme.input_secondary_marker_color}: *border_color
+  Text:
+    color: *text_color
+    align: center
+    font_size: 8
+    offset.reference_relative: [0.45, 0.5]
+
+Promoter:
+  offset.relative: [0, .5]
+
+Terminator:
+  offset.relative: [.5, .5]
+  style.margin: [0, 0, 0, -10]
+
+ERN:
+  layout.direction: row
+  Text:
+    color: *text_color
+    align: center
+    vertical_align: middle
+    font_size: 10
+    offset.reference_relative: [0.35, 0.5]
+
+
+ERN5pRecog:
+  offset.relative: [0, 0.4]
+  offset.absolute: [0, 0.5]
+  style.margin: [0, 2, 0, -4]
+
+UorfGroup:
+  style.margin: [0, 0, 0, -4]
+  offset.relative: [0, 0.1]
+  Text:
+    offset.reference_relative: [0.5, -0.8]
+
+!each(e) ${theme.ern_colors.items()}: # Loop through ERN types (CSY4, CASE, etc.)
+  ERN[part_name=~${e[0]}]: # Style ERN based on part name
+    color_remap:
+      ${theme.input_main_marker_color}: ${e[1]}
+  ERN5pRecog[part_name=~${e[0]}*]:
+    color_remap:
+      ${theme.input_main_marker_color}: ${e[1]}
+
+# Fluorescent Marker Styling
+!each(e) ${theme.marker_colors.items()}: # Loop through marker types
+  FluoMarker[part_name=~${e[0]}]:
+    color_remap:
+      ${theme.input_main_marker_color}: ${e[1]['light']}
+      ${theme.input_secondary_marker_color}: ${e[1]['base']}
+    Text:
+      color: ${e[1]['dark']}
+
+  # Also style Source borders based on marker
+  Source[marker=~${e[0]}]:
+    style.border_color: ${e[1]['base']}
+    Container[style_class=source_tag]: # Target the nested tag container
+      style.background_color: ${e[1]['light']}
+      style.border_color: ${e[1]['dark']}
+      SVGElement: # Target SVG inside the tag
+        color_remap:
+           # Remap the default black/blue/green inside the source icon SVG
+           "#000000": ${e[1]['dark']} # Example: remap black in icon
+           ${theme.input_main_marker_color}: ${e[1]['dark']} # Example: remap blue in icon
+      Text: # Target Text inside the tag
+        color: ${e[1]['dark']}
+
+TranscriptionUnit:
+  line_thickness: 1
+  line_color: *border_color
+  layout.gap: 4
+  Text:
+    color: "#888888"
+    font_size: 4
+    offset.relative: [0, -2]
+
 
 Source:
   style.padding: [15, 15, 15, 15]
-  style.border_color: !include tvars@border_color
+  style.border_color: *border_color
   style.border_width: 0.5
   style.corner_radius: 5
   style.border_style: dashed
 
-  Container[style_class=source_tag]:
-    style.background_color: "#777777"
-    style.border_color: !include tvars@border_color
+  Container[style_class=source_tag]: # Style the tag itself
+    style.background_color: "#dddddd" # Default background
+    style.border_color: *border_color
     style.border_width: 0.5
     style.corner_radius: 50
     style.padding: [1.25, 5, 1.25, 2]
-
     offset.relative: [0, -0.5]
-    offset.parent_relative: [0.1, 1]
-
+    # *** Use reference_relative instead of parent_relative ***
+    offset.reference_relative: [0.1, 1]
     layout.direction: row
     layout.align_items: center
     layout.justify_content: start
     layout.gap: 3
-
-    SVGElement:
-      main_color: !include tvars@border_color
+    SVGElement: # Style the icon inside the tag
+      main_color: *border_color # Kept for potential non-remapped parts
       offset.absolute: [0, 0.25]
-
-    Text:
-      color: !include tvars@text_color
+    Text: # Style the text inside the tag
+      color: *text_color
       font_size: 5
 
 Source[source_type=plasmid]:
   Container[style_class=source_tag]:
     SVGElement:
       transform.scale: [0.7, 0.7]
-      main_color: "#00ff00"
 
 Source[source_type=cotx]:
   Container[style_class=source_tag]:
     SVGElement:
       transform.scale: [0.9, 0.9]
-      main_color: "#0000ff"
 
 NetworkGeneticSchematic:
-  grid_gap: [50, 50]
+  grid_gap: [50, 50] # Default gap, can be overridden in constructor
   style.padding: [5,5,5,5]
 
-Connection:
+Connection: # Default for all connections
   line_width: 1
-  line_style: dashed
-  dash_array: [2, 2]
-  color: !include tvars@ern_interaction_color
-  end_cap.stroke_color: !include tvars@ern_interaction_color
+  line_style: solid
+  color: *ern_int_color # Default connection color
+  end_cap.stroke_color: *ern_int_color # Match end cap color
   end_cap.length: 7
 
-!each(e) "${theme['marker_colors'].items()}":
-  Source[marker=~${e[0]}]:
-    style.border_color: ${e[1]['base']}
-    Container[style_class=source_tag]:
-      style.background_color: ${e[1]['light']}
-      style.border_color: ${e[1]['dark']}
-      SVGElement:
-        main_color: ${e[1]['dark']}
-      Text:
-        color: ${e[1]['dark']}
-  FluoMarker[part_name=~${e[0]}]:
-    main_color: ${e[1]['light']}
-    secondary_color: ${e[1]['base']}
-    Text:
-      color: ${e[1]['dark']}
-      font_size: 5
-
+Connection[style_class=connection_ERN]: # Specific style for ERN interactions
+  line_style: dashed
+  dash_array: [2, 2]
 
 Table:
   TableCell:
     style.padding: [7, 10, 7, 10]
-    style.border_color: !include tvars@border_color
+    style.border_color: *border_color
     style.border_width: 0.5
     Text:
       align: center
@@ -166,6 +197,3 @@ Table:
     style.background_color: "#eee"
     Text:
       font_weight: bold
-
-
-

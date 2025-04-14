@@ -1,5 +1,3 @@
-# File: jeanplot/renderer.py
-# -*- coding: utf-8 -*-
 """Base class definition for renderers."""
 
 from typing import Optional, Union, BinaryIO, TextIO, Callable, Any, Tuple, List

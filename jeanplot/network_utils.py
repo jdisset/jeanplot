@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from collections import defaultdict
 
 
-# PartInfo, TUInfo, Interaction classes remain the same
 class PartInfo(BaseModel):
     name: str
     category: str
@@ -36,7 +35,6 @@ class Interaction(BaseModel):
     type: str = "ERN"
 
 
-# get_tu_informations remains the same
 def get_tu_informations(network: Any) -> Dict[str, TUInfo]:
     network_info = network.generate_network_info()
     markers = set(network_info.get("markers", []))

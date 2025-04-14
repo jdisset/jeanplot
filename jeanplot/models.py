@@ -52,6 +52,7 @@ class Offset(BaseModel):
     # % of self size (component receiving the offset)
     relative: Tuple[float, float] = (0.0, 0.0)
     # % of reference size (parent or attachment target)
+    # use reference_relative in code, allow parent_relative as alias during init
     reference_relative: Tuple[float, float] = Field(
         default=(0.0, 0.0), validation_alias=AliasChoices("reference_relative", "parent_relative")
     )
@@ -73,11 +74,8 @@ class Offset(BaseModel):
             + ref_dims.height * self.reference_relative[1]
             + self.absolute[1]
         )
-        if logger.isEnabledFor(logging.DEBUG):
-            debug_print(
-                f"{self.__class__.__name__}.compute",
-                f"self={self_dims}, ref={ref_dims}, def={self} -> ({x:.1f}, {y:.1f})",
-            )
+        # removed excessive logging from here
+        # if logger.isEnabledFor(logging.DEBUG): ...
         return x, y
 
     def __repr__(self) -> str:
@@ -109,14 +107,12 @@ class Transform(BaseModel):
 
     def to_matrix(self, dimensions: Size) -> np.ndarray:
         """convert to 3x3 homogeneous transform matrix."""
-        # debug_print(f"{self.__class__.__name__}.to_matrix", f"dims={dimensions}, def={self}") # can be noisy
-
-        # 1. scale
+        # scale
         s_mat = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
-        # 2. skew
+        # skew
         sx_rad, sy_rad = np.radians(self.skew_x), np.radians(self.skew_y)
         skew_mat = np.array([[1, np.tan(sx_rad), 0], [np.tan(sy_rad), 1, 0], [0, 0, 1]])
-        # 3. rotate (around rotation_center)
+        # rotate
         r_mat = np.identity(3)
         if self.rotate != 0.0:
             theta = np.radians(self.rotate)
@@ -129,12 +125,10 @@ class Transform(BaseModel):
                 uncenter_t = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]])
                 r_mat = center_t @ rot @ uncenter_t
             else:
-                r_mat = rot  # rotate around origin if no dimensions
-        # 4. translate
+                r_mat = rot
+        # translate
         t_mat = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
-
         # combined: T * R * Sk * Sc
-        # matrix applies right-to-left: scale -> skew -> rotate -> translate
         final_matrix = t_mat @ r_mat @ skew_mat @ s_mat
         return final_matrix
 
@@ -161,7 +155,7 @@ class BorderStyle(BaseModel):
 
     border_color: Optional[str] = None
     border_width: float = 0.0
-    border_width_mode: LineWidthMode = "data"  # prefer point default for consistency
+    border_width_mode: LineWidthMode = "data"
     border_style: LineStyleType = "solid"
     dash_sequence: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0
@@ -227,7 +221,7 @@ class Shadow(BaseModel):
     blur_radius: float = 3.0
     spread: float = 0.0
     color: str = "#00000080"
-    resolution: float = 1.0  # controls number of layers in approximation
+    resolution: float = 1.0
 
 
 class BoxStyle(BorderStyle, MarginPadding):
@@ -244,7 +238,7 @@ class LayoutConstraints(BaseModel):
     align_items: AlignType = "start"
     justify_content: DistributeType = "start"
     gap: float = 0.0
-    wrap: bool = False  # wrap not implemented in layout logic yet
+    wrap: bool = False
 
     def __repr__(self) -> str:
         return f"Layout(dir={self.direction}, align={self.align_items}, justify={self.justify_content}, gap={self.gap:.1f})"
