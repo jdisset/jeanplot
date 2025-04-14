@@ -362,7 +362,7 @@ class SVGElement(Component):
     secondary_color: str = "gray"
     svg_content: Optional[Union[str, Path, bytes, SVGContent]] = None
     # controls if stroke width is in points or data units for this svg
-    line_width_mode: LineWidthMode = "point"  # prefer point default
+    line_width_mode: LineWidthMode = "data"
 
     _parsed_svg_content: Optional[SVGContent] = PrivateAttr(default=None)
 

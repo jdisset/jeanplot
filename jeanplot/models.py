@@ -161,7 +161,7 @@ class BorderStyle(BaseModel):
 
     border_color: Optional[str] = None
     border_width: float = 0.0
-    border_width_mode: LineWidthMode = "point"  # prefer point default for consistency
+    border_width_mode: LineWidthMode = "data"  # prefer point default for consistency
     border_style: LineStyleType = "solid"
     dash_sequence: Optional[Tuple[float, ...]] = None
     dash_offset: float = 0.0

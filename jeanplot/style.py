@@ -131,7 +131,6 @@ import logging
 
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG) # uncomment for detailed style debugging
 
 
 class Specificity(NamedTuple):
@@ -864,7 +863,6 @@ class JStyle:
         try:
             # create temporary merged styles for the context
             context_raw_styles = self._deep_merge_dicts(self._raw_styles, style_dict)
-            # fix: pass is_context=False for temporary global override
             self.styles = self._parse_style_dict(context_raw_styles, is_context=False)
             self._raw_styles = context_raw_styles  # also update raw for consistency within context
             yield

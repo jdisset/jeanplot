@@ -21,7 +21,7 @@ from jeanplot.connector import (
 import numpy as np
 from jeanplot.matplotlib_renderer import MatplotlibRenderer
 from jeanplot.component import AnchorComponent
-from jeanplot.svg import LineEndFlat
+from jeanplot.svg import LineEndFlat, LineEndCircle, LineEndArrow
 
 
 # theme loading remains the same
@@ -114,32 +114,39 @@ style = {
         "style.background_color": "#eee",
         "style.border_color": "#111",
         "style.border_style": "custom",
-        "style.dash_sequence": (4, 4),
-        "style.border_width": 2,
+        "style.dash_sequence": (5, 5),
+        "style.border_width": 1,
         "TranslationNode": {
             "style.background_color": "#ee3350",
-            "offset": Offset(parent_relative=(0, 0.9), relative=(0, -1)),
+            "offset": Offset(reference_relative=(0, 0.9), relative=(0, -1)),
         },
         "TranscriptionNode": {
-            "offset": Offset(parent_relative=(0, 0.1), relative=(0, 0)),
+            "offset": Offset(reference_relative=(0, 0.1)),
         },
         "Connection[style_class=tlconn]": {
             "color": "#ee3350",
-            "line_width": 3,
-            # "start_offset": Offset(parent_relative=(0, 0), relative=(1, 0.5)),
-            "end_offset": Offset(parent_relative=(0.5, 0.5)),
-            "end_cap": LineEndFlat(
-                stroke_color="#ee3350",
-                stroke_width=3,
-                length=8,
-            ),
+            "line_width": 2,
+            "start_offset": Offset(relative=(1, 0.5)),
+            "end_offset": Offset(absolute=(15, 4)),
+            "curve_type.start_direction": "right",
+            "curve_type.end_direction": "down",
+            "curve_type.start_length": 5,
+            "curve_type.end_length": 5,
+            "curve_type.corner_radius": 10,
+            "z_index": -1,
+            "end_cap.stroke_color": "#ee3350",
+            "end_cap.stroke_width": 2,
+            "end_cap.length": 10,
         },
         "Connection[style_class=txconn]": {
             "color": "#111",
             "line_width": 2,
-            # "start_offset": Offset(parent_relative=(0, 0), relative=(0.8, 0.88)),
+            "z_index": -1,
+            "curve_type.start_mode": "vector",
+            "curve_type.end_mode": "vector",
             "curve_type.start_vector": (15, 15),
-            "curve_type.end_vector": (-35, 0),
+            "curve_type.end_vector": (-40, 0),
+            "start_offset": Offset(relative=(0.9, 0.8)),
         },
     },
     "FluoNode": {
@@ -163,7 +170,7 @@ style = {
         "style.shadow": Shadow(color="#FFA068aa", blur_radius=15, resolution=1),
     },
     "AggregationNode[!collapsed]": {  # expanded state
-        "style.background_color": "#FFFFFFDD",
+        "style.background_color": "#FFFFFFAA",
         "style.border_color": "#FFA068",
         "style.border_width": 1.5,
         "style.padding": (12, 4, 12, 4),
@@ -181,7 +188,7 @@ style = {
         "max_dimensions": Size(width=15, height=4),
         "style.border_width": 0,
         "style.padding": (0, 0, 0, 0),
-        "style.shadow": {  # Use dict for partial update
+        "style.shadow": {
             "color": "#FFA068",
             "blur_radius": 20,
             "resolution": 0.1,
@@ -215,7 +222,6 @@ class ComputeNode(Container):
                     style_class=["label"],
                     vertical_align="middle",
                     align="center",
-                    offset=Offset(parent_relative=(0, 0), relative=(0, 0)),
                 )
             )
 
@@ -244,24 +250,18 @@ class ERNNode(ComputeNode):
         self._tl_node = TranslationNode(id=f"tl_{self.id}", is_overlay=True)
         self._out = AnchorComponent(
             style_class=["ernout"],
-            id=f"ernout_{self.id}",
             offset=Offset(reference_relative=(1.0, 0.5)),
-            direction=(-1, 0),
-            min_segment=50,
         )
 
         self._center = AnchorComponent(
             style_class=["erncenter"],
-            id=f"erncenter_{self.id}",
             offset=Offset(reference_relative=(0.5, 0.5)),
-            direction=(0, -1),
         )
         self._tx_connector = Connection(
             start_component=self._tx_node,
             end_component=self._out,
             style_class=["txconn"],
             curve_type=SimpleBezierCurve(),
-            start_offset=Offset(relative=(0.9, 0.8)),
             auto_route=False,
         )
 
@@ -269,9 +269,7 @@ class ERNNode(ComputeNode):
             start_component=self._tl_node,
             end_component=self._center,
             style_class=["tlconn"],
-            curve_type=OrthogonalCurve(
-                # start_direction="right", start_length=15, end_direction="down", end_length=15
-            ),
+            curve_type=OrthogonalCurve(corner_radius=50, start_length=5, end_length=5),
             end_cap=LineEndFlat(),
             auto_route=False,
         )
@@ -304,13 +302,12 @@ class AggregationNode(ComputeNode):
 
 
 ern = ERNNode()
+
 n1 = TranslationNode()
 n2 = TranscriptionNode()
 fl = FluoNode()
 inv = InvNode()
-
 agg = AggregationNode()
-
 agg.children = [
     TUNode(id="A"),
     TUNode(id="B"),
@@ -318,12 +315,16 @@ agg.children = [
 ]
 agg2 = copy.deepcopy(agg)
 agg2.collapsed = True
+
 root = Container(
     children=[n1, n2, ern, fl, inv, agg, agg2],
     layout=LayoutConstraints(direction="row", gap=10, align_items="center"),
 )
 
-print(f"{agg._dimensions=}")
+# root = Container(
+#     children=[ern],
+#     layout=LayoutConstraints(direction="row", gap=10, align_items="center"),
+# )
 
 
 renderer = MatplotlibRenderer()

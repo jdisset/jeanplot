@@ -48,6 +48,7 @@ class Component(BaseModel):
     debug: bool = False
     # determines if component participates in parent's layout flow
     is_overlay: bool = False
+    z_index: int = 0
 
     # --- Geometry & Position ---
     min_dimensions: ValidatedSize = Field(default_factory=Size)

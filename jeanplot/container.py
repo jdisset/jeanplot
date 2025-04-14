@@ -355,35 +355,34 @@ class Container(Component):
             )
 
     def render(self, renderer: "BaseRenderer", context: Any, matrix: np.ndarray):
-        """render container background/border, then children (non-overlays first)."""
+        """render container background/border, then sorted children."""
         if not self.show:
             return
 
-        # render container background/border
-        if self.style.background_color or (self.style.border_color and self.style.border_width > 0):
+        # 1. render container itself (background, border, shadow) at its z-index
+        if (
+            self.style.background_color
+            or (self.style.border_color and self.style.border_width > 0)
+            or self.style.shadow
+        ):
             renderer.render_rectangle(context, self._dimensions, self.style, matrix, component=self)
-
         if self.debug:
-            renderer.render_debug(context, self, matrix)  # container's own debug box
+            renderer.render_debug(context, self, matrix)
 
-        # render non-overlay children relative to this container's world matrix
-        non_overlays = self._layout_children_cache
-        if non_overlays:
-            # self._log_debug(f"rendering {len(non_overlays)} non-overlay children")
-            for child in non_overlays:
-                if child and child.show:
-                    # child calculates its world matrix based on parent's world matrix
-                    child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
-                    child.render(renderer, context, child_matrix)
+        # 2. combine, filter, and sort all direct children by z_index
+        # (caches assumed populated by measure_and_layout)
+        all_children = self._layout_children_cache + self._overlay_children_cache
+        visible_children = [child for child in all_children if child and child.show]
+        # sort stable by z_index, then original order (implicit via list concat?)
+        visible_children.sort(key=lambda c: getattr(c, "z_index", 0))
 
-        # render overlay children relative to this container's world matrix
-        overlays = self._overlay_children_cache
-        if overlays:
-            # self._log_debug(f"rendering {len(overlays)} overlay children")
-            for child in overlays:
-                if child and child.show:
-                    child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
-                    child.render(renderer, context, child_matrix)
+        # 3. render sorted children
+        if visible_children:
+            # self._log_debug(f"rendering {len(visible_children)} children sorted by z_index")
+            for child in visible_children:
+                # calculate world matrix just before rendering child
+                child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
+                child.render(renderer, context, child_matrix)
 
 
 # --- Explicitly rebuild models to resolve forward references ---
