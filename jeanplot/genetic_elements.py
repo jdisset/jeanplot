@@ -1,3 +1,5 @@
+# File: jeanplot/genetic_elements.py
+# -*- coding: utf-8 -*-
 """Components representing biological genetic elements like TUs, Promoters, ERNs."""
 
 from typing import Optional, Union, Literal, List, Tuple
@@ -62,8 +64,8 @@ class TranscriptionUnit(Container):
                 svg_content=svg_line_content,
                 is_overlay=True,
                 parent=self,
-                line_width_mode="point",  # use point for simple line
                 z_index=-1,  # draw line behind parts
+                line_width_mode="data",
             )
             self.add_child(self._tu_line)
         return self
@@ -77,24 +79,28 @@ class TranscriptionUnit(Container):
             line_width = 0
             min_x = 0
             if layout_children:
-                child_origins_x = [child._layout_origin_in_parent[0] for child in layout_children]
-                child_ends_x = [
-                    child._layout_origin_in_parent[0] + child._dimensions.width
-                    for child in layout_children
-                ]
-                if child_origins_x and child_ends_x:
-                    min_x = min(child_origins_x)
-                    max_x = max(child_ends_x)
-                    line_width = max(0, max_x - min_x)
+                # filter out non-component Nones if any exist
+                valid_children = [child for child in layout_children if child is not None]
+                if valid_children:  # ensure there are children to calculate bounds from
+                    child_origins_x = [
+                        child._layout_origin_in_parent[0] for child in valid_children
+                    ]
+                    child_ends_x = [
+                        child._layout_origin_in_parent[0] + child._dimensions.width
+                        for child in valid_children
+                    ]
+                    if child_origins_x and child_ends_x:
+                        min_x = min(child_origins_x)
+                        max_x = max(child_ends_x)
+                        line_width = max(0, max_x - min_x)
 
             svg_line_content = make_svg_line(line_width, self.line_thickness, self.line_color)
             self._tu_line.svg_content = svg_line_content
-            self._tu_line._parse_and_validate_svg()
+            self._tu_line._parse_and_validate_svg()  # re-parse updated svg
 
-            content_h = self.style.content_box(self._dimensions)[1]
-            line_y = (
-                self.style.padding[0] + (content_h - self.line_thickness) / 2.0
-            )  # account for top padding
+            # use calculated content box height for centering
+            content_w, content_h = self.style.content_box(self._dimensions)  # pylint: disable=unused-variable
+            line_y = self.style.padding[0] + (content_h - self.line_thickness) / 2.0
             self._tu_line.offset = Offset(absolute=(min_x, line_y))
 
 
@@ -111,10 +117,15 @@ class Source(Container):
         )
     )
 
+    # Style is applied via theme using &source_base_style alias
+    style: BoxStyle = Field(default_factory=BoxStyle)
+
     _tag_container: Optional[Container] = PrivateAttr(default=None)
 
+    # note: this setup is primarily for the proxy used by SourceAnnotation
     @model_validator(mode="after")
     def setup_source_tag(self):
+        # remove previous tag if exists
         if self._tag_container and self._tag_container in self.children:
             self.children.remove(self._tag_container)
             self._tag_container = None
@@ -132,18 +143,24 @@ class Source(Container):
             if self.tag_label is not None:
                 label_lines = self.tag_label.split("\n")
                 for i, line in enumerate(label_lines):
-                    tag_elements.append(Text(text=line, id=f"{self.id}_tag_label_{i}"))
+                    # use the correct text component id format if self.id is set
+                    text_id = f"{self.id}_tag_label_{i}" if self.id else f"tag_label_{i}"
+                    tag_elements.append(Text(text=line, id=text_id))
 
             if tag_elements:
+                # use correct container id format if self.id is set
+                tag_id = f"{self.id}_tag" if self.id else "source_tag_proxy"
                 self._tag_container = Container(
-                    id=f"{self.id}_tag",
+                    id=tag_id,
                     style_class=["source_tag"],
-                    is_overlay=True,
+                    is_overlay=True,  # tag itself is an overlay relative to its logical parent (Source/SourceAnnotation)
                     children=tag_elements,
-                    parent=self,
+                    parent=self,  # parent link established by add_child if needed
                 )
+                # important: apply styles to the proxy tag container here
+                # so it gets its default layout etc., before it's potentially copied
                 jstyle.apply(self._tag_container)
-                self.add_child(self._tag_container)
+                # don't add to self.children here, SourceAnnotation will extract it
         return self
 
 
@@ -163,14 +180,22 @@ class GeneticPart(SVGElement, Container):
     auto_resource_path: str = DEFAULT_RESOURCE_PATH
 
     def __init__(self, part_name: Optional[str] = None, **kwargs):
+        # if 'children' not explicitly provided, default to empty list
+        # prevents issues if label/anchors are added later via add_child
         if "children" not in kwargs:
             kwargs["children"] = []
         super().__init__(part_name=part_name, **kwargs)
 
     def model_post_init(self, *args, **kwargs):
         """loads svg and ensures label/anchors are children."""
-        super().model_post_init(*args, **kwargs)  # handle base class init
+        # call base Component init first (handles parent, style_class etc.)
+        Component.model_post_init(self, *args, **kwargs)
+        # call SVGElement validator to handle svg parsing and initial dimensions
+        SVGElement._parse_and_validate_svg(self)
+        # call Container validator (currently empty, but good practice)
+        # Container.model_post_init(self, *args, **kwargs) # skip this?
 
+        # if svg content is missing after init, try loading automatically
         if self._parsed_svg_content is None or not self._parsed_svg_content.paths:
             svg_to_load = None
             if self.part_name:
@@ -184,34 +209,56 @@ class GeneticPart(SVGElement, Container):
 
             if svg_to_load:
                 self.svg_content = get_svg_data(svg_to_load)
-                self._parse_and_validate_svg()
+                # re-run parse/validate after setting svg_content
+                SVGElement._parse_and_validate_svg(self)
             elif self._parsed_svg_content is None:
+                # if still nothing, set to empty content
                 self._parsed_svg_content = SVGContent(paths=())
-                self._dimensions = Size()
+                # if dimensions haven't been set, use zero
+                if not hasattr(self, "_dimensions") or self._dimensions is None:
+                    self._dimensions = Size()
 
-        if self.label and not any(isinstance(c, Text) for c in self.children):
-            self.add_child(self.label)
-            if self.label:
-                self.label.parent = self
+        # add label/anchors if they exist and aren't already children
+        if self.label and not any(
+            isinstance(c, Text) and c.id == self.label.id
+            for c in self.children
+            if c and self.label.id
+        ):
+            self.add_child(self.label)  # add_child sets parent link
         for anchor in self.anchor_points:
-            if anchor not in self.children:
-                self.add_child(anchor)
-                if anchor:
-                    anchor.parent = self
+            if anchor and anchor not in self.children:
+                self.add_child(anchor)  # add_child sets parent link
 
+    # override render to handle both svg and container children (label/anchors)
     def render(self, renderer, context, matrix: np.ndarray):
         if not self.show:
             return
-        SVGElement.render(self, renderer, context, matrix)  # call svgelement render
+        # 1. render the svg part
+        SVGElement.render(self, renderer, context, matrix)
 
-        all_children = self._layout_children_cache + self._overlay_children_cache
-        visible_children = [child for child in all_children if child and child.show]
-        visible_children.sort(key=lambda c: getattr(c, "z_index", 0))
+        # 2. render container children (label, anchors) respecting their transforms/offsets
+        # use the combined list of children prepared during layout
+        all_renderable_children = [
+            c
+            for c in (
+                getattr(self, "_layout_children_cache", [])
+                + getattr(self, "_overlay_children_cache", [])
+            )
+            if c and c.show
+        ]
+        # sort children by z-index before rendering
+        all_renderable_children.sort(key=lambda c: getattr(c, "z_index", 0))
 
-        if visible_children:
-            for child in visible_children:
-                child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
-                child.render(renderer, context, child_matrix)
+        for child in all_renderable_children:
+            # child's world matrix is calculated based on *this* component's matrix
+            # compute_world_matrix handles offsets/attachments internally
+            child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
+            child.render(renderer, context, child_matrix)
+
+        # render debug box last if enabled
+        if self.debug:
+            # use the potentially overridden render_debug from Component/Container
+            Component.render(self, renderer, context, matrix)
 
 
 # --- specific genetic part subclasses ---
@@ -219,19 +266,18 @@ class GeneticPart(SVGElement, Container):
 
 class ERN(GeneticPart):
     part_type: str = "ERN"
+
     anchor_points: List[AnchorComponent] = Field(
         default_factory=lambda: [
             AnchorComponent(
                 id="anchor_top",
-                offset=Offset(relative=(0.77, -0.1)),
-                direction=(0, -1),
-                min_segment=20,
+                style_class=["ern-anchor", "ern-anchor-top"],
+                direction=(0, 1),
             ),
             AnchorComponent(
                 id="anchor_bottom",
-                offset=Offset(relative=(0.77, 1.1)),
-                direction=(0, 1),
-                min_segment=20,
+                style_class=["ern-anchor", "ern-anchor-bottom"],
+                direction=(0, -1),
             ),
         ]
     )
@@ -301,19 +347,18 @@ class UorfGroup(GeneticPart):
 
 class ERN5pRecog(GeneticPart):
     part_type: str = "ERN_recog_site_5p"
+
     anchor_points: List[AnchorComponent] = Field(
         default_factory=lambda: [
             AnchorComponent(
-                id="anchor_top",
-                offset=Offset(relative=(0.5, -0.1)),
-                direction=(0, -1),
-                min_segment=30,
+                id="recog-anchor_top",
+                style_class=["ern-recog-anchor", "ern-recog-anchor-top"],
+                direction=(0, 1),
             ),
             AnchorComponent(
-                id="anchor_bottom",
-                offset=Offset(relative=(0.5, 1.1)),
-                direction=(0, 1),
-                min_segment=30,
+                id="recog-anchor_bottom",
+                style_class=["ern-recog-anchor", "ern-recog-anchor-bottom"],
+                direction=(0, -1),
             ),
         ]
     )

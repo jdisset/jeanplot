@@ -32,6 +32,8 @@ class Container(Component):
         if child not in self.children:
             self.children.append(child)
         child.parent = self
+        # add anchors to main children list if they are added this way
+        # but usually they are added via anchor_points field directly
         if isinstance(child, AnchorComponent) and child not in self.anchor_points:
             self.anchor_points.append(child)
 
@@ -39,8 +41,11 @@ class Container(Component):
         for child in children:
             self.add_child(child)
 
-    def _prepare_children(self):
-        """categorize children for layout/overlay and ensure parent links."""
+    def _prepare_children(self, for_render: bool = False):
+        """
+        categorize children for layout/overlay and ensure parent links.
+        if for_render=True, uses current children list. otherwise uses cache.
+        """
         layout_children, overlay_children = [], []
         # combine explicitly added children and anchors
         all_children = self.children + [a for a in self.anchor_points if a not in self.children]
@@ -58,18 +63,26 @@ class Container(Component):
                 if isinstance(child, AnchorComponent) and child not in self.children:
                     self.children.append(child)
 
-        self._layout_children_cache = layout_children
-        self._overlay_children_cache = overlay_children
+        # update cache only if not called specifically for render preparation
+        if not for_render:
+            self._layout_children_cache = layout_children
+            self._overlay_children_cache = overlay_children
+
+        return layout_children, overlay_children
 
     def _measure_natural(self, renderer: Optional[BaseRenderer]) -> Size:
         """calculates natural size based on layout children."""
-        self._prepare_children()
+        # prepare children and populate caches for layout phase
+        self._prepare_children(for_render=False)
 
-        for child in self.children:  # measure all children first
+        # measure all children first (layout, overlay, anchors)
+        all_measurable_children = self._layout_children_cache + self._overlay_children_cache
+        for child in all_measurable_children:
             if child:
                 child.measure_and_layout(renderer)
 
         natural_width, natural_height = 0.0, 0.0
+        # use cache for natural size calculation based on layout children only
         layout_children = self._layout_children_cache
         insets = self.style.content_inset()  # t, r, b, l
 
@@ -105,10 +118,12 @@ class Container(Component):
 
     def _layout_children(self, renderer: Optional[BaseRenderer]):
         """positions layout children and triggers layout in child containers."""
-        self._prepare_children()
-        layout_children = self._layout_children_cache
+        # prepare children and update caches again (important after _measure_natural)
+        layout_children, overlay_children = self._prepare_children(for_render=False)
+
         if not layout_children:
-            self._layout_overlay_containers(renderer)
+            # trigger layout for overlay containers even if no layout children
+            self._layout_overlay_containers(overlay_children, renderer)
             return
 
         content_w, content_h = self.style.content_box(self._dimensions)
@@ -120,16 +135,16 @@ class Container(Component):
         self._position_layout_children(content_x, content_y, content_w, content_h, layout_children)
 
         # re-run internal layout for all children that are containers, including overlays
-        # this ensures overlays with internal layout needs (like SourceAnnotation tag) get laid out
-        all_children = self._layout_children_cache + self._overlay_children_cache
+        all_children = layout_children + overlay_children
         for child in all_children:
             if isinstance(child, Container):
                 child._layout_children(renderer)
 
-    def _layout_overlay_containers(self, renderer: Optional[BaseRenderer]):
+    def _layout_overlay_containers(
+        self, overlay_children: List[Component], renderer: Optional[BaseRenderer]
+    ):
         """triggers layout pass for overlay children that are containers."""
-        # this method might become redundant if the main _layout_children loop handles all containers
-        for child in self._overlay_children_cache:
+        for child in overlay_children:
             if isinstance(child, Container):
                 child._layout_children(renderer)
 
@@ -292,6 +307,7 @@ class Container(Component):
         if not self.show:
             return
 
+        # Render container background/border first
         if (
             self.style.background_color
             or (self.style.border_color and self.style.border_width > 0)
@@ -301,17 +317,17 @@ class Container(Component):
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
-        # re-prepare children just before rendering to ensure correct order
-        # _prepare_children() # removed, caches should be valid from layout pass
+        # **Fix:** Get the fresh list of all current children (including overlays added late)
+        all_children = self.children + [a for a in self.anchor_points if a not in self.children]
 
-        all_children = self._layout_children_cache + self._overlay_children_cache
+        # Filter, sort by z-index, and render
         visible_children = [child for child in all_children if child and child.show]
         visible_children.sort(key=lambda c: getattr(c, "z_index", 0))
 
         if visible_children:
             for child in visible_children:
-                # recalculate world matrix for rendering
-                # parent_world_matrix is the matrix passed to this container's render call
+                # recalculate world matrix for rendering based on parent's current matrix
+                # Important: compute_world_matrix handles whether child uses layout origin or attachment offset
                 child_world_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
                 child.render(renderer, context, child_world_matrix)
 
