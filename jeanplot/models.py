@@ -1,20 +1,36 @@
 """Core data models for geometry, styling, and layout."""
 
-from typing import Tuple, Optional, Literal, Union, TypeVar, Sequence
-from pydantic import BaseModel, Field, model_validator, AliasChoices
+from typing import Tuple, Optional, Literal, Union, TypeVar, Sequence, Any, Annotated
+from pydantic import BaseModel, Field, model_validator, AliasChoices, BeforeValidator
 import numpy as np
 import logging
 
 from jeanplot.debug import debug_print
 
-
 logger = logging.getLogger(__name__)
+
+
+def normalize_color(color: Optional[str]) -> Optional[str]:
+    """normalizes a color string to #rrggbb or #rrggbbaa hex format."""
+    if not color or color.lower() == "none":
+        return None
+    try:
+        # use matplotlib to handle various formats (name, rgb, hex)
+        # keep alpha channel if present
+        from matplotlib.colors import to_hex
+
+        return to_hex(color, keep_alpha=True)
+    except (ValueError, TypeError):
+        logger.warning(f"could not normalize color '{color}', returning None.")
+        return None
+
 
 LayoutDirection = Literal["row", "column"]
 AlignType = Literal["start", "center", "end", "stretch"]
 DistributeType = Literal["start", "center", "end", "space-between", "space-around", "space-evenly"]
 LineStyleType = Literal["solid", "dashed", "dotted", "custom"]
 LineWidthMode = Literal["point", "data"]
+NormalizedColor = Annotated[str, BeforeValidator(normalize_color)]
 
 T = TypeVar("T")
 

@@ -316,13 +316,3 @@ class AnchorComponent(Component):
             else:
                 self.direction = (0.0, 1.0)  # default up if zero vector
         return self
-
-
-# --- Explicitly rebuild models to resolve forward references ---
-# Need to import Container here for it to be available for rebuild
-from jeanplot.container import Container
-
-Component.model_rebuild(force=True)
-Container.model_rebuild(force=True)
-Overlay.model_rebuild(force=True)
-AnchorComponent.model_rebuild(force=True)

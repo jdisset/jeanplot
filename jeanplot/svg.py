@@ -14,7 +14,7 @@ from matplotlib.path import Path as MplPath
 from jeanplot.utils import load_file, load_file_if_exists
 from jeanplot.path_utils import normalize_vector
 from jeanplot.component import Component
-from jeanplot.models import Size, LineWidthMode
+from jeanplot.models import Size, LineWidthMode, normalize_color
 from jeanplot.debug import debug_print
 
 logger = logging.getLogger(__name__)
@@ -22,18 +22,6 @@ logger = logging.getLogger(__name__)
 # types
 LineStyle = Literal["solid", "dashed", "dotted", "custom"]
 
-
-def _normalize_color(color: Optional[str]) -> Optional[str]:
-    """normalizes a color string to #rrggbb or #rrggbbaa hex format."""
-    if not color or color.lower() == "none":
-        return None
-    try:
-        # use matplotlib to handle various formats (name, rgb, hex)
-        # keep alpha channel if present
-        return to_hex(color, keep_alpha=True)
-    except (ValueError, TypeError):
-        logger.warning(f"could not normalize color '{color}', returning None.")
-        return None
 
 
 # --- svg data models ---
@@ -125,7 +113,7 @@ LineEndType = Union[LineEndArrow, LineEndCircle, LineEndFlat]
 
 def make_svg_line(width: float, thickness: float, color: Optional[str]) -> SVGContent:
     """creates svgcontent for a simple horizontal line."""
-    norm_color = _normalize_color(color)
+    norm_color = normalize_color(color)
     if width <= 0 or thickness <= 0 or norm_color is None:
         return SVGContent(width=0, height=0, paths=())
     path_d = f"M 0 {thickness/2:.3f} L {width:.3f} {thickness/2:.3f}"
@@ -178,8 +166,8 @@ def create_arrow_cap(
         path += " Z"
     return SVGPathData(
         d=path,
-        fill=_normalize_color(arrow.fill_color) if arrow.closed else None,
-        stroke=_normalize_color(arrow.stroke_color),
+        fill=normalize_color(arrow.fill_color) if arrow.closed else None,
+        stroke=normalize_color(arrow.stroke_color),
         stroke_width=arrow.stroke_width,
         line_style=arrow.line_style,
         dash_array=arrow.dash_array,
@@ -195,8 +183,8 @@ def create_circle_cap(
     path = f"M {point[0] - r:.3f} {point[1]:.3f} A {r:.3f} {r:.3f} 0 1 1 {point[0] + r:.3f} {point[1]:.3f} A {r:.3f} {r:.3f} 0 1 1 {point[0] - r:.3f} {point[1]:.3f} Z"
     return SVGPathData(
         d=path,
-        fill=_normalize_color(circle.fill_color),
-        stroke=_normalize_color(circle.stroke_color),
+        fill=normalize_color(circle.fill_color),
+        stroke=normalize_color(circle.stroke_color),
         stroke_width=circle.stroke_width,
         line_style=circle.line_style,
         dash_array=circle.dash_array,
@@ -217,7 +205,7 @@ def create_flat_cap(
     return SVGPathData(
         d=path,
         fill=None,
-        stroke=_normalize_color(flat.stroke_color),
+        stroke=normalize_color(flat.stroke_color),
         stroke_width=flat.stroke_width,
         line_style=flat.line_style,
         dash_array=flat.dash_array,
@@ -325,8 +313,8 @@ def get_svg_data(source: Union[str, Path, bytes], ppi: float = 72.0) -> SVGConte
                     val = elem.attrib.get(name)
                     return str(style_props.get(name, default) if val is None else val).strip()
 
-                fill_color = _normalize_color(get_style_attr("fill", "none"))
-                stroke_color = _normalize_color(get_style_attr("stroke", "none"))
+                fill_color = normalize_color(get_style_attr("fill", "none"))
+                stroke_color = normalize_color(get_style_attr("stroke", "none"))
                 stroke_width = 1.0
                 try:
                     stroke_width = float(get_style_attr("stroke-width", "1.0"))
@@ -399,8 +387,8 @@ class SVGElement(Component):
         if not isinstance(v, dict):
             return {}
         for key_in, val_out in v.items():
-            norm_key = _normalize_color(key_in)
-            norm_val = _normalize_color(val_out)
+            norm_key = normalize_color(key_in)
+            norm_val = normalize_color(val_out)
             if norm_key:
                 normalized_map[norm_key] = norm_val
             else:
@@ -417,8 +405,8 @@ class SVGElement(Component):
                 paths = tuple(
                     p.model_copy(
                         update={
-                            "fill": _normalize_color(p.fill),
-                            "stroke": _normalize_color(p.stroke),
+                            "fill": normalize_color(p.fill),
+                            "stroke": normalize_color(p.stroke),
                         }
                     )
                     for p in self.svg_content.paths

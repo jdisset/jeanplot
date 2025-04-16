@@ -881,3 +881,23 @@ class JStyle:
 
 # global style instance
 jstyle = JStyle()
+
+# --- automatically load default theme ---
+
+_DEFAULT_THEME_PATH = "pkg:jeanplot:resources/themes/default.yaml"
+
+try:
+    import dracon as dr
+
+    _theme_dict = dr.load(
+        _DEFAULT_THEME_PATH,
+        enable_interpolation=True,
+        raw_dict=True,
+    )
+    dr.resolve_all_lazy(_theme_dict)
+    jstyle.update(_theme_dict)
+
+    logger.debug(f"successfully loaded and applied default theme from {_DEFAULT_THEME_PATH}")
+
+except Exception as e:
+    logger.error(f"failed to load default theme '{_DEFAULT_THEME_PATH}': {e}", exc_info=True)

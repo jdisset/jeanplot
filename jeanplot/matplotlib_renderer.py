@@ -5,6 +5,7 @@
 from typing import Optional, Any, List, Dict, Tuple, Union, Literal, TextIO, BinaryIO
 import numpy as np
 import matplotlib.pyplot as plt
+from svgpath2mpl import parse_path
 from matplotlib.axes import Axes
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtransforms
@@ -31,7 +32,7 @@ from jeanplot.svg import (
     LineEndFlat,
     LineEndArrow,
     LineEndCircle,
-    _normalize_color,
+    normalize_color,
 )
 from jeanplot.debug import debug_print, get_logger  # Import get_logger
 from jeanplot.connector import Connection
@@ -42,7 +43,6 @@ logger = get_logger(__name__)
 
 
 # --- Helper Functions ---
-# ( _get_point_scale_factor, _linewidth_in_points, _get_mpl_linestyle, _no_autoscale remain the same)
 def _get_point_scale_factor(axis: Axes) -> float:
     fig = axis.get_figure()
     if not fig:
@@ -410,8 +410,6 @@ class MatplotlibRenderer(BaseRenderer):
         context.set_aspect("equal", adjustable="box")
 
     # --- Primitive Rendering Methods ---
-    # (render_path, _create_rounded_rect_path, render_rectangle, render_svg,
-    #  render_text, _render_text_paths, measure_text remain the same)
     def render_path(
         self,
         context: Axes,
@@ -423,39 +421,25 @@ class MatplotlibRenderer(BaseRenderer):
     ):
         """renders a single svg path."""
         comp_id_str = component_id or "unknown"
-        # self._log_debug(f"render_path called for component '{comp_id_str}'", path_data.d[:50])
-        try:
-            # dynamically import to avoid hard dependency if not used
-            from svgpath2mpl import parse_path
-        except ImportError:
-            logger.error("svgpath2mpl is required for rendering SVG paths. please install it.")
-            return
 
         try:
             mpl_path = parse_path(path_data.d)
-            # self._log_debug(f"  parsed path: {mpl_path.vertices.shape[0]} vertices")
-
             # combine component matrix with potential path transform
             final_matrix = matrix
             if path_data.transform:
                 # basic matrix transform parsing (could be more robust)
                 m = re.search(r"matrix\((.+)\)", path_data.transform)
                 if m:
-                    try:
-                        vals = [float(v.strip()) for v in m.group(1).split(",")]
-                        if len(vals) == 6:
-                            transform_mat = np.array(
-                                [
-                                    [vals[0], vals[2], vals[4]],
-                                    [vals[1], vals[3], vals[5]],
-                                    [0, 0, 1],
-                                ]
-                            )
-                            final_matrix = final_matrix @ transform_mat
-                            # self._log_debug(f"  applied path transform: {vals}")
-                    except ValueError:
-                        # self._log_debug(f"  could not parse path transform matrix: {path_data.transform}")
-                        pass  # ignore invalid matrix format
+                    vals = [float(v.strip()) for v in m.group(1).split(",")]
+                    if len(vals) == 6:
+                        transform_mat = np.array(
+                            [
+                                [vals[0], vals[2], vals[4]],
+                                [vals[1], vals[3], vals[5]],
+                                [0, 0, 1],
+                            ]
+                        )
+                        final_matrix = final_matrix @ transform_mat
 
             # create matplotlib transform
             transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
@@ -505,12 +489,13 @@ class MatplotlibRenderer(BaseRenderer):
                 # if using data width, track the patch and set initial estimate
                 if is_data_width:
                     self.track_patch(patch, current_path_lw_data)
-                    # set initial width based on current scale factor
                     initial_points_estimate = _linewidth_in_points(current_path_lw_data, context)
                     patch.set_linewidth(initial_points_estimate)
-                    # self._log_debug(f"  added path patch (data width initial={initial_points_estimate:.2f})")
-                # else:
-                # self._log_debug(f"  added path patch (point width={initial_lw_points:.2f})")
+                    self._log_debug(
+                        f"  added path patch (data width initial={initial_points_estimate:.2f})"
+                    )
+                else:
+                    self._log_debug(f"  added path patch (point width={initial_lw_points:.2f})")
 
         except Exception as e:
             self._log_debug(
@@ -969,37 +954,6 @@ class MatplotlibRenderer(BaseRenderer):
         measured_size = Size(width=measured_width, height=measured_height)
         # self._log_debug(f"measured text '{text_comp.id}', nat_size={measured_size}")
         return measured_size
-
-    def render_connection_curve(
-        self,
-        context: Axes,
-        connection: Connection,
-        local_start: Tuple[float, float],
-        local_end: Tuple[float, float],
-        local_control_points: List[Tuple[float, float]],
-        path_string: str,
-        matrix: np.ndarray,
-    ):
-        """renders the main curve of a connection. caps are handled by connection.render."""
-        comp_id = connection.id or "unknown_connection"
-        # self._log_debug(f"render_connection_curve for {comp_id}")
-        # self._log_debug(f"  path_string: {path_string[:100]}...")
-        # self._log_debug(f"  matrix:", matrix)
-
-        # create svg path data from connection properties for the main curve
-        path_data = SVGPathData(
-            d=path_string,
-            stroke=_normalize_color(connection.color),  # use normalized color
-            stroke_width=connection.line_width,
-            fill="none",  # connections are typically not filled
-            line_style=connection.line_style,
-            dash_array=connection.dash_array,
-            dash_offset=connection.dash_offset,
-        )
-        # self._log_debug(f"  path_data for render_path:", path_data)
-
-        # render using the generic path method, enforcing data linewidth mode
-        self.render_path(context, path_data, matrix, line_width_mode="data", component_id=comp_id)
 
     def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
         """renders debug bounding box and origin."""

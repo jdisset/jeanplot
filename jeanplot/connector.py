@@ -1,15 +1,15 @@
 # File: jeanplot/connector.py
 """Component for drawing connections (lines/curves) between other components."""
 
-from typing import Optional, Any, List, Tuple, Union
-from pydantic import Field, PrivateAttr, model_validator
+from typing import Optional, Any, List, Tuple, Union, Annotated
+from pydantic import Field, PrivateAttr, model_validator, BeforeValidator
 import numpy as np
 import math
 import copy
 import logging
 
 # NOTE: Import normalize_vector from path_utils here
-from jeanplot.path_utils import find_component_by_path, normalize_vector
+from jeanplot.path_utils import find_component_by_path
 from jeanplot.curve import (
     CurveDefinition,
     OrthogonalCurve,
@@ -17,8 +17,9 @@ from jeanplot.curve import (
     StraightCurve,
 )
 from jeanplot.component import Component, Overlay, AnchorComponent
-from jeanplot.models import Size, Offset
-from jeanplot.svg import LineEndType, LineStyle
+from jeanplot.models import Size, Offset, NormalizedColor, LineWidthMode
+from jeanplot.svg import LineEndType, LineStyle, normalize_color, SVGPathData, SVGElement
+from jeanplot.path_utils import normalize_vector
 from jeanplot.debug import debug_print
 from jeanplot.style import jstyle
 
@@ -35,8 +36,9 @@ class Connection(Overlay):
     # offset from the resolved end component's origin (used if auto_route=False or no anchor found)
     end_offset: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
 
-    color: str = "#000000"
+    color: NormalizedColor = "#000000"
     line_width: float = 1.0
+    linewidth_mode: LineWidthMode = "data"
     curve_type: CurveDefinition = Field(default_factory=StraightCurve)
     line_style: LineStyle = "solid"
     dash_array: Optional[Tuple[float, ...]] = None
@@ -100,9 +102,8 @@ class Connection(Overlay):
                 root = root.parent
             resolved = find_component_by_path(root, path)
             if resolved:
-                # self._log_debug(f"resolved {which} path '{path}' to {resolved.id}")
                 return resolved
-            else:  # find_component_by_path raises error if not found
+            else:
                 return None
         except ValueError as e:
             self._log_debug(f"error resolving {which} path '{path}': {e}")
@@ -301,16 +302,13 @@ class Connection(Overlay):
         end_offset = self.end_offset
 
         if self.auto_route:
-            # Find the pair of anchors (one on start, one on end) with min distance
+            # find the pair of anchors (one on start, one on end) with min distance
             # between their effective points (origin + dir*len)
             best_pair = self._find_best_anchor_pair(start_comp_orig, end_comp_orig)
             if best_pair:
                 start_target, end_target = best_pair
                 start_offset = Offset()  # anchor position is inherent
                 end_offset = Offset()  # anchor position is inherent
-                # self._log_debug(f"auto_route selected anchor pair: ({start_target.id}, {end_target.id})")
-            # else:
-            # self._log_debug("auto_route did not find a suitable anchor pair, using default offsets.")
 
         # store final targets and offsets used for rendering
         self._render_start_target = start_target
@@ -340,7 +338,6 @@ class Connection(Overlay):
 
         # transform world points to connection's local space
         try:
-            # Calculate connection's own matrix (it's usually an identity matrix at origin if offset is calculated correctly)
             conn_world_matrix = self.compute_world_matrix()
             conn_inv_world = np.linalg.inv(conn_world_matrix)
         except np.linalg.LinAlgError:
@@ -364,9 +361,6 @@ class Connection(Overlay):
         except Exception as e:
             self._log_debug(f"error getting path/control points from curve: {e}")
             self._render_local_control_points = []
-
-        # self._log_debug(f"resolved endpoints: start_target={getattr(start_target,'id','?')}, end_target={getattr(end_target,'id','?')}")
-        # self._log_debug(f"local points: start={self._render_local_start}, end={self._render_local_end}, cps={self._render_local_control_points}")
 
         return True
 
@@ -404,7 +398,6 @@ class Connection(Overlay):
         # set absolute offset *relative to root*
         self.offset = Offset(absolute=(min_x, min_y))
 
-        # self._log_debug(f"measured rough bounds: dims={self._dimensions}, offset={self.offset}")
         return self._dimensions
 
     def render(self, renderer, context, matrix: np.ndarray):
@@ -416,8 +409,8 @@ class Connection(Overlay):
         if not self._resolve_connection_endpoints_late():
             self._log_debug("render skipped: could not resolve endpoints.")
             if self.debug:
-                renderer.render_debug(context, self, matrix)  # still draw debug box
-            return  # cannot render if endpoints failed
+                renderer.render_debug(context, self, matrix)
+            return
 
         local_start = self._render_local_start
         local_end = self._render_local_end
@@ -430,58 +423,69 @@ class Connection(Overlay):
                 renderer.render_debug(context, self, matrix)
             return
 
-        # --- Generate Path String ---
-        try:
-            path_str, _ = active_curve.get_path(local_start, local_end, local_cp)
-        except Exception as e:
-            self._log_debug(f"render skipped: error getting path string from curve: {e}")
-            return
+        # --- Generate Path ---
+        path_str, _ = active_curve.get_path(local_start, local_end, local_cp)
 
-        # --- Render Curve ---
-        renderer.render_connection_curve(
-            context, self, local_start, local_end, local_cp, path_str, matrix
+        path_data = SVGPathData(
+            d=path_str,
+            stroke=self.color,
+            stroke_width=self.line_width,
+            line_style=self.line_style,
+            dash_array=self.dash_array,
+            dash_offset=self.dash_offset,
+        )
+        renderer.render_path(
+            context,
+            path_data,
+            matrix,
+            line_width_mode=self.linewidth_mode,
+            component_id=f"{self.id}_main_curve",
         )
 
         # --- Render Caps ---
         if self.start_cap or self.end_cap:
-            try:
-                # use the active curve instance from endpoint resolution for directions
-                start_dir, end_dir = active_curve.get_directions(local_start, local_end, local_cp)
+            start_dir, end_dir = active_curve.get_directions(local_start, local_end, local_cp)
 
-                from jeanplot.svg import (
-                    LineEndArrow,
-                    LineEndCircle,
-                    LineEndFlat,
-                    create_arrow_cap,
-                    create_circle_cap,
-                    create_flat_cap,
-                )  # Local import
+            from jeanplot.svg import (
+                LineEndArrow,
+                LineEndCircle,
+                LineEndFlat,
+                create_arrow_cap,
+                create_circle_cap,
+                create_flat_cap,
+            )
 
-                cap_funcs = {
-                    LineEndArrow: create_arrow_cap,
-                    LineEndCircle: create_circle_cap,
-                    LineEndFlat: create_flat_cap,
-                }
+            cap_funcs = {
+                LineEndArrow: create_arrow_cap,
+                LineEndCircle: create_circle_cap,
+                LineEndFlat: create_flat_cap,
+            }
 
-                if self.start_cap:
-                    cap_type = type(self.start_cap)
-                    if cap_type in cap_funcs:
-                        # Pass outward start_dir
-                        start_cap_path = cap_funcs[cap_type](local_start, start_dir, self.start_cap)
-                        renderer.render_path(context, start_cap_path, matrix, "point")
+            if self.start_cap:
+                cap_type = type(self.start_cap)
+                if cap_type in cap_funcs:
+                    start_cap_path = cap_funcs[cap_type](local_start, start_dir, self.start_cap)
+                    renderer.render_path(
+                        context,
+                        start_cap_path,
+                        matrix,
+                        line_width_mode=self.linewidth_mode,
+                        component_id=f"{self.id}_start_cap",
+                    )
 
-                if self.end_cap:
-                    cap_type = type(self.end_cap)
-                    if cap_type in cap_funcs:
-                        # Pass outward end_dir
-                        end_cap_path = cap_funcs[cap_type](local_end, end_dir, self.end_cap)
-                        renderer.render_path(context, end_cap_path, matrix, "point")
-
-            except Exception as e:
-                self._log_debug(f"error rendering end caps for {self.id}: {e}")
+            if self.end_cap:
+                cap_type = type(self.end_cap)
+                if cap_type in cap_funcs:
+                    end_cap_path = cap_funcs[cap_type](local_end, end_dir, self.end_cap)
+                    renderer.render_path(
+                        context,
+                        end_cap_path,
+                        matrix,
+                        line_width_mode=self.linewidth_mode,
+                        component_id=f"{self.id}_end_cap",
+                    )
 
         if self.debug:
-            # Use the rough bounds calculated during measure for the debug box
             renderer.render_debug(context, self, matrix)
 
     def _log_debug(self, message: str, data: Any = None):
