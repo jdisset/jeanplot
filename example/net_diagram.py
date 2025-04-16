@@ -11,7 +11,7 @@ from jeanplot.debug import set_debug
 from jeanplot.style import jstyle
 import dracon as dr
 from jeanplot.container import Container
-from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset, Shadow
+from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset, Shadow, Transform
 from jeanplot.text import Text
 from jeanplot.connector import (
     Connection,
@@ -29,7 +29,7 @@ theme = dr.load("pkg:jeanplot:resources/themes/default", enable_interpolation=Tr
 dr.resolve_all_lazy(theme)
 jstyle.styles = theme
 
-set_debug(True)
+# set_debug(True)
 
 
 lib = load_lib()
@@ -50,36 +50,6 @@ networks = list(networks)
 # random.shuffle(networks)
 
 
-# for mnet in networks[1:2]:
-#     # ensure network is built
-#     mnet.build(lib)
-#     network = mnet._network
-#
-#     fig, ax, diagram = draw_network_diagram(
-#         network,
-#         figsize=(15, 10),  # Adjust figsize as needed
-#         dpi=150,
-#         debug=False,  # Enable component debug boxes if needed
-#     )
-#
-#     ax.set_title(mnet.name, fontsize=10)
-#     plt.show()  # Show plot interactively
-#     fig.tight_layout(rect=[0, 0.05, 1, 1])  # Adjust layout to make space for title/text
-#     # save as pdf:
-#     fig.savefig(f"{mnet.name}.pdf", bbox_inches="tight", dpi=100)
-#
-# print("Diagram generation complete.")
-
-
-mnet = networks[23]
-mnet.build(lib)
-net = mnet._network
-ntypes = net.compute_graph["type"].unique()
-node_counts = net.compute_graph["type"].value_counts()
-node_counts["sequestron_ERN"]
-ern_nodes = net.compute_graph[net.compute_graph["type"] == "sequestron_ERN"]
-ern_indices = ern_nodes.index
-topo = net.topological_order(ern_indices)
 
 
 ERN_SIZE = Size(width=70, height=70)
@@ -129,7 +99,7 @@ style = {
             "start_offset": Offset(relative=(1, 0.5)),
             "end_offset": Offset(absolute=(15, 4)),
             "curve_type.start_direction": "right",
-            "curve_type.end_direction": "down",
+            "curve_type.end_direction": "up",
             "curve_type.start_length": 5,
             "curve_type.end_length": 5,
             "curve_type.corner_radius": 10,
@@ -196,6 +166,16 @@ style = {
         "TUNode": {
             "is_overlay": True,
             "offset": Offset(absolute=(0, 0)),
+        },
+    },
+    "DeadEndNode": {
+        "style.background_color": "#FF000000",
+        "style.border_width": 0,
+        "Text": {
+            "color": "000000",
+            "font_size": 15,
+            "vertical_align": "middle",
+            "align": "center",
         },
     },
 }
@@ -301,6 +281,11 @@ class AggregationNode(ComputeNode):
     collapsed: bool = False
 
 
+class DeadEndNode(ComputeNode):
+    node_type: str = "deadend"
+    node_label: Optional[str] = "X"
+
+
 ern = ERNNode()
 
 n1 = TranslationNode()
@@ -315,16 +300,12 @@ agg.children = [
 ]
 agg2 = copy.deepcopy(agg)
 agg2.collapsed = True
+de = DeadEndNode()
 
 root = Container(
-    children=[n1, n2, ern, fl, inv, agg, agg2],
+    children=[n1, n2, ern, fl, inv, agg, agg2, de],
     layout=LayoutConstraints(direction="row", gap=10, align_items="center"),
 )
-
-# root = Container(
-#     children=[ern],
-#     layout=LayoutConstraints(direction="row", gap=10, align_items="center"),
-# )
 
 
 renderer = MatplotlibRenderer()
