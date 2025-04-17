@@ -207,7 +207,10 @@ class SchematicComponentFactory:
         return Connection(
             id=f"connection_{index}",
             parent=parent,
-            style_class=[f"connection_{interaction.type}"],
+            style_class=[
+                f"connection_{interaction.type}",
+                f"connection_{interaction.type}_{interaction.src_part_name}",
+            ],
             start_component=src_comp,
             end_component=tgt_comp,
             curve_type=curve_type_cls(),

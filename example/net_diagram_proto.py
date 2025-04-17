@@ -354,7 +354,6 @@ for agg_id, row in agg_nodes.iterrows():
     agg_node = nodes[agg_id]
     input_layer.add_child(agg_node)
     layed_out.add(agg_id)
-# input_layer.children.reverse()
 
 
 # remaining nodes
@@ -395,12 +394,8 @@ diagram_root = Container(
         margin=(0, 0, 0, 0),
         padding=(0, 0, 0, 0),
     ),
-
-    # transform=Transform(
-    #     scale=(0.5, 0.15),
-    # ),
-
 )
+
 schema_root = Container(
     children=[info, schematic], layout=LayoutConstraints(direction="column", gap=15)
 )
@@ -417,6 +412,14 @@ root = Container(
     ),
 )
 
+mnet.recipe_name
+mnet.recipe.name
+mnet.recipe.content.get("name")
+mnet.recipe.experiment.errors
+mnet.recipe.experiment.content.get("tx_operator")
+mnet.recipe.experiment.content.get("machine")
+mnet.recipe.experiment.content.get("cell_line")
+mnet.recipe.experiment.content.get("transfection_protocol")
 
 fig, ax = plt.subplots(figsize=(10, 20), dpi=300)
 ax.set_aspect("equal")

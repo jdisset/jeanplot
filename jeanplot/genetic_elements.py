@@ -352,7 +352,10 @@ class ERN5pRecog(GeneticPart):
         default_factory=lambda: [
             AnchorComponent(
                 id="recog-anchor_top",
-                style_class=["ern-recog-anchor", "ern-recog-anchor-top"],
+                style_class=[
+                    "ern-recog-anchor",
+                    "ern-recog-anchor-top",
+                ],
                 direction=(0, 1),
             ),
             AnchorComponent(
@@ -362,3 +365,4 @@ class ERN5pRecog(GeneticPart):
             ),
         ]
     )
+

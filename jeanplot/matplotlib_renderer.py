@@ -17,6 +17,7 @@ import logging
 from contextlib import contextmanager
 import re
 
+# use absolute imports
 from jeanplot.component import Component
 from jeanplot.container import Container
 from jeanplot.models import Size, BoxStyle, LineWidthMode
@@ -34,35 +35,34 @@ from jeanplot.svg import (
     LineEndCircle,
     normalize_color,
 )
-from jeanplot.debug import debug_print, get_logger  # Import get_logger
+from jeanplot.debug import debug_print, get_logger
 from jeanplot.connector import Connection
 from jeanplot.text import Text
 
-# use get_logger instead of logging.getLogger
+
 logger = get_logger(__name__)
+EPSILON = 1e-9  # small tolerance for float comparisons
 
 
 # --- Helper Functions ---
 def _get_point_scale_factor(axis: Axes) -> float:
+    """calculates axis points per data unit based on current zoom"""
     fig = axis.get_figure()
     if not fig:
         return 1.0
     try:
-        # transform two points slightly separated in data coords to display coords
         p0_disp = axis.transData.transform([(0, 0)])[0]
         p1_disp_x = axis.transData.transform([(1, 0)])[0]
         p1_disp_y = axis.transData.transform([(0, 1)])[0]
 
-        # calculate distance in display coords (pixels)
         dx_disp = abs(p1_disp_x[0] - p0_disp[0])
         dy_disp = abs(p1_disp_y[1] - p0_disp[1])
 
-        # handle cases where one dimension might be zero scale (e.g., flat line)
-        if dx_disp < 1e-6 and dy_disp < 1e-6:
-            return 0.0  # avoid division by zero if scale is zero
-        elif dx_disp < 1e-6:
+        if dx_disp < EPSILON and dy_disp < EPSILON:
+            return 0.0
+        elif dx_disp < EPSILON:
             avg_pixels_per_data_unit = dy_disp
-        elif dy_disp < 1e-6:
+        elif dy_disp < EPSILON:
             avg_pixels_per_data_unit = dx_disp
         else:
             avg_pixels_per_data_unit = (dx_disp + dy_disp) / 2.0
@@ -71,34 +71,41 @@ def _get_point_scale_factor(axis: Axes) -> float:
         points_per_data_unit = avg_pixels_per_data_unit * points_per_pixel
         # logger.debug(f"_get_point_scale_factor: ppd={points_per_data_unit:.3f}")
         return points_per_data_unit
-
-    except Exception as e:
+    except Exception:
         # logger.warning(f"error calculating point scale factor: {e}") # too verbose
-        return 1.0  # fallback
+        return 1.0
 
 
-def _linewidth_in_points(linewidth_data: float, axis: Axes) -> float:
-    if linewidth_data <= 0:
+def _linewidth_in_points(scaled_linewidth_data: float, axis: Axes) -> float:
+    """converts a pre-scaled data-unit linewidth to points using axis zoom"""
+    if scaled_linewidth_data <= 0:
         return 0.0
-    scale_factor = _get_point_scale_factor(axis)
-    # if scale factor is near zero, maybe return a minimum line width?
-    # for now, let it be zero if scale is zero
-    if scale_factor < 1e-6:
-        return 0.0
+    axis_scale_factor = _get_point_scale_factor(axis)
+    if axis_scale_factor < EPSILON:
+        return 0.0  # avoid division by zero if axis scale is zero
 
-    points = linewidth_data * scale_factor
-    # ensure non-negative, maybe add a max clamp if needed?
+    points = scaled_linewidth_data * axis_scale_factor
     final_points = max(0.0, points)
-    # logger.debug(f"_linewidth_in_points: data={linewidth_data:.2f}, scale={scale_factor:.2f} -> pts={final_points:.2f}")
+    # logger.debug(f"_linewidth_in_points: data={scaled_linewidth_data:.2f}, scale={axis_scale_factor:.2f} -> pts={final_points:.2f}")
     return final_points
+
+
+def _get_matrix_avg_scale(matrix: np.ndarray) -> float:
+    """extracts average scale factor from a 3x3 affine matrix"""
+    a, c = matrix[0, 0], matrix[1, 0]  # How (1,0) transforms
+    b, d = matrix[0, 1], matrix[1, 1]  # How (0,1) transforms
+    scale_x = np.sqrt(a**2 + c**2)
+    scale_y = np.sqrt(b**2 + d**2)
+    avg_scale = (scale_x + scale_y) / 2.0
+    return avg_scale if avg_scale > EPSILON else 0.0
 
 
 def _get_mpl_linestyle(
     path_data: SVGPathData,
 ) -> Union[str, Tuple[float, Optional[Tuple[float, ...]]]]:
+    """maps linestyle types/dash arrays to matplotlib format"""
     linestyle_map = {"solid": "-", "dashed": "--", "dotted": ":"}
     if path_data.dash_array and path_data.line_style == "custom":
-        # matplotlib dash format: (offset, onoffseq)
         return (path_data.dash_offset, path_data.dash_array)
     return linestyle_map.get(path_data.line_style, "-")
 
@@ -113,20 +120,17 @@ def _no_autoscale(ax):
         ax.set_autoscale_on(autoscale_state)
 
 
-# --- MatplotlibRenderer Class ---
-
-
 class MatplotlibRenderer(BaseRenderer):
     RENDERER_NAME = "matplotlib"
 
     def __init__(self, debug=False):
         super().__init__()
+        # store (patch, scaled_width_data) for dynamic updates
         self._data_width_patches: List[Tuple[mpatches.Patch, float]] = []
         self._context: Optional[Axes] = None
         self._draw_event_cid: Optional[int] = None
 
     def _log_debug(self, message: str, data: Any = None):
-        # use the centralized debug print
         debug_print(self.RENDERER_NAME, message, data)
 
     def _disconnect_draw_event(self):
@@ -136,9 +140,8 @@ class MatplotlibRenderer(BaseRenderer):
                 try:
                     fig.canvas.mpl_disconnect(self._draw_event_cid)
                     # self._log_debug("disconnected draw event")
-                except Exception as e:
-                    # self._log_debug(f"error disconnecting draw event: {e}")
-                    pass  # ignore if already disconnected etc.
+                except Exception:
+                    pass  # ignore errors
         self._draw_event_cid = None
 
     def create_context(
@@ -149,8 +152,8 @@ class MatplotlibRenderer(BaseRenderer):
         ax: Optional[Axes] = None,
         **kwargs,
     ) -> Axes:
-        self._disconnect_draw_event()  # ensure old connection is removed
-        self._data_width_patches = []  # clear patches from previous context
+        self._disconnect_draw_event()
+        self._data_width_patches = []
         if ax:
             self._context = ax
             fig = ax.get_figure()
@@ -159,7 +162,6 @@ class MatplotlibRenderer(BaseRenderer):
             fig, ax = plt.subplots(figsize=figsize, dpi=dpi, **kwargs)
             self._context = ax
 
-        # connect draw event for linewidth updates
         if fig and fig.canvas:
             self._draw_event_cid = fig.canvas.mpl_connect("draw_event", self.refresh_linewidths)
             # self._log_debug(f"connected draw event (cid={self._draw_event_cid})")
@@ -173,339 +175,146 @@ class MatplotlibRenderer(BaseRenderer):
         if not self._context or not self._data_width_patches:
             return
 
-        # self._log_debug(f"refresh_linewidths triggered (event={event}), {len(self._data_width_patches)} patches")
-        updated_count = 0
-        patches_to_remove = []  # indices to remove
-
-        # use enumerate to allow safe removal by index later
-        for i, (patch, width_data) in enumerate(self._data_width_patches):
-            # --- sanity checks ---
-            if patch is None or not hasattr(patch, "figure") or patch.figure is None:
-                # self._log_debug(f"  patch {i} is invalid or removed, marking for removal.")
+        # self._log_debug(f"refresh_linewidths triggered, {len(self._data_width_patches)} patches")
+        patches_to_remove = []
+        for i, (patch, scaled_width_data) in enumerate(self._data_width_patches):
+            if (
+                patch is None
+                or not hasattr(patch, "figure")
+                or patch.figure is None
+                or patch.axes is not self._context
+            ):
                 patches_to_remove.append(i)
                 continue
-            if patch.axes is not self._context:
-                # self._log_debug(f"  patch {i} belongs to different axes, marking for removal.")
-                patches_to_remove.append(i)
-                continue
-            # --------------------
 
             if hasattr(patch, "set_linewidth"):
                 try:
-                    new_width_points = _linewidth_in_points(width_data, self._context)
+                    # convert the *already matrix-scaled* data width using current axis scale
+                    new_width_points = _linewidth_in_points(scaled_width_data, self._context)
                     current_lw = patch.get_linewidth()
-                    # only update if significantly different to avoid unnecessary redraws
                     if not np.isclose(current_lw, new_width_points, atol=0.05):
-                        # self._log_debug(f"  patch {i}: updating lw from {current_lw:.2f} to {new_width_points:.2f} (data={width_data:.2f})")
                         patch.set_linewidth(new_width_points)
-                        updated_count += 1
-                    # else:
-                    # self._log_debug(f"  patch {i}: lw {current_lw:.2f} vs {new_width_points:.2f} (data={width_data:.2f}) - no update needed")
+                        # self._log_debug(f"  patch {i}: updating lw to {new_width_points:.2f} (scaled_data={scaled_width_data:.2f})")
                 except Exception as e:
                     # self._log_debug(f"  error updating patch {i}: {e}")
-                    pass  # ignore errors for specific patches
+                    pass
             else:
-                # self._log_debug(f"  patch {i} has no set_linewidth, marking for removal.")
-                patches_to_remove.append(i)  # remove if it doesn't support linewidth
+                patches_to_remove.append(i)
 
-        # remove invalid/processed patches efficiently by index
         if patches_to_remove:
-            # sort indices in descending order to avoid messing up indices during removal
             patches_to_remove.sort(reverse=True)
             # self._log_debug(f"  removing {len(patches_to_remove)} patches")
             for index in patches_to_remove:
                 self._data_width_patches.pop(index)
 
-    def track_patch(self, patch: mpatches.Patch, width_data: float):
-        """adds a patch to the list for dynamic linewidth updates."""
-        # self._log_debug(f"track_patch: tracking patch id={id(patch)} with data_width={width_data:.3f}")
-        self._data_width_patches.append((patch, width_data))
+    def track_patch(self, patch: mpatches.Patch, scaled_width_data: float):
+        """adds patch with its matrix-scaled data width for dynamic axis updates."""
+        # self._log_debug(f"track_patch: id={id(patch)} scaled_data_width={scaled_width_data:.3f}")
+        self._data_width_patches.append((patch, scaled_width_data))
 
-    def render_component(self, context: Axes, component: Component, adjust_lims: bool = True):
-        """render a component tree into the matplotlib axes."""
-        # ensure internal context matches provided context
-        if self._context != context:
-            self._log_debug("context changed, updating and reconnecting event")
-            self._disconnect_draw_event()  # disconnect from old context
-            self._context = context
-            fig = context.get_figure()
-            if fig and fig.canvas:
-                self._draw_event_cid = fig.canvas.mpl_connect("draw_event", self.refresh_linewidths)
-                # self._log_debug(f"reconnected draw event (cid={self._draw_event_cid})")
+    # --- Primitive Rendering Methods --- (render_rectangle, render_svg, render_text etc. assumed to be here)
+    # ... (other methods like _get_recursive_world_bounds, _adjust_limits, render_rectangle etc.) ...
 
-        # perform layout calculation using this renderer for measurements
-        component.measure_and_layout(self)
-
-        # adjust axis limits if requested and this is the root component
-        # *** important: this happens BEFORE rendering starts ***
-        if adjust_lims and component.parent is None:
-            self._adjust_limits(context, component)
-
-        # run pre-render callbacks
-        for cb in self.pre_render_callbacks:
-            cb(context)
-
-        # clear patches list before rendering starts
-        self._data_width_patches = []
-        # self._log_debug("cleared data width patches list.")
-
-        # get root transform and start recursive rendering
-        root_world_matrix = component.compute_world_matrix()
-        # self._log_debug(f"rendering component tree starting with {component.id or component.__class__.__name__}")
-        component.render(
-            self, context, root_world_matrix
-        )  # render call eventually calls connection.render()
-
-        # run post-render callbacks
-        for cb in self.post_render_callbacks:
-            cb(context)
-
-        # perform initial linewidth update after all patches are added
-        # self._log_debug("performing initial linewidth refresh after render.")
-        self.refresh_linewidths()
-
-    # (_get_recursive_world_bounds, _adjust_limits methods remain the same)
-    def _get_recursive_world_bounds(
-        self, component: Component, current_bounds=None
-    ) -> Optional[Tuple[float, float, float, float]]:
-        """recursively find the min/max world coordinates occupied by visible components."""
-        if not component or not component.show:
-            return current_bounds
-
-        # initialize bounds if first call
-        overall = (
-            list(current_bounds)
-            if current_bounds
-            else [float("inf"), float("inf"), float("-inf"), float("-inf")]
-        )
-
-        # update bounds with current component's world bounds (if not a connection)
-        if not isinstance(component, Connection):
-            comp_b = component.get_world_bounds()
-            if comp_b:
-                overall = [
-                    min(overall[0], comp_b[0]),
-                    min(overall[1], comp_b[1]),
-                    max(overall[2], comp_b[2]),
-                    max(overall[3], comp_b[3]),
-                ]
-
-        # recurse into children
-        if hasattr(component, "children") and component.children:
-            for child in component.children:
-                if not child or not child.show:
-                    continue
-
-                child_bounds = None
-                if isinstance(child, Connection):
-                    # --- Connection Bounds Estimation (Pre-Render) ---
-                    conn_points_est = []
-                    # Resolve original components first
-                    child._resolve_references_orig()
-                    start_comp_orig = child._resolved_start_component_orig
-                    end_comp_orig = child._resolved_end_component_orig
-
-                    if start_comp_orig and end_comp_orig:
-                        # Estimate start point using connection's start_offset on original component
-                        est_start = child._get_offset_world_position(
-                            start_comp_orig, child.start_offset
-                        )
-                        if est_start:
-                            conn_points_est.append(est_start)
-
-                        # Estimate end point using connection's end_offset on original component
-                        est_end = child._get_offset_world_position(end_comp_orig, child.end_offset)
-                        if est_end:
-                            conn_points_est.append(est_end)
-
-                    if len(conn_points_est) == 2:
-                        # simple buffer based on estimated line width
-                        buffer = max(child.line_width * 3, 10)  # use a reasonable buffer
-                        min_x = min(p[0] for p in conn_points_est) - buffer
-                        min_y = min(p[1] for p in conn_points_est) - buffer
-                        max_x = max(p[0] for p in conn_points_est) + buffer
-                        max_y = max(p[1] for p in conn_points_est) + buffer
-                        child_bounds = (min_x, min_y, max_x, max_y)
-                        # self._log_debug(f"estimated connection bounds for {child.id}: {child_bounds}")
-                    else:
-                        # fallback if we couldn't estimate points
-                        comp_b = child.get_world_bounds()  # use component's rough overlay bounds
-                        if comp_b:
-                            child_bounds = comp_b
-                        # self._log_debug(f"using rough overlay bounds for connection {child.id}: {child_bounds}")
-
-                    # --- End Connection Bounds Estimation ---
-                else:
-                    # default recursive call for other components
-                    child_bounds = self._get_recursive_world_bounds(child, None)
-
-                # update overall bounds if child had valid bounds
-                if child_bounds:
-                    overall = [
-                        min(overall[0], child_bounds[0]),
-                        min(overall[1], child_bounds[1]),
-                        max(overall[2], child_bounds[2]),
-                        max(overall[3], child_bounds[3]),
-                    ]
-
-        # include anchor points in bounds calculation as well
-        if hasattr(component, "anchor_points") and component.anchor_points:
-            for anchor in component.anchor_points:
-                # only include if visible or specifically needed for bounds
-                if anchor and (anchor.show or anchor.debug):
-                    anchor_b = anchor.get_world_bounds()
-                    if anchor_b:
-                        overall = [
-                            min(overall[0], anchor_b[0]),
-                            min(overall[1], anchor_b[1]),
-                            max(overall[2], anchor_b[2]),
-                            max(overall[3], anchor_b[3]),
-                        ]
-
-        # return tuple if bounds are valid, else None
-        return tuple(overall) if overall[0] != float("inf") else None
-
-    def _adjust_limits(self, context: Axes, root: Component, padding: float = 0.1):
-        """set axis limits to encompass the rendered content."""
-        # Use the potentially enhanced recursive bounds calculation
-        bounds = self._get_recursive_world_bounds(root)
-
-        if bounds:
-            min_x, min_y, max_x, max_y = bounds
-            # ensure non-zero width/height for padding calculation
-            width = max(max_x - min_x, 1.0)
-            height = max(max_y - min_y, 1.0)
-
-            # Determine base padding amounts
-            pad_x_base = max(width * padding, 5.0)
-            pad_y_base = max(height * padding, 5.0)
-
-            # Apply potentially larger padding for schematics or diagrams
-            # Increased padding for schematics based on root component type or content
-            # Avoid direct import of Network* types here
-            is_schematic_type = (
-                "Schematic" in root.__class__.__name__ or "Diagram" in root.__class__.__name__
-            )
-
-            if is_schematic_type or (
-                isinstance(root, Container)
-                and any(isinstance(c, Connection) for c in root.children)
-            ):
-                pad_x = max(pad_x_base, width * 0.15, 20.0)  # increased factor and minimum
-                pad_y = max(pad_y_base, height * 0.15, 20.0)  # increased factor and minimum
-            else:
-                pad_x = pad_x_base
-                pad_y = pad_y_base
-
-            context.set_xlim(min_x - pad_x, max_x + pad_x)
-            context.set_ylim(min_y - pad_y, max_y + pad_y)
-            # self._log_debug(f"adjusted limits: x=({min_x-pad_x:.1f}, {max_x+pad_x:.1f}), y=({min_y-pad_y:.1f}, {max_y+pad_y:.1f})")
-        else:
-            # default limits if no bounds found
-            context.set_xlim(0, 100)
-            context.set_ylim(0, 100)
-            # self._log_debug("no valid bounds found, setting default limits (0,100).")
-
-        # ensure equal aspect ratio after setting limits
-        context.set_aspect("equal", adjustable="box")
-
-    # --- Primitive Rendering Methods ---
     def render_path(
         self,
         context: Axes,
         path_data: SVGPathData,
         matrix: np.ndarray,
-        line_width_mode: str = "data",  # default changed from 'point'
+        line_width_mode: str = "data",
         color_remap: Optional[Dict[str, Optional[str]]] = None,
-        component_id: Optional[str] = None,  # added for logging context
+        component_id: Optional[str] = None,  # for logging
     ):
-        """renders a single svg path."""
+        """renders a single svg path, handling linewidth scaling."""
         comp_id_str = component_id or "unknown"
 
         try:
             mpl_path = parse_path(path_data.d)
-            # combine component matrix with potential path transform
+            # combine component matrix with potential path transform string
             final_matrix = matrix
             if path_data.transform:
-                # basic matrix transform parsing (could be more robust)
+                # simple matrix transform parsing (more robust parsing could be added)
                 m = re.search(r"matrix\((.+)\)", path_data.transform)
                 if m:
                     vals = [float(v.strip()) for v in m.group(1).split(",")]
                     if len(vals) == 6:
                         transform_mat = np.array(
-                            [
-                                [vals[0], vals[2], vals[4]],
-                                [vals[1], vals[3], vals[5]],
-                                [0, 0, 1],
-                            ]
+                            [[vals[0], vals[2], vals[4]], [vals[1], vals[3], vals[5]], [0, 0, 1]]
                         )
                         final_matrix = final_matrix @ transform_mat
 
-            # create matplotlib transform
             transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
             # apply color remapping
             remap = color_remap or {}
             fill_color_in = path_data.fill
             stroke_color_in = path_data.stroke
-
-            # use normalized colors from path_data, then remap
             fill_color_out = remap.get(fill_color_in, fill_color_in) if fill_color_in else None
             stroke_color_out = (
                 remap.get(stroke_color_in, stroke_color_in) if stroke_color_in else None
             )
 
-            # convert to matplotlib color format ('none' or actual color)
             final_facecolor = "none" if fill_color_out is None else fill_color_out
             final_edgecolor = "none" if stroke_color_out is None else stroke_color_out
 
-            current_path_lw_data = path_data.stroke_width
-
-            # determine if linewidth should be dynamic
+            # --- Linewidth calculation ---
+            initial_lw_points = 0.0
+            scaled_width_data_for_tracking = 0.0  # value to track for axis zoom updates
             is_data_width = (
-                line_width_mode == "data" and final_edgecolor != "none" and current_path_lw_data > 0
+                line_width_mode == "data"
+                and final_edgecolor != "none"
+                and path_data.stroke_width > 0
             )
 
-            # set initial linewidth: 0 for data width (will be updated), fixed value otherwise
-            initial_lw_points = 0.0 if is_data_width else current_path_lw_data
+            if is_data_width:
+                # 1. get scale factor from the transformation matrix
+                matrix_scale = _get_matrix_avg_scale(final_matrix)
+                self._log_debug(f"  matrix scale for path '{comp_id_str}': {matrix_scale:.3f}")
 
-            # get linestyle
+                # 2. apply matrix scale to the base data width
+                base_width_data = path_data.stroke_width
+                scaled_width_data = base_width_data * matrix_scale
+                scaled_width_data_for_tracking = scaled_width_data  # track this value
+
+                # 3. convert the matrix-scaled data width to points using current axis scale
+                initial_lw_points = _linewidth_in_points(scaled_width_data, context)
+                self._log_debug(
+                    f"  data lw calc: base={base_width_data:.2f} * mat_scl={matrix_scale:.2f} -> scaled_data={scaled_width_data:.2f} -> initial_pts={initial_lw_points:.2f}"
+                )
+            elif final_edgecolor != "none" and path_data.stroke_width > 0:
+                # point mode: use stroke_width directly
+                initial_lw_points = path_data.stroke_width
+                self._log_debug(f"  point lw: {initial_lw_points:.2f}")
+
+            # --- End Linewidth Calculation ---
+
             linestyle = _get_mpl_linestyle(path_data)
 
-            # create and add the patch
             with _no_autoscale(context):
                 patch = mpatches.PathPatch(
                     mpl_path,
                     facecolor=final_facecolor,
                     edgecolor=final_edgecolor,
-                    linewidth=initial_lw_points,
+                    linewidth=initial_lw_points,  # set initial value
                     linestyle=linestyle,
                     transform=transform,
-                    capstyle="round",  # consider making configurable?
-                    joinstyle="round",  # consider making configurable?
+                    capstyle="round",
+                    joinstyle="round",
                 )
                 context.add_patch(patch)
 
-                # if using data width, track the patch and set initial estimate
+                # if using data width, track the patch with the *matrix-scaled* data width
                 if is_data_width:
-                    self.track_patch(patch, current_path_lw_data)
-                    initial_points_estimate = _linewidth_in_points(current_path_lw_data, context)
-                    patch.set_linewidth(initial_points_estimate)
-                    self._log_debug(
-                        f"  added path patch (data width initial={initial_points_estimate:.2f})"
-                    )
-                else:
-                    self._log_debug(f"  added path patch (point width={initial_lw_points:.2f})")
+                    self.track_patch(patch, scaled_width_data_for_tracking)
+                    # no need to set lw again here, it's done initially
 
         except Exception as e:
-            self._log_debug(
-                f"error rendering path '{path_data.d[:30]}...' for '{comp_id_str}': {e}", e
-            )
+            path_preview = path_data.d[:30] + "..." if path_data.d else "N/A"
+            self._log_debug(f"error rendering path '{path_preview}' for '{comp_id_str}': {e}", e)
 
     def _create_rounded_rect_path(self, x, y, w, h, radius):
         """helper to create a matplotlib path for a rounded rectangle."""
         # handle zero radius (sharp corners)
-        if radius < 1e-3:
+        if radius < EPSILON:
             verts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
             codes = [
                 MplPath.MOVETO,
@@ -565,73 +374,54 @@ class MatplotlibRenderer(BaseRenderer):
         w, h = bounds.width, bounds.height
         if w <= 0 or h <= 0:
             # self._log_debug(f"skipping render_rectangle for {comp_id}: zero size")
-            return  # cannot render zero-size rectangle
+            return
 
-        # base transform for the rectangle's local coordinates
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
 
-        # --- render shadow (if defined) ---
+        # render shadow (if defined)
         if style.shadow and style.shadow.blur_radius > 0:
             shadow = style.shadow
-            # estimate scale factor for shadow resolution
             scale_factor = _get_point_scale_factor(context)
-            points_per_unit = max(scale_factor, 1.0)  # avoid zero scale
-            # number of layers based on blur radius and resolution parameter
+            points_per_unit = max(scale_factor, 1.0)
             num_layers = min(
                 100, max(4, int((shadow.blur_radius * points_per_unit**0.75) * shadow.resolution))
             )
 
             try:
-                # get base color and alpha for shadow
                 base_color_rgb, base_alpha = to_rgba(shadow.color)[:3], to_rgba(shadow.color)[3]
             except ValueError:
-                base_color_rgb, base_alpha = (0, 0, 0), 0.5  # default shadow
+                base_color_rgb, base_alpha = (0, 0, 0), 0.5
 
-            accumulated_alpha = 0.0  # track alpha to avoid excessive opacity
-            min_render_alpha = 1.0 / 256.0  # minimum alpha step
+            accumulated_alpha = 0.0
+            min_render_alpha = 1.0 / 256.0
 
-            # render shadow layers from back to front (most blurred to least blurred)
             for i in range(num_layers - 1, -1, -1):
-                layer_frac = (
-                    (i / (num_layers - 1)) if num_layers > 1 else 1.0
-                )  # progress from 1 to 0
-                alpha_frac = (
-                    ((num_layers - 1 - i) / (num_layers - 1)) if num_layers > 1 else 0.0
-                )  # progress from 0 to 1
-                # target intensity for this layer (distributes total alpha across layers)
+                layer_frac = (i / (num_layers - 1)) if num_layers > 1 else 1.0
+                alpha_frac = ((num_layers - 1 - i) / (num_layers - 1)) if num_layers > 1 else 0.0
                 target_intensity = (
-                    base_alpha * (1 - alpha_frac**1.5) / num_layers  # non-linear falloff
+                    base_alpha * (1 - alpha_frac**1.5) / num_layers
                     if num_layers > 0
                     else base_alpha
                 )
                 accumulated_alpha += target_intensity
-                # quantize alpha to avoid excessive unique colors
                 patch_alpha = max(
                     0, min(1.0, round(accumulated_alpha / min_render_alpha) * min_render_alpha)
                 )
 
-                # skip rendering if alpha is negligible
                 if patch_alpha <= min_render_alpha / 2.0:
                     continue
-
-                # adjust accumulated alpha by the amount actually rendered
                 accumulated_alpha = max(0, accumulated_alpha - patch_alpha)
 
-                # calculate spread for this layer (blur + base spread)
                 spread = shadow.spread + shadow.blur_radius * (1 - layer_frac)
-                # dimensions and position of the shadow layer rectangle
                 sw, sh = w + 2 * spread, h + 2 * spread
                 sx, sy = -spread + shadow.offset_x, -spread + shadow.offset_y
-                # radius of the shadow layer (increases with spread)
                 s_radius = (
                     min(style.corner_radius + spread, min(sw, sh) / 2.0) if min(sw, sh) > 0 else 0
                 )
 
-                # skip if shadow layer has no size
                 if sw <= 0 or sh <= 0:
                     continue
 
-                # create path and add patch for this shadow layer
                 layer_path = self._create_rounded_rect_path(sx, sy, sw, sh, s_radius)
                 with _no_autoscale(context):
                     context.add_patch(
@@ -640,36 +430,40 @@ class MatplotlibRenderer(BaseRenderer):
                             facecolor=(*base_color_rgb, patch_alpha),
                             edgecolor="none",
                             lw=0,
-                            transform=transform,  # use the main rectangle's transform
-                            clip_on=False,  # allow shadow to extend beyond axes limits if needed
+                            transform=transform,
+                            clip_on=False,
                         )
                     )
 
-        # --- render main rectangle (background and border) ---
+        # render main rectangle (background and border)
         facecolor = style.background_color or "none"
         edgecolor = style.border_color or "none"
         linewidth_data = style.border_width
         width_mode = style.border_width_mode
 
-        # only render if there's a fill or a visible border
         if facecolor != "none" or (edgecolor != "none" and linewidth_data > 0):
             main_path = self._create_rounded_rect_path(0, 0, w, h, style.corner_radius)
 
-            # determine if linewidth is dynamic
+            initial_lw_points = 0.0
+            scaled_width_data_for_tracking = 0.0
             is_data_width = width_mode == "data" and edgecolor != "none" and linewidth_data > 0
-            # set initial points (0 for data width, fixed value otherwise)
-            initial_lw_points = 0.0 if is_data_width else linewidth_data
 
-            # create dummy SVGPathData just to use _get_mpl_linestyle helper
+            if is_data_width:
+                matrix_scale = _get_matrix_avg_scale(matrix)
+                scaled_width_data = linewidth_data * matrix_scale
+                scaled_width_data_for_tracking = scaled_width_data
+                initial_lw_points = _linewidth_in_points(scaled_width_data, context)
+            elif edgecolor != "none" and linewidth_data > 0:
+                initial_lw_points = linewidth_data  # point mode
+
             border_path_data = SVGPathData(
-                d="",  # path 'd' is not used here
+                d="",
                 line_style=style.border_style,
                 dash_array=style.dash_sequence,
                 dash_offset=style.dash_offset,
             )
             linestyle = _get_mpl_linestyle(border_path_data)
 
-            # add the main rectangle patch
             with _no_autoscale(context):
                 main_patch = mpatches.PathPatch(
                     main_path,
@@ -683,118 +477,223 @@ class MatplotlibRenderer(BaseRenderer):
                 )
                 context.add_patch(main_patch)
 
-                # track patch if linewidth is dynamic
                 if is_data_width:
-                    self.track_patch(main_patch, linewidth_data)
-                    # set initial width estimate
-                    initial_points_estimate = _linewidth_in_points(linewidth_data, context)
-                    main_patch.set_linewidth(initial_points_estimate)
-                    # self._log_debug(f"added main rectangle patch (data width initial={initial_points_estimate:.2f})")
-                # else:
-                # self._log_debug(f"added main rectangle patch (point width={initial_lw_points:.2f})")
+                    self.track_patch(main_patch, scaled_width_data_for_tracking)
 
     def render_svg(self, context: Axes, svg_element: SVGElement, matrix: np.ndarray):
         """renders the paths within an svg element."""
         comp_id = svg_element.id or "unknown_svg"
-        # ensure the svg data is parsed
         if not svg_element._parsed_svg_content:
-            # this should ideally be handled by the component's validator or pre-render logic
-            logger.warning(f"svg content not parsed for {comp_id}, attempting parse now.")
+            logger.warning(f"svg content not parsed for {comp_id}, attempting parse.")
             svg_element._parse_and_validate_svg()
             if not svg_element._parsed_svg_content:
                 if svg_element.debug:
                     self.render_debug(context, svg_element, matrix)
-                return  # exit if still not parsed
+                return
 
-        # check if there are paths to render
         if not svg_element._parsed_svg_content.paths:
-            # self._log_debug(f"no paths found in parsed svg for {comp_id}")
             if svg_element.debug:
                 self.render_debug(context, svg_element, matrix)
             return
 
         svg_data = svg_element._parsed_svg_content
         viewBox = svg_data.viewBox
-        # use svg dimensions from parsed content
         svg_dims = Size(svg_data.width, svg_data.height)
-        # use component's current dimensions (set by layout)
         comp_dims = svg_element._dimensions
 
-        # handle case where component dimensions might be zero (e.g., if hidden)
-        if comp_dims.width <= 1e-6 or comp_dims.height <= 1e-6:
-            # self._log_debug(f"skipping svg render for {comp_id} due to zero component dimensions.")
+        if comp_dims.width <= EPSILON or comp_dims.height <= EPSILON:
             if svg_element.debug:
                 self.render_debug(context, svg_element, matrix)
             return
 
-        # determine the effective viewbox
-        if viewBox:
-            vb_x, vb_y, vb_w, vb_h = viewBox
-        else:
-            # default viewbox to svg dimensions if not specified
-            vb_x, vb_y = 0, 0
-            vb_w, vb_h = svg_dims.width, svg_dims.height
+        vb_x, vb_y, vb_w, vb_h = viewBox or (0, 0, svg_dims.width, svg_dims.height)
+        vb_w = max(vb_w, EPSILON)
+        vb_h = max(vb_h, EPSILON)
 
-        # handle zero-size viewbox to prevent division by zero
-        if vb_w <= 1e-6:
-            vb_w = 1.0
-        if vb_h <= 1e-6:
-            vb_h = 1.0
-
-        # calculate scaling to fit viewbox content into component dimensions
         scale_x = comp_dims.width / vb_w
         scale_y = comp_dims.height / vb_h
 
-        # transformation matrix: viewbox coords -> component local coords (y-up)
-        # 1. scale viewbox to component size
-        # 2. translate by negative viewbox origin (scaled)
-        # 3. flip y-axis and translate to component height
+        # transform: viewbox coords -> component local coords (y-up)
         svg_internal_matrix = np.array(
             [
                 [scale_x, 0, -scale_x * vb_x],
-                [0, -scale_y, scale_y * vb_y + comp_dims.height],  # flip y and translate
+                [0, -scale_y, scale_y * vb_y + comp_dims.height],  # flip y
                 [0, 0, 1],
             ]
         )
-
-        # final transformation: world * component_local * svg_internal
         final_matrix = matrix @ svg_internal_matrix
 
-        # retrieve renderer options set on the component
         default_lw_mode = svg_element.line_width_mode
         color_remap = svg_element.color_remap
 
-        # render each path within the svg
         for path_data in svg_data.paths:
-            # pass the final matrix and options to render_path
             self.render_path(
                 context, path_data, final_matrix, default_lw_mode, color_remap, component_id=comp_id
             )
 
-        # render debug box if enabled
         if svg_element.debug:
             self.render_debug(context, svg_element, matrix)
+
+    # ... (render_text, measure_text, render_debug, render_to_output, _get_recursive_world_bounds, _adjust_limits assumed to be here and correct) ...
+    # --- (Rest of the MatplotlibRenderer class methods...) ---
+
+    def render_component(self, context: Axes, component: Component, adjust_lims: bool = True):
+        """render a component tree into the matplotlib axes."""
+        if self._context != context:
+            self._log_debug("context changed, updating and reconnecting event")
+            self._disconnect_draw_event()
+            self._context = context
+            fig = context.get_figure()
+            if fig and fig.canvas:
+                self._draw_event_cid = fig.canvas.mpl_connect("draw_event", self.refresh_linewidths)
+                # self._log_debug(f"reconnected draw event (cid={self._draw_event_cid})")
+
+        component.measure_and_layout(self)
+
+        if adjust_lims and component.parent is None:
+            self._adjust_limits(context, component)
+
+        for cb in self.pre_render_callbacks:
+            cb(context)
+
+        self._data_width_patches = []  # clear before render
+
+        root_world_matrix = component.compute_world_matrix()
+        component.render(self, context, root_world_matrix)
+
+        for cb in self.post_render_callbacks:
+            cb(context)
+
+        self.refresh_linewidths()  # initial update
+
+    def _get_recursive_world_bounds(
+        self, component: Component, current_bounds=None
+    ) -> Optional[Tuple[float, float, float, float]]:
+        """recursively find the min/max world coordinates occupied by visible components."""
+        if not component or not component.show:
+            return current_bounds
+
+        overall = (
+            list(current_bounds)
+            if current_bounds
+            else [float("inf"), float("inf"), float("-inf"), float("-inf")]
+        )
+
+        if not isinstance(component, Connection):
+            comp_b = component.get_world_bounds()
+            if comp_b:
+                overall = [
+                    min(overall[0], comp_b[0]),
+                    min(overall[1], comp_b[1]),
+                    max(overall[2], comp_b[2]),
+                    max(overall[3], comp_b[3]),
+                ]
+
+        # recurse into children
+        children_to_check = []
+        if hasattr(component, "children"):
+            children_to_check.extend(component.children)
+        if hasattr(component, "anchor_points"):
+            children_to_check.extend(component.anchor_points)
+
+        for child in children_to_check:
+            if not child or not child.show:
+                continue
+
+            child_bounds = None
+            if isinstance(child, Connection):
+                # connection bounds estimation (pre-render)
+                conn_points_est = []
+                child._resolve_references_orig()
+                start_comp_orig = child._resolved_start_component_orig
+                end_comp_orig = child._resolved_end_component_orig
+                if start_comp_orig and end_comp_orig:
+                    est_start = child._get_offset_world_position(
+                        start_comp_orig, child.start_offset
+                    )
+                    if est_start:
+                        conn_points_est.append(est_start)
+                    est_end = child._get_offset_world_position(end_comp_orig, child.end_offset)
+                    if est_end:
+                        conn_points_est.append(est_end)
+
+                if len(conn_points_est) >= 2:
+                    buffer = max(child.line_width * 3, 10)
+                    min_x = min(p[0] for p in conn_points_est) - buffer
+                    min_y = min(p[1] for p in conn_points_est) - buffer
+                    max_x = max(p[0] for p in conn_points_est) + buffer
+                    max_y = max(p[1] for p in conn_points_est) + buffer
+                    child_bounds = (min_x, min_y, max_x, max_y)
+                else:
+                    comp_b = child.get_world_bounds()  # fallback rough bounds
+                    if comp_b:
+                        child_bounds = comp_b
+            elif hasattr(child, "children") or hasattr(
+                child, "anchor_points"
+            ):  # recurse into containers/anchors
+                child_bounds = self._get_recursive_world_bounds(child, None)
+            else:  # basic component bounds
+                child_bounds = child.get_world_bounds()
+
+            if child_bounds:
+                overall = [
+                    min(overall[0], child_bounds[0]),
+                    min(overall[1], child_bounds[1]),
+                    max(overall[2], child_bounds[2]),
+                    max(overall[3], child_bounds[3]),
+                ]
+
+        return tuple(overall) if overall[0] != float("inf") else None
+
+    def _adjust_limits(self, context: Axes, root: Component, padding: float = 0.1):
+        """set axis limits to encompass the rendered content."""
+        bounds = self._get_recursive_world_bounds(root)
+        if bounds:
+            min_x, min_y, max_x, max_y = bounds
+            width = max(max_x - min_x, 1.0)
+            height = max(max_y - min_y, 1.0)
+            pad_x_base = max(width * padding, 5.0)
+            pad_y_base = max(height * padding, 5.0)
+
+            is_schematic_type = (
+                "Schematic" in root.__class__.__name__ or "Diagram" in root.__class__.__name__
+            )
+            children_to_check = getattr(root, "children", []) + getattr(root, "anchor_points", [])
+            has_connections = any(isinstance(c, Connection) for c in children_to_check)
+
+            if is_schematic_type or has_connections:
+                pad_x = max(pad_x_base, width * 0.15, 20.0)
+                pad_y = max(pad_y_base, height * 0.15, 20.0)
+            else:
+                pad_x = pad_x_base
+                pad_y = pad_y_base
+
+            context.set_xlim(min_x - pad_x, max_x + pad_x)
+            context.set_ylim(min_y - pad_y, max_y + pad_y)
+            # self._log_debug(f"adjusted limits: x=({min_x-pad_x:.1f}, {max_x+pad_x:.1f}), y=({min_y-pad_y:.1f}, {max_y+pad_y:.1f})")
+        else:
+            context.set_xlim(0, 100)
+            context.set_ylim(0, 100)
+            # self._log_debug("no valid bounds found, setting default limits (0,100).")
+
+        context.set_aspect("equal", adjustable="box")
 
     def render_text(self, context: Axes, text_component: Text, matrix: np.ndarray):
         """renders text using cached svg paths."""
         comp_id = text_component.id or "unknown_text"
         if not text_component.text or not text_component.show:
-            # self._log_debug(f"skipping render_text for {comp_id}: no text or not shown")
             return
 
-        # measure text if cache is missing (should have happened during layout)
         if text_component._svg_cache is None:
             self._log_debug(f"text '{comp_id}' svg_cache is None, measuring now.")
             self.measure_text(text_component)
 
-        # check cache again after attempting measurement
         svg_cache = text_component._svg_cache
         if isinstance(svg_cache, SVGTextContent) and svg_cache.glyph_paths:
             self._render_text_paths(context, text_component, matrix)
         else:
-            # fallback or if text is empty after measurement
             self._log_debug(f"no valid glyph paths found for text '{comp_id}', skipping render.")
-            if text_component.debug:  # still render debug box if needed
+            if text_component.debug:
                 self.render_debug(context, text_component, matrix)
 
     def _render_text_paths(self, context: Axes, text_comp: Text, matrix: np.ndarray):
@@ -802,80 +701,47 @@ class MatplotlibRenderer(BaseRenderer):
         comp_id = text_comp.id or "unknown_text_path"
         svg_content = text_comp._svg_cache
         if not svg_content or not svg_content.glyph_paths:
-            self._log_debug(f"render_text_paths: no glyph paths in cache for {comp_id}")
-            return  # cannot render without paths
+            return
 
-        # allocated size (from layout)
         alloc_w, alloc_h = text_comp._dimensions.width, text_comp._dimensions.height
-        # natural measured size (from measurement phase)
         measured_w, measured_h = svg_content.measured_width, svg_content.measured_height
 
-        # calculate alignment offset to position the measured box within the allocated box
-        dx = 0.0
-        dy = 0.0
-        # horizontal alignment
+        dx, dy = 0.0, 0.0
         if text_comp.align == "center":
             dx = (alloc_w - measured_w) / 2.0
         elif text_comp.align == "right":
             dx = alloc_w - measured_w
-        # vertical alignment (relative to top-left origin of allocated box)
         if text_comp.vertical_align == "middle":
-            # text paths origin is bottom-left of text block's bounding box
-            # align center of measured height with center of allocated height
             dy = (alloc_h - measured_h) / 2.0
-        elif text_comp.vertical_align == "bottom":
-            dy = 0  # paths origin is already at bottom
         elif text_comp.vertical_align == "top":
-            dy = alloc_h - measured_h  # shift up by difference
+            dy = alloc_h - measured_h
 
-        # create alignment transform matrix
         align_matrix = np.array([[1, 0, dx], [0, 1, dy], [0, 0, 1]])
-
-        # combine component's world matrix with alignment matrix
         final_matrix = matrix @ align_matrix
-        # create the final matplotlib transform
         transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
 
-        # get text color
-        color = getattr(text_comp, "color", "black")
-        if not color or color.lower() == "none":
-            color = "black"  # default if color is invalid
+        color = getattr(text_comp, "color", "black") or "black"
 
-        # self._log_debug(f"rendering {len(svg_content.glyph_paths)} text paths for {comp_id}", {
-        #     "alloc": (alloc_w, alloc_h), "measured": (measured_w, measured_h),
-        #     "align_offset": (dx, dy), "color": color
-        # })
-
-        # render each glyph path
         with _no_autoscale(context):
             for path_info in svg_content.glyph_paths:
-                # path_info should contain a 'path' key with the MplPath object
                 mpl_path = path_info.get("path")
                 if mpl_path:
                     context.add_patch(
                         mpatches.PathPatch(
                             mpl_path,
                             facecolor=color,
-                            edgecolor="none",  # text paths usually have no stroke
+                            edgecolor="none",
                             linewidth=0,
                             transform=transform,
                         )
                     )
-                else:
-                    self._log_debug(f"missing 'path' in glyph_paths cache for {comp_id}")
-
-        # self._log_debug(f"rendered text '{comp_id}' using {len(svg_content.glyph_paths)} paths.")
 
     def measure_text(self, text_comp: Text) -> Size:
-        """
-        measures text by generating matplotlib TextPaths and calculating their
-        bounding box. The dimensions are in 'data' units relative to font_size.
-        """
+        """measures text by generating matplotlib TextPaths."""
         if not text_comp.text:
             text_comp._svg_cache = None
             return Size()
 
-        # --- create matplotlib paths for text ---
         props = fm.FontProperties(
             family=text_comp.font_name or "sans-serif",
             weight=text_comp.font_weight,
@@ -886,106 +752,80 @@ class MatplotlibRenderer(BaseRenderer):
         y_cursor = 0.0
         min_x_overall, max_x_overall = float("inf"), float("-inf")
         min_y_overall, max_y_overall = float("inf"), float("-inf")
-        base_line_h = text_comp.font_size  # use font_size as base height unit
+        base_line_h = text_comp.font_size
         effective_line_height = base_line_h * (1.0 + text_comp.line_spacing)
 
-        # generate path for each line
         for i, line in enumerate(lines):
-            if not line.strip():  # handle empty lines for spacing
-                # advance cursor but don't add paths
+            if not line.strip():
                 if i < len(lines) - 1:
                     y_cursor -= effective_line_height
                 continue
 
-            # generate path for the line at (0, 0) origin
-            # size=font_size means the path vertices will be scaled by font_size
             mpl_path = TextPath((0, 0), line, size=text_comp.font_size, prop=props)
-            # store the path along with its baseline y-offset
             all_glyph_paths.append({"path": mpl_path, "y_offset": y_cursor})
 
-            # update overall bounds based on this path's vertices *at its baseline*
             if mpl_path.vertices.shape[0] > 0:
-                line_vertices = mpl_path.vertices + [0, y_cursor]  # translate to baseline
+                line_vertices = mpl_path.vertices + [0, y_cursor]
                 min_x_overall = min(min_x_overall, np.min(line_vertices[:, 0]))
                 max_x_overall = max(max_x_overall, np.max(line_vertices[:, 0]))
                 min_y_overall = min(min_y_overall, np.min(line_vertices[:, 1]))
                 max_y_overall = max(max_y_overall, np.max(line_vertices[:, 1]))
-            else:  # handle space or empty path case if TextPath generates it
-                max_x_overall = max(max_x_overall, 0)  # ensure width is at least 0
+            else:
+                max_x_overall = max(max_x_overall, 0)
                 min_x_overall = min(min_x_overall, 0)
-                # y bounds won't change for empty path
 
-            # advance cursor for next line
             if i < len(lines) - 1:
                 y_cursor -= effective_line_height
 
-        # --- calculate final dimensions and adjust path origins ---
-        if not all_glyph_paths:  # if text was only whitespace/empty lines
+        if not all_glyph_paths:
             text_comp._svg_cache = None
             return Size()
 
-        # if bounds were never updated (e.g., text path failed?), return zero size
         if min_x_overall == float("inf"):
-            measured_width = 0.0
-            measured_height = 0.0
-            final_paths = []
+            measured_width, measured_height, final_paths = 0.0, 0.0, []
         else:
             measured_width = max(0, max_x_overall - min_x_overall)
             measured_height = max(0, max_y_overall - min_y_overall)
-
-            # translate all paths so the entire text block's bottom-left corner is at (0,0)
             final_paths = []
-            y_shift = -min_y_overall  # shift text up so min_y becomes 0
-            x_shift = -min_x_overall  # shift text right so min_x becomes 0
+            y_shift = -min_y_overall
+            x_shift = -min_x_overall
             for p_info in all_glyph_paths:
-                # apply both baseline offset and overall shift
                 final_transform = mtransforms.Affine2D().translate(
                     x_shift, p_info["y_offset"] + y_shift
                 )
                 final_paths.append({"path": p_info["path"].transformed(final_transform)})
 
-        # --- store results in cache ---
         text_comp._svg_cache = SVGTextContent(
             glyph_paths=tuple(final_paths),
             measured_width=measured_width,
             measured_height=measured_height,
         )
-
         measured_size = Size(width=measured_width, height=measured_height)
         # self._log_debug(f"measured text '{text_comp.id}', nat_size={measured_size}")
         return measured_size
 
     def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
         """renders debug bounding box and origin."""
-        # check if component has dimensions and they are valid
         if (
             not hasattr(component, "_dimensions")
             or component._dimensions.width <= 0
             or component._dimensions.height <= 0
         ):
-            # self._log_debug(f"skipping debug render for {component.id}: invalid dimensions {getattr(component, '_dimensions', 'N/A')}")
             return
 
         w, h = component._dimensions.width, component._dimensions.height
-        # transform for the bounding box corners
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
-        lw = 0.5  # fixed point size for debug lines
+        lw = 0.5
 
         with _no_autoscale(context):
-            # bounding box
             context.add_patch(
                 mpatches.Rectangle(
                     (0, 0), w, h, fill=False, ec="red", ls="--", lw=lw, transform=transform
                 )
             )
-
-            # origin marker (crosshair)
-            # transform the local origin (0,0) to world, then to display
             origin_world = (matrix @ [0, 0, 1])[:2]
             origin_disp = context.transData.transform(origin_world)
-
-            # draw crosshair in display coordinates (so it's fixed size)
-            sz = 4  # size of crosshair arms in pixels
+            sz = 4
             context.add_line(
                 plt.Line2D(
                     [origin_disp[0] - sz, origin_disp[0] + sz],
@@ -993,8 +833,8 @@ class MatplotlibRenderer(BaseRenderer):
                     color="red",
                     lw=lw,
                     ls="-",
-                    transform=None,  # use display coords directly
-                    solid_capstyle="butt",  # sharp ends for lines
+                    transform=None,
+                    solid_capstyle="butt",
                 )
             )
             context.add_line(
@@ -1004,28 +844,22 @@ class MatplotlibRenderer(BaseRenderer):
                     color="red",
                     lw=lw,
                     ls="-",
-                    transform=None,  # use display coords directly
+                    transform=None,
                     solid_capstyle="butt",
                 )
             )
 
     def render_to_output(self, context: Axes, output=None, **kwargs):
         """saves the rendered figure to a file or stream."""
-        # ensure linewidths are updated before saving
         self.refresh_linewidths()
-
         if not hasattr(context, "figure"):
             raise ValueError("matplotlib context (Axes) must belong to a figure")
-
-        # default save options (tight bounding box)
         opts = {"bbox_inches": "tight", "pad_inches": 0.1, **kwargs}
-
         if output:
             try:
                 # self._log_debug(f"saving figure to {output} with options {opts}")
                 context.figure.savefig(output, **opts)
             except Exception as e:
                 self._log_debug(f"error saving figure: {e}", e)
-                raise  # re-raise the exception
-        # return the figure object (useful for notebooks or further manipulation)
+                raise
         return context.figure
