@@ -4,3 +4,5 @@ jeanplot/resources/parts/.DS_Store
 jeanplot/.DS_Store
 tests/__pycache__
 .DS_Store
+*.pdf
+*.txt
