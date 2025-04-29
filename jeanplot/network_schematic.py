@@ -1,5 +1,3 @@
-# File: jeanplot/network_schematic.py
-# -*- coding: utf-8 -*-
 """
 Module for generating network genetic schematics.
 
@@ -14,7 +12,6 @@ import logging
 import numpy as np
 from collections import defaultdict
 
-# use absolute imports
 from jeanplot.component import Component, AnchorComponent
 from jeanplot.container import Container
 from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset
@@ -230,9 +227,7 @@ class NetworkGeneticSchematic(Container):
     """
 
     network: Any
-    style: BoxStyle = Field(
-        default_factory=lambda: BoxStyle(background_color="#ffffff", padding=(30, 30, 30, 30))
-    )
+    style: BoxStyle = Field(default_factory=lambda: BoxStyle(padding=(30, 30, 30, 30)))
     layout_orientation: Literal["row", "column"] = "column"
     show_all_tus: bool = False
     grid_gap: Tuple[float, float] = (40.0, 20.0)
@@ -449,58 +444,114 @@ class NetworkGeneticSchematic(Container):
         self._annotation_components.clear()
         self._connection_components.clear()
 
-        # build TUs first (needed for connections)
         for tu_id in self._grid_coords.keys():
             tu_comp = self._component_factory.create_tu(tu_id)
             if tu_comp:
                 self._tu_components[tu_id] = tu_comp
 
-        # build Connections
         for i, interaction in enumerate(self._interactions):
             conn_comp = self._component_factory.create_connection(interaction, i, self)
             if conn_comp:
                 self._connection_components.append(conn_comp)
 
-        # build Annotations based on decomposed rectangles
+        source_groups_map: Dict[str, List[str]] = defaultdict(list)
+        for tu_id in self._tu_infos:
+            s_id = _get_source_id(tu_id, self._tu_infos)
+            source_groups_map[s_id].append(tu_id)
+
+        self._log_debug("Rebuilt Source Groups Map:", source_groups_map)
+        self._log_debug("Top-Left TU per Source Map:", self._top_left_tu_per_source)
+
         for source_id, rectangles in self._source_rectangles.items():
-            # find the tu_id associated with this source for tag info
-            top_left_tu_id = self._top_left_tu_per_source.get(source_id)
-            if not top_left_tu_id or top_left_tu_id not in self._tu_infos:
-                logger.warning(
-                    f"missing top-left tu info for source {source_id}, skipping annotation."
+            marker_tu_info: Optional[TUInfo] = None
+            source_tu_ids = source_groups_map.get(source_id, [])
+            if not source_tu_ids:
+                self._log_debug(
+                    f"Warning: No TUs found for source_id '{source_id}'. Skipping annotation."
                 )
                 continue
-            tu_info = self._tu_infos[top_left_tu_id]
 
-            # build tag string
-            tag_str = tu_info.cotx_marker or ""
-            if tu_info.aggregation_ratio_label:
-                tag_str += f"\n{tu_info.aggregation_ratio_label}"
-            tag_str = tag_str.strip()
+            for tid in source_tu_ids:
+                if tid in self._tu_infos and self._tu_infos[tid].is_marker:
+                    marker_tu_info = self._tu_infos[tid]
+                    self._log_debug(
+                        f"Found marker TU '{tid}' for source '{source_id}'. Marker: {marker_tu_info.cotx_marker}"
+                    )
+                    break
 
-            # create one annotation per rectangle
+            top_left_tu_id = self._top_left_tu_per_source.get(source_id)
+            tag_label_tu_info: Optional[TUInfo] = None
+            if top_left_tu_id and top_left_tu_id in self._tu_infos:
+                tag_label_tu_info = self._tu_infos[top_left_tu_id]
+            else:
+                first_tu_id = source_tu_ids[0] if source_tu_ids else None
+                if first_tu_id and first_tu_id in self._tu_infos:
+                    tag_label_tu_info = self._tu_infos[first_tu_id]
+                    self._log_debug(
+                        f"Warning: top_left_tu_id '{top_left_tu_id}' not found/valid for source '{source_id}'. Using first TU '{first_tu_id}' for tag label info."
+                    )
+                else:
+                    self._log_debug(
+                        f"Error: Cannot determine any TUInfo for tag label for source '{source_id}'. Skipping annotation."
+                    )
+                    continue
+
+            # determine source type from the tag_label_tu_info
+            annotation_source_type = "plasmid" if tag_label_tu_info.in_l2 else "cotx"
+            # determine marker for styling from the marker_tu_info
+            annotation_marker = marker_tu_info.cotx_marker if marker_tu_info else None
+
+            # start with the marker name if available (prioritize actual marker)
+            tag_str_parts = []
+            if annotation_marker:
+                tag_str_parts.append(annotation_marker)
+            if tag_label_tu_info.aggregation_ratio_label:
+                tag_str_parts.append(tag_label_tu_info.aggregation_ratio_label)
+            tag_str = "\n".join(tag_str_parts)
+
+            self._log_debug(f"--- Creating Annotation for Source: {source_id} ---")
+            self._log_debug(f"  Source TU IDs: {source_tu_ids}")
+            self._log_debug(f"  Top-Left TU ID for Tag Logic: {top_left_tu_id}")
+            self._log_debug(
+                f"  Tag Label TU Info: {tag_label_tu_info.tu_id if tag_label_tu_info else 'None'}"
+            )
+            self._log_debug(
+                f"  Marker TU Info: {marker_tu_info.tu_id if marker_tu_info else 'None'}"
+            )
+            self._log_debug(f"  Annotation Source Type: {annotation_source_type}")
+            self._log_debug(f"  Annotation Marker (for styling): {annotation_marker}")
+            self._log_debug(f"  Annotation Tag Label (for display): '{tag_str}'")
+            self._log_debug(f"  Number of Rectangles: {len(rectangles)}")
+
             for i, rect in enumerate(rectangles):
-                # determine if this rectangle should get the tag
-                # we assign tag to the rectangle containing the top-leftmost TU of the source
                 has_tag = False
                 if top_left_tu_id:
-                    top_left_r, top_left_c = self._grid_coords[top_left_tu_id]
-                    if (
+                    top_left_r, top_left_c = self._grid_coords.get(top_left_tu_id, (-1, -1))
+                    if top_left_r != -1 and (
                         rect.r_min <= top_left_r <= rect.r_max
                         and rect.c_min <= top_left_c <= rect.c_max
                     ):
                         has_tag = True
+                elif i == 0:
+                    has_tag = True
+                    self._log_debug(
+                        f"Assigning tag to first rectangle (index 0) for source {source_id} due to missing top-left TU."
+                    )
 
                 anno_id = f"anno_{source_id}_{rect.r_min}_{rect.c_min}"
+                self._log_debug(
+                    f"  Creating Rect {i + 1}/{len(rectangles)}: ID={anno_id}, HasTag={has_tag}, TagLabel='{tag_str if has_tag else ''}'"
+                )
+
                 anno = SourceAnnotation(
                     id=anno_id,
                     parent=self,
                     source_id=source_id,
                     has_tag=has_tag,
-                    marker=tu_info.cotx_marker,
+                    marker=annotation_marker,
                     tag_label=tag_str,
-                    source_type="plasmid" if tu_info.in_l2 else "cotx",
-                    z_index=-5,  # draw annotations behind TUs but above background
+                    source_type=annotation_source_type,
+                    z_index=-5,
                 )
                 self._annotation_components.append(anno)
 
