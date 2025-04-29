@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Any, Set
 from pydantic import BaseModel
 from collections import defaultdict
+import numpy as np
 
 
 class PartInfo(BaseModel):
@@ -48,15 +49,13 @@ def get_tu_informations(network: Any) -> Dict[str, TUInfo]:
         is_in_l2 = len(tu_cdgs) > 1
 
         for pos, (_, tu_row) in enumerate(tu_cdgs.iterrows()):
-            # use .get() with default to handle potential missing tu_id gracefully
             tu_id = tu_row.get("tu_id", [None])[0]
             if not tu_id:
-                continue  # skip if no tu_id found
+                continue
             tu_name = "_".join(tu_id.split("_")[:-1])
             content = tu_row.get("content", [])
             is_marker = any(item in markers for item in content)
             marker = next((item for item in content if item in markers), None)
-
             parts_dict = network_info.get("all_parts", {}).get(tu_id, {})
             parts = [
                 PartInfo(name=name, category=category) for name, category in parts_dict.items()
@@ -74,58 +73,82 @@ def get_tu_informations(network: Any) -> Dict[str, TUInfo]:
                 parts=parts,
             )
 
-            input_from = src.get("input_from")  # use .get()
+            input_from = src.get("input_from")
             if input_from and len(input_from) > 0:
                 upstream_id = input_from[0][0]
-                try:
-                    if network.compute_graph.at[upstream_id, "type"] == "aggregation":
-                        ratios = network.compute_graph.at[upstream_id, "extra"]["ratios"]
-                        # ensure ratios list has enough elements for the position
-                        if pos < len(ratios):
-                            tus[tu_id].aggregation_node_id = upstream_id
-                            tus[tu_id].aggregation_ratio = ratios[pos]
-                            tus[tu_id].in_aggregation = True
-                            aggr_to_tus[upstream_id].append(tu_id)
-                        else:
-                            print(
-                                f"Warning: Ratio missing for TU {tu_id} (pos {pos}) in aggregation {upstream_id}"
-                            )
+                if (
+                    upstream_id in network.compute_graph.index
+                    and network.compute_graph.at[upstream_id, "type"] == "aggregation"
+                ):
+                    tus[tu_id].aggregation_node_id = upstream_id
+                    tus[tu_id].in_aggregation = True
+                    aggr_to_tus[upstream_id].append(tu_id)
 
-                except (KeyError, IndexError, TypeError):  # added TypeError for safety
-                    # print(f"Warning: Could not process aggregation info for TU {tu_id}. Error: {e}")
-                    pass  # ignore errors during aggregation processing
+    for agg_id, tu_ids_in_agg in aggr_to_tus.items():
+        try:
+            agg_node_series = network.compute_graph.loc[agg_id]
+            raw_ratios = agg_node_series.get("extra", {}).get("ratios")
+            output_tu_ids = agg_node_series.get("cdg_output", [])
 
-    # normalize ratios
+            if raw_ratios is None or not isinstance(raw_ratios, list):
+                continue
+            if not output_tu_ids or not isinstance(output_tu_ids, list):
+                continue
+            if len(raw_ratios) != len(output_tu_ids):
+                continue
+            if not all(isinstance(r, (int, float)) for r in raw_ratios):
+                continue
+
+            tu_id_to_raw_ratio_map = {
+                tu_id: ratio for tu_id, ratio in zip(output_tu_ids, raw_ratios)
+            }
+
+            group_data = []
+            for tu_id in tu_ids_in_agg:
+                if tu_id in tus and tu_id in tu_id_to_raw_ratio_map:
+                    group_data.append((tus[tu_id], tu_id_to_raw_ratio_map[tu_id]))
+
+            if not group_data:
+                continue
+
+            group_data.sort(key=lambda item: (item[0].plasmid_name, item[0].position_in_plasmid))
+            sorted_raw_ratios = [item[1] for item in group_data]
+
+            ratios_np = np.array(sorted_raw_ratios)
+            min_ratio = np.maximum(ratios_np.min(), 1e-6)
+            normed_ratios_float = np.round(ratios_np / min_ratio, 2)
+
+            def is_round(x):
+                return np.isclose(x, np.round(x), atol=1e-9)
+
+            formatted_ratio_strings = [
+                str(int(round(r))) if is_round(r) else str(r) for r in normed_ratios_float
+            ]
+
+            label = ":".join(formatted_ratio_strings)
+
+            for tu_id in tu_ids_in_agg:
+                if tu_id in tus:  # Ensure TU exists
+                    tus[tu_id].aggregation_ratio_label = label
+                    if tu_id in tu_id_to_raw_ratio_map:
+                        tus[tu_id].aggregation_ratio = tu_id_to_raw_ratio_map[tu_id]
+
+        except Exception as e:
+            label = "Error"
+            for tu_id in tu_ids_in_agg:
+                if tu_id in tus:
+                    tus[tu_id].aggregation_ratio_label = label
+
     for aggr_id, tu_ids in aggr_to_tus.items():
-        valid_ratios = [
-            tus[tu_id].aggregation_ratio
-            for tu_id in tu_ids
-            if tus[tu_id].aggregation_ratio is not None
-        ]
-        if not valid_ratios:
-            continue
-        min_ratio = min(valid_ratios)
-        if min_ratio > 0:
-            for tu_id in tu_ids:
-                if tus[tu_id].aggregation_ratio is not None:
-                    tus[tu_id].aggregation_ratio_norm = tus[tu_id].aggregation_ratio / min_ratio
-
-    # propagate marker info within aggregation groups
-    for aggr_id, tu_ids in aggr_to_tus.items():
-        marker_tu = next((tus[tu_id] for tu_id in tu_ids if tus[tu_id].is_marker), None)
+        marker_tu = next(
+            (tus[tu_id] for tu_id in tu_ids if tu_id in tus and tus[tu_id].is_marker), None
+        )
         if marker_tu:
             for tu_id in tu_ids:
-                tus[tu_id].cotx_marker = marker_tu.cotx_marker
-                tus[tu_id].marker_ratio = marker_tu.aggregation_ratio_norm
-
-    # create ratio labels
-    for aggr_id, tu_ids in aggr_to_tus.items():
-        # sort by original position within source for consistent labels
-        sorted_tu_ids = sorted(tu_ids, key=lambda tid: tus[tid].position_in_plasmid)
-        ratios = [tus[tu_id].aggregation_ratio_norm for tu_id in sorted_tu_ids]
-        label = ":".join([f"{r:.0f}" if r is not None else "?" for r in ratios])
-        for tu_id in tu_ids:
-            tus[tu_id].aggregation_ratio_label = label
+                if tu_id in tus:
+                    tus[tu_id].cotx_marker = marker_tu.cotx_marker
+                    if hasattr(marker_tu, "aggregation_ratio_norm"):
+                        tus[tu_id].marker_ratio = marker_tu.aggregation_ratio_norm
 
     return tus
 
