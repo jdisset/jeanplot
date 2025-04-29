@@ -6,28 +6,19 @@ Replicates the structure and logic of the original prototype script more closely
 """
 
 from typing import Dict, List, Optional, Any, Tuple, Literal, Annotated, Set
-from pydantic import Field, PrivateAttr, model_validator, BeforeValidator, BaseModel
-import logging
-import numpy as np
+from pydantic import Field, PrivateAttr
 import pandas as pd
-from collections import defaultdict
 
-# use absolute imports
-from jeanplot.component import Component, AnchorComponent
+from jeanplot.component import AnchorComponent
 from jeanplot.container import Container
-from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset, Transform
+from jeanplot.models import BoxStyle, LayoutConstraints, Offset, Transform
 from jeanplot.connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
-from jeanplot.svg import LineEndFlat, LineEndCircle, LineEndArrow
+from jeanplot.svg import LineEndFlat
 from jeanplot.network_utils import get_tu_informations, TUInfo
-from jeanplot.style import jstyle
 from jeanplot.debug import debug_print, get_logger
-from jeanplot.renderer import BaseRenderer
 from jeanplot.text import Text
 
 logger = get_logger(__name__)
-
-
-# --- Node Component Definitions (remain mostly the same) ---
 
 
 class ComputeNode(Container):
@@ -169,7 +160,7 @@ class NetworkDiagram(Container):
         )
     )
     style_class: list[str] = ["main_diagram"]
-    style: BoxStyle = Field(  # add default padding like prototype's root
+    style: BoxStyle = Field(
         default_factory=lambda: BoxStyle(padding=(0, 0, 0, 0), margin=(0, 0, 0, 0))
     )
 
@@ -203,7 +194,6 @@ class NetworkDiagram(Container):
 
     def _make_node(self, row: pd.Series, node_id: int) -> Optional[ComputeNode]:
         """factory function to create specific node components based on type."""
-        # (identical to previous implementation)
         node_type = row["type"]
         comp_id_str = f"node_{node_id}"  # unique id for the component
         kw = {"node_id": node_id, "id": comp_id_str}  # common kwargs
@@ -221,20 +211,44 @@ class NetworkDiagram(Container):
         if node_type in node_class_map:
             node_class = node_class_map[node_type]
             if node_class is AggregationNode:
-                tu_infos = get_tu_informations(self.network)  # get fresh tu_infos here
-                markers = set(
-                    tu_infos[co].cotx_marker for co in row.get("cdg_output", []) if co in tu_infos
-                )
                 node_label = None
+
+                # tu_infos = get_tu_informations(self.network)
+                # markers = set(
+                #     tu_infos[co].cotx_marker for co in row.get("cdg_output", []) if co in tu_infos
+                # )
+                # if len(markers) == 1:
+                #     marker = markers.pop()
+                #     if marker:
+                #         style_class.append(marker)
+                #         node_label = marker
+
                 style_class = ["aggregation"]
+
+                return AggregationNode(
+                    style_class=style_class, node_label=node_label, collapsed=True, **kw
+                )
+            elif node_class is TUNode:
+                tu_infos = get_tu_informations(self.network)
+                print(f"TUNode tu_infos: {tu_infos.keys()}")
+                markers = set()
+                for co in row.get("cdg_output", []):
+                    co = self.network.central_dogma_graph.iloc[co]["tu_id"][0]
+                    if co in tu_infos:
+                        marker = tu_infos[co].cotx_marker
+                        if marker:
+                            markers.add(marker)
+                node_label = None
+                style_class = ["source"]
                 if len(markers) == 1:
                     marker = markers.pop()
                     if marker:
                         style_class.append(marker)
+                        style_class.append("tu_marker")
                         node_label = marker
-                return AggregationNode(
-                    style_class=style_class, node_label=node_label, collapsed=True, **kw
-                )
+
+                return TUNode(style_class=style_class, node_label=node_label, **kw)
+
             elif node_class is FluoNode:
                 network_info = self.network.generate_network_info()
                 markers = set(network_info.get("dependent_outputs", []))
@@ -266,11 +280,11 @@ class NetworkDiagram(Container):
             self._log_debug(
                 f"warning: unknown node type '{node_type}' for node {node_id}, creating generic node."
             )
+            print(f"unknown node type '{node_type}' for node {node_id}")
             return ComputeNode(node_type=node_type, node_label="?", **kw)
 
     def _get_node_filter(self) -> Set[int]:
         """determines which node ids to exclude based on simplified mode."""
-        # (identical to previous implementation)
         excluded_node_ids = set()
         if self.simplified:
             cg = self.network.compute_graph
@@ -295,6 +309,7 @@ class NetworkDiagram(Container):
             if nid in excluded_ids:
                 continue
             node_comp = self._make_node(row, nid)
+            print(f"Made node {nid} of type {node_comp.node_type}")
             if node_comp:
                 self._nodes[nid] = node_comp
         self._log_debug(f"built {len(self._nodes)} nodes after filtering.")
@@ -314,7 +329,6 @@ class NetworkDiagram(Container):
             f"dst-{dst_comp.node_type}",
             f"slot-{slot}",
         ]
-        print(f"connecting {src_id} ({src_comp.node_type}) -> {dst_id} ({dst_comp.node_type})")
         conn_id = f"conn_{src_id}_{dst_id}_{slot}"
         self._log_debug(f"creating connection {conn_id}: {src_id} -> {dst_id} (slot {slot})")
         return Connection(
@@ -356,10 +370,12 @@ class NetworkDiagram(Container):
 
         # --- input layer (aggregation nodes + nested source nodes) ---
         agg_node_ids = list(cg[cg["type"] == "aggregation"].index)
+        src_node_ids = list(cg[cg["type"] == "source"].index)
         input_layer = Container(
             id="layer_input",
             style_class=["input_layer", "layer"],
         )
+        in_agg = set()
         for agg_id in sorted(agg_node_ids):  # sort for consistent order
             if agg_id in self._nodes:
                 agg_node = self._nodes[agg_id]
@@ -372,8 +388,16 @@ class NetworkDiagram(Container):
                     if src_id in self._nodes and isinstance(self._nodes[src_id], TUNode):
                         source_nodes_to_add.append(self._nodes[src_id])
                         self._layed_out_node_ids.add(src_id)
+                        in_agg.add(src_id)
                 agg_node.add_children(source_nodes_to_add)
-        if input_layer.children:  # only add if not empty
+
+        for src_id in sorted(src_node_ids):  # sort for consistent order
+            if src_id in self._nodes and src_id not in in_agg:
+                src_node = self._nodes[src_id]
+                input_layer.add_child(src_node)
+                self._layed_out_node_ids.add(src_id)
+
+        if input_layer.children:
             all_layers_ordered.append(input_layer)
 
         # --- ern layers ---
@@ -381,13 +405,13 @@ class NetworkDiagram(Container):
         for i, ern_layer_ids in enumerate(topo_ern_layers_ids):
             if not ern_layer_ids:
                 continue
-            layer_nodes_ordered = sorted(list(ern_layer_ids))  # sort for consistent order
+            layer_nodes_ordered = sorted(list(ern_layer_ids))
             layer_container = Container(
                 style_class=["main_layer", f"main_layer_{i}", "layer"],
             )
             layer_title = Text(
-                text=f"Layer {i+1}",
-                font_size=7,
+                text=f"Layer {i + 1}",
+                font_size=5,
                 style_class=["layer_title"],
                 offset=Offset(reference_relative=(0.5, 1), relative=(-0.6, 1.5)),
                 is_overlay=True,
@@ -433,7 +457,7 @@ class NetworkDiagram(Container):
                     style_class=["output_layer", "layer"],
                 )
                 out_node = self._nodes[out_id]
-                output_layer.add_child(out_node)  # add the output node first
+                output_layer.add_child(out_node)
                 self._layed_out_node_ids.add(out_id)
                 # attach upstream (visible) nodes
                 upstream_ids = dependency_map.get(out_id, [])
@@ -460,6 +484,7 @@ class NetworkDiagram(Container):
             - set(ern_indices)
             - set(cg[cg["type"] == "output"].index)
         )
+        print(f"remaining_ids: {remaining_ids}")
         auto_layers = []
         if remaining_ids:
             auto_topo_layers_ids = self.network.topological_order(list(remaining_ids))
