@@ -6,6 +6,7 @@ from typing import Optional, Union, Literal, List, Tuple
 from pydantic import Field, model_validator, PrivateAttr
 import numpy as np
 
+from pathlib import Path
 from jeanplot.utils import load_file_if_exists
 from jeanplot.svg import SVGElement, get_svg_data, make_svg_line, SVGContent
 from jeanplot.container import Container
@@ -13,7 +14,9 @@ from jeanplot.style import jstyle
 from jeanplot.component import Component, AnchorComponent
 from jeanplot.text import Text
 from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset
-from jeanplot.network_utils import Interaction, PartInfo  # interaction type hint
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_RESOURCE_PATH = "pkg:jeanplot:resources"
@@ -99,7 +102,7 @@ class TranscriptionUnit(Container):
             self._tu_line._parse_and_validate_svg()  # re-parse updated svg
 
             # use calculated content box height for centering
-            content_w, content_h = self.style.content_box(self._dimensions)  # pylint: disable=unused-variable
+            content_w, content_h = self.style.content_box(self._dimensions)
             line_y = self.style.padding[0] + (content_h - self.line_thickness) / 2.0
             self._tu_line.offset = Offset(absolute=(min_x, line_y))
 
@@ -117,7 +120,6 @@ class Source(Container):
         )
     )
 
-    # Style is applied via theme using &source_base_style alias
     style: BoxStyle = Field(default_factory=BoxStyle)
 
     _tag_container: Optional[Container] = PrivateAttr(default=None)
@@ -153,9 +155,9 @@ class Source(Container):
                 self._tag_container = Container(
                     id=tag_id,
                     style_class=["source_tag"],
-                    is_overlay=True,  # tag itself is an overlay relative to its logical parent (Source/SourceAnnotation)
+                    is_overlay=True,
                     children=tag_elements,
-                    parent=self,  # parent link established by add_child if needed
+                    parent=self,
                 )
                 # important: apply styles to the proxy tag container here
                 # so it gets its default layout etc., before it's potentially copied
@@ -164,104 +166,86 @@ class Source(Container):
         return self
 
 
-class GeneticPart(SVGElement, Container):
+class GeneticPart(Container):
     """
-    base class for genetic parts, combining svg rendering with container capabilities
-    for labels and anchors. uses color_remap for theming svg colors.
+    Base class for genetic parts using composition. It's a Container that holds
+    an SVGElement for its shape, an optional Text label, and anchors.
     """
 
     part_type: str = "unknown_part"
     part_name: Optional[str] = None
     label: Optional[Text] = None
-
-    layout: LayoutConstraints = Field(
-        default_factory=lambda: LayoutConstraints(justify_content="center", align_items="start")
-    )
     auto_resource_path: str = DEFAULT_RESOURCE_PATH
 
-    def __init__(self, part_name: Optional[str] = None, **kwargs):
-        # if 'children' not explicitly provided, default to empty list
-        # prevents issues if label/anchors are added later via add_child
-        if "children" not in kwargs:
-            kwargs["children"] = []
-        super().__init__(part_name=part_name, **kwargs)
+    layout: LayoutConstraints = Field(
+        default_factory=lambda: LayoutConstraints(justify_content="center", align_items="center")
+    )
+
+    style: BoxStyle = Field(default_factory=lambda: BoxStyle(padding=(0, 0, 0, 0)))
+
+    _svg_shape: Optional[SVGElement] = PrivateAttr(default=None)
 
     def model_post_init(self, *args, **kwargs):
-        """loads svg and ensures label/anchors are children."""
-        # call base Component init first (handles parent, style_class etc.)
-        Component.model_post_init(self, *args, **kwargs)
-        # call SVGElement validator to handle svg parsing and initial dimensions
-        SVGElement._parse_and_validate_svg(self)
-        # call Container validator (currently empty, but good practice)
-        # Container.model_post_init(self, *args, **kwargs) # skip this?
+        """
+        Creates the internal SVGElement shape, adds it as a child,
+        and adds the label (if any) and anchors as overlay children.
+        """
+        super().model_post_init(*args, **kwargs)
 
-        # if svg content is missing after init, try loading automatically
-        if self._parsed_svg_content is None or not self._parsed_svg_content.paths:
-            svg_to_load = None
-            if self.part_name:
-                svg_path_specific = (
-                    f"{self.auto_resource_path}/parts/{self.part_type}.{self.part_name}.svg"
-                )
-                svg_to_load = load_file_if_exists(svg_path_specific)
-            if not svg_to_load:
-                svg_path_generic = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
-                svg_to_load = load_file_if_exists(svg_path_generic)
+        svg_content_data = self._load_svg_content()
+        svg_id = f"svg_{self.id}" if self.id else None
+        self._svg_shape = SVGElement(
+            id=svg_id,
+            svg_content=svg_content_data,
+            is_overlay=False,
+            style=BoxStyle(padding=(0, 0, 0, 0), margin=(0, 0, 0, 0)),
+        )
+        self.add_child(self._svg_shape)
 
-            if svg_to_load:
-                self.svg_content = get_svg_data(svg_to_load)
-                # re-run parse/validate after setting svg_content
-                SVGElement._parse_and_validate_svg(self)
-            elif self._parsed_svg_content is None:
-                # if still nothing, set to empty content
-                self._parsed_svg_content = SVGContent(paths=())
-                # if dimensions haven't been set, use zero
-                if not hasattr(self, "_dimensions") or self._dimensions is None:
-                    self._dimensions = Size()
+        if self.label:
+            self.label.is_overlay = True
+            if not any(c is self.label for c in self.children):
+                self.add_child(self.label)
 
-        # add label/anchors if they exist and aren't already children
-        if self.label and not any(
-            isinstance(c, Text) and c.id == self.label.id
-            for c in self.children
-            if c and self.label.id
-        ):
-            self.add_child(self.label)  # add_child sets parent link
         for anchor in self.anchor_points:
-            if anchor and anchor not in self.children:
-                self.add_child(anchor)  # add_child sets parent link
+            if anchor:
+                anchor.is_overlay = True
+                if not any(c is anchor for c in self.children):
+                    self.add_child(anchor)
 
-    # override render to handle both svg and container children (label/anchors)
-    def render(self, renderer, context, matrix: np.ndarray):
-        if not self.show:
-            return
-        # 1. render the svg part
-        SVGElement.render(self, renderer, context, matrix)
-
-        # 2. render container children (label, anchors) respecting their transforms/offsets
-        # use the combined list of children prepared during layout
-        all_renderable_children = [
-            c
-            for c in (
-                getattr(self, "_layout_children_cache", [])
-                + getattr(self, "_overlay_children_cache", [])
+    def _load_svg_content(self) -> Optional[SVGContent]:
+        """Loads SVG data based on part_type and part_name."""
+        svg_to_load = None
+        if self.part_name:
+            svg_path_specific = (
+                f"{self.auto_resource_path}/parts/{self.part_type}.{self.part_name}.svg"
             )
-            if c and c.show
-        ]
-        # sort children by z-index before rendering
-        all_renderable_children.sort(key=lambda c: getattr(c, "z_index", 0))
+            svg_to_load = load_file_if_exists(svg_path_specific)
+        if not svg_to_load:
+            svg_path_generic = f"{self.auto_resource_path}/parts/{self.part_type}.svg"
+            svg_to_load = load_file_if_exists(svg_path_generic)
 
-        for child in all_renderable_children:
-            # child's world matrix is calculated based on *this* component's matrix
-            # compute_world_matrix handles offsets/attachments internally
-            child_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
-            child.render(renderer, context, child_matrix)
+        if svg_to_load:
+            return get_svg_data(svg_to_load)
+        else:
+            logger.warning(
+                f"Could not find SVG resource for {self.part_type} (name: {self.part_name})"
+            )
+            return SVGContent(paths=())
 
-        # render debug box last if enabled
-        if self.debug:
-            # use the potentially overridden render_debug from Component/Container
-            Component.render(self, renderer, context, matrix)
+    @property
+    def svg_content(self) -> Optional[Union[str, Path, bytes, SVGContent]]:
+        return self._svg_shape.svg_content if self._svg_shape else None
 
-
-# --- specific genetic part subclasses ---
+    @svg_content.setter
+    def svg_content(self, value: Optional[Union[str, Path, bytes, SVGContent]]):
+        if self._svg_shape:
+            self._svg_shape.svg_content = value
+            self._svg_shape._parse_and_validate_svg()
+        else:
+            logger.warning(
+                f"Cannot set svg_content for {self.id}: internal _svg_shape not initialized."
+            )
 
 
 class ERN(GeneticPart):
@@ -287,6 +271,7 @@ class ERN(GeneticPart):
     def set_label_from_name(cls, values):
         if not values.get("label") and values.get("part_name"):
             part_id = values.get("id", f"ern_{values.get('part_name', 'unnamed')}")
+            print(f"setting label for {part_id}: {values['part_name']}")
             values["label"] = Text(
                 id=f"{part_id}_label",
                 text=values["part_name"],
@@ -365,4 +350,3 @@ class ERN5pRecog(GeneticPart):
             ),
         ]
     )
-
