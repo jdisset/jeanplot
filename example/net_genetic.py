@@ -74,7 +74,7 @@ if not networks:
     exit()
 if NETWORK_INDEX >= len(networks) or NETWORK_INDEX < -len(networks):
     logger.warning(
-        f"network index {NETWORK_INDEX} out of bounds (0-{len(networks)-1}). using index 0."
+        f"network index {NETWORK_INDEX} out of bounds (0-{len(networks) - 1}). using index 0."
     )
     NETWORK_INDEX = 0
 mnet = networks[NETWORK_INDEX]
@@ -134,7 +134,3 @@ fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
 ax.set_aspect("equal")
 ax.axis("off")
 renderer.render_component(ax, root, adjust_lims=True)
-
-save_path = f"network_schematic_{mnet.name}.pdf"
-fig.savefig(save_path, dpi=300)
-plt.show()

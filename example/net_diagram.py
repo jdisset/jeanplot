@@ -1,11 +1,13 @@
 ## {{{                          --     imports     --
 from typing import Dict, List, Optional, Any, Tuple, Literal, Annotated
+import os
 from pydantic import Field, PrivateAttr, model_validator, BeforeValidator, BaseModel
+from tqdm import tqdm
 import logging
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 from biocomp.utils import load_lib
@@ -16,111 +18,132 @@ from biocomptools.toollib.networkselector import NetworkSet, NetworkSelector
 import dracon as dr
 import random
 import json
+from jeanplot.debug import set_debug, get_logger
 
 from jeanplot import load_default_theme
-
-from jeanplot.component import Component, AnchorComponent
-from jeanplot.container import Container
-from jeanplot.models import Size, BoxStyle, LayoutConstraints, Offset, Transform
-from jeanplot.connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
-from jeanplot.svg import LineEndFlat, LineEndCircle, LineEndArrow
-from jeanplot.network_utils import (
-    get_tu_informations,
-    get_tu_grid_layout,
-    get_interactions,
-    optimize_grid_for_source_adjacency,
-    _get_source_id,
-    TUInfo,
-    Interaction,
-)
-from jeanplot.style import jstyle
-from jeanplot.debug import debug_print, get_logger, set_debug
-from jeanplot.renderer import BaseRenderer
-from jeanplot.network_schematic import NetworkGeneticSchematic
-from jeanplot.matplotlib_renderer import MatplotlibRenderer
-from jeanplot.text import Text
-from jeanplot.network_diagram import (
-    ComputeNode,
-    TranscriptionNode,
-    TranslationNode,
-    AggregationNode,
-    ERNNode,
-    InvNode,
-    FluoNode,
-    DeadEndNode,
-    TUNode,
-    NetworkDiagram,
+from jeanplot.biocomp_diagrams import (
+    render_network_card,
+    render_network_diagram,
+    render_circuit_schematic,
 )
 
 ##────────────────────────────────────────────────────────────────────────────}}}
 
-## {{{                       --     load network     --
+load_default_theme()
+SAVE = True
+# SAVE = False
 DEBUG_MODE = False
-NETWORK_INDEX = 2
+NETWORK_INDEX = 50
+# XP_NAME = "2023-02-16_Matrix"
+XP_NAME = ""
+RECIPE_NAME = ""
+# BASE_DIR = Path("~/Dropbox (MIT)/Biocomp_v2/Plots/network_cards").expanduser()
+BASE_DIR = Path("/tmp/network_cards").expanduser()
+OVERWRITE = True
+FIGSIZE = 10
+
+logger = get_logger(__name__)
+set_debug(DEBUG_MODE)
 
 lib = load_lib()
 engine = md.get_biocompdb_sqlite_engine(cm.config.db.sqlite.path)
-# define network set selector
 netset = NetworkSet(
-    content=[NetworkSelector(experiment_name="2023-11-17_PguConstraints1_BP_DR", recipe_name="")]
+    content=[NetworkSelector(experiment_name=XP_NAME, recipe_name=RECIPE_NAME)],
 )
 with Session(engine) as session:
     netset.run_selectors(session)
     data = netset.get_networks_and_data(session)
     networks, _ = zip(*data)  # datafiles not used here
 networks = list(networks)
-if not networks:
-    exit()
-mnet = networks[NETWORK_INDEX]
-mnet.build(lib)
-net = mnet._network
-# dump network info for debugging if needed
-
-with pd.option_context(
-    "display.max_rows",
-    None,
-    "display.max_columns",
-    None,
-    "display.width",
-    None,
-    "display.max_colwidth",
-    None,
-):
-    print(net.central_dogma_graph)
-    print(net.compute_graph)
-
-tu_infos = get_tu_informations(net)
-layout_layers = get_tu_grid_layout(net)  # uses topological sort
-interactions = get_interactions(net)
-netinfo = net.generate_network_info()
-if DEBUG_MODE:
-    print("--- tu infos ---")
-    print(json.dumps({k: v.model_dump() for k, v in tu_infos.items()}, indent=2))
-    print("--- raw layout layers ---")
-    print(json.dumps(layout_layers, indent=2))
-    print("--- interactions ---")
-    print(json.dumps([i.model_dump() for i in interactions], indent=2))
 
 
-ntypes = net.compute_graph["type"].unique()
-node_counts = net.compute_graph["type"].value_counts()
-ern_nodes = net.compute_graph[net.compute_graph["type"] == "sequestron_ERN"]
-ern_indices = ern_nodes.index
-topo = net.topological_order(ern_indices)
-nlayers = len(topo)
-nerns = len(ern_indices)
-ern_names = ", ".join(netinfo["ern_names"])
+def has_oneone_ratio(ratio_str):
+    if not ratio_str:
+        return True
+    # check that all lines end with 1:1
+    return all(line.endswith("1:1") for line in ratio_str.split("\n"))
 
-net.compute_graph
 
-##────────────────────────────────────────────────────────────────────────────}}}
-
+##
 load_default_theme()
+NETWORK_INDEX = 30
+mnet = networks[NETWORK_INDEX]
+# --- Extract Metadata ---
+infos = {
+    "recipe": mnet.recipe.content.get("name", "N/A").rstrip(),
+    "experiment": mnet.recipe.experiment.content.get("name", "N/A").rstrip(),
+    "operator": mnet.recipe.experiment.content.get("tx_operator", "N/A"),
+    "machine": mnet.recipe.experiment.content.get("machine", "N/A"),
+    "cell line": mnet.recipe.experiment.content.get("cell_line", "N/A"),
+    "protocol": mnet.recipe.experiment.content.get("transfection_protocol", "N/A"),
+}
+recipe_txt = mnet.recipe.content
+network_info = mnet.network.generate_network_info()
 
-diagram = NetworkDiagram(network=net)
+print(network_info.get("cotx_str"))
+print(f"Network_info: {network_info}")
+print(f"Recipe: {recipe_txt}")
+print(f"Infos: {infos}")
 
-fig, ax = plt.subplots(figsize=(10, 20), dpi=300)
-ax.set_aspect("equal")
-ax.axis("off")
-renderer = MatplotlibRenderer()
-renderer.render_component(ax, diagram)
+
+fig, ax = plt.subplots(figsize=(FIGSIZE, FIGSIZE), dpi=300)
+
+# render_circuit_schematic(mnet, lib, ax)
+# render_network_card(mnet, lib, ax, show_recipe=True)
+render_network_diagram(mnet, lib, ax)
+
+mnet.network.compute_graph
+mnet.network.central_dogma_graph
+# Network Diagram: $BIOCOMP_ROOT/Plots/auto/network_diagram/<network_name>.svg
+# Circuit Schematic: $BIOCOMP_ROOT/Plots/auto/circuit_schematic/<network_name>.svg
+# Data Plot: $BIOCOMP_ROOT/Plots/auto/data-plot/<data_file_name_stem>.svg
+
+##
+# get BIOCOMP_ROOT from env
+BIOCOMP_ROOT = Path(os.environ["BIOCOMP_ROOT"]).expanduser()
+
+
+def make_and_save(mnet, lib, func, fname, **kw):
+    fname.parent.mkdir(parents=True, exist_ok=True)
+
+    exists = fname.exists()
+    if exists and not OVERWRITE and SAVE:
+        print(f"Skipping {fname} as it already exists.")
+        return
+    fig, ax = plt.subplots(figsize=(FIGSIZE, FIGSIZE), dpi=300)
+    try:
+        func(mnet, lib, ax, **kw)
+        if SAVE:
+            fig.savefig(
+                fname,
+                bbox_inches="tight",
+                dpi=300,
+                transparent=True,
+            )
+        else:
+            plt.show()
+        plt.close(fig)
+        plt.close("all")
+    except Exception as e:
+        print(f"Error rendering {mnet.name}: {e}")
+        plt.close("all")
+
+
+for i, mnet in tqdm(list(enumerate(networks[:])), desc="Processing networks"):
+    ninfo = mnet.network.generate_network_info()
+
+    fname = BIOCOMP_ROOT / "Plots" / "auto" / "network_diagram" / f"{mnet.name}.svg"
+    make_and_save(
+        mnet=mnet,
+        lib=lib,
+        func=render_network_diagram,
+        fname=fname,
+    )
+
+    # fname = BIOCOMP_ROOT / "Plots" / "auto" / "circuit_schematic" / f"{mnet.name}.svg"
+    # make_and_save(
+    #     mnet=mnet,
+    #     lib=lib,
+    #     func=render_circuit_schematic,
+    #     fname=fname,
+    # )
