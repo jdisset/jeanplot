@@ -2,7 +2,7 @@ from .component import Component, AnchorComponent
 from .container import Container
 from .models import Size, BoxStyle, LayoutConstraints, Offset, Transform, Shadow
 from .connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
-from .svg import LineEndFlat, LineEndCircle, LineEndArrow
+from .svg import LineEndFlat, LineEndCircle, LineEndArrow, SVGElement
 from .curve import CurveDefinition
 from .network_utils import TUInfo, Interaction
 from .style import jstyle
@@ -58,11 +58,21 @@ DEFAULT_TYPES = [
     TUNode,
     NetworkDiagram,
     Text,
+    SVGElement,
 ]
+
+# --- Explicit model rebuilds after all types are defined ---
+Component.model_rebuild(force=True)
+AnchorComponent.model_rebuild(force=True)
+Container.model_rebuild(force=True)
+SVGElement.model_rebuild(force=True)
+Connection.model_rebuild(force=True)
+Text.model_rebuild(force=True)
 
 
 def make_context_from_types(types):
-    return {t.__name__: t for t in types}
+    d = {t.__name__: t for t in types}
+    return d
 
 
 def load_default_theme(force=False):
