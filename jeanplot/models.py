@@ -1,43 +1,44 @@
+# File: jeanplot/models.py
+# -*- coding: utf-8 -*-
 """Core data models for geometry, styling, and layout."""
 
 from typing import Tuple, Optional, Literal, Union, TypeVar, Sequence, Any, Annotated
 from pydantic import BaseModel, Field, model_validator, AliasChoices, BeforeValidator
 import numpy as np
 import logging
+from functools import partial  # used for Field default_factory
 
+# use absolute imports
 from jeanplot.debug import debug_print
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_color(color: Optional[str]) -> Optional[str]:
-    """normalizes a color string to #rrggbb or #rrggbbaa hex format."""
-    if not color or color.lower() == "none":
+def normalize_color(color: Optional[Union[str, Tuple]]) -> Optional[str]:
+    # handles tuple colors too now
+    if not color or (isinstance(color, str) and color.lower() == "none"):
         return None
     try:
-        # use matplotlib to handle various formats (name, rgb, hex)
-        # keep alpha channel if present
-        from matplotlib.colors import to_hex
+        from matplotlib.colors import to_hex  # local import ok here
 
         return to_hex(color, keep_alpha=True)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):  # added attributeerror
         logger.warning(f"could not normalize color '{color}', returning None.")
         return None
 
 
+# types
 LayoutDirection = Literal["row", "column"]
 AlignType = Literal["start", "center", "end", "stretch"]
 DistributeType = Literal["start", "center", "end", "space-between", "space-around", "space-evenly"]
 LineStyleType = Literal["solid", "dashed", "dotted", "custom"]
 LineWidthMode = Literal["point", "data"]
-NormalizedColor = Annotated[str, BeforeValidator(normalize_color)]
+NormalizedColor = Annotated[Optional[str], BeforeValidator(normalize_color)]  # updated annotation
 
 T = TypeVar("T")
 
 
 class Size(BaseModel):
-    """Represents a 2D size."""
-
     width: float = 0.0
     height: float = 0.0
 
@@ -63,23 +64,16 @@ class Size(BaseModel):
 
 
 class Offset(BaseModel):
-    """Defines an offset relative to component/parent dimensions and absolute values."""
-
-    # % of self size (component receiving the offset)
     relative: Tuple[float, float] = (0.0, 0.0)
-    # % of reference size (parent or attachment target)
-    # use reference_relative in code, allow parent_relative as alias during init
     reference_relative: Tuple[float, float] = Field(
         default=(0.0, 0.0), validation_alias=AliasChoices("reference_relative", "parent_relative")
     )
-    # absolute units
     absolute: Tuple[float, float] = (0.0, 0.0)
 
     def compute(
         self, self_dims: Size, reference_dims: Optional[Size] = None
     ) -> Tuple[float, float]:
-        """calculate final offset vector based on self and reference dimensions."""
-        ref_dims = reference_dims or Size()  # use zero size if no reference
+        ref_dims = reference_dims or Size()
         x = (
             self_dims.width * self.relative[0]
             + ref_dims.width * self.reference_relative[0]
@@ -90,8 +84,6 @@ class Offset(BaseModel):
             + ref_dims.height * self.reference_relative[1]
             + self.absolute[1]
         )
-        # removed excessive logging from here
-        # if logger.isEnabledFor(logging.DEBUG): ...
         return x, y
 
     def __repr__(self) -> str:
@@ -111,30 +103,23 @@ class Offset(BaseModel):
 
 
 class Transform(BaseModel):
-    """Transformation matrix components."""
-
     translate: Tuple[float, float] = (0.0, 0.0)
     rotate: float = 0.0  # degrees
     scale: Tuple[float, float] = (1.0, 1.0)
     skew_x: float = 0.0  # degrees
     skew_y: float = 0.0  # degrees
-    # % of component size
     rotation_center: Tuple[float, float] = (0.5, 0.5)
 
     def to_matrix(self, dimensions: Size) -> np.ndarray:
-        """convert to 3x3 homogeneous transform matrix."""
-        # scale
         s_mat = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
-        # skew
         sx_rad, sy_rad = np.radians(self.skew_x), np.radians(self.skew_y)
         skew_mat = np.array([[1, np.tan(sx_rad), 0], [np.tan(sy_rad), 1, 0], [0, 0, 1]])
-        # rotate
         r_mat = np.identity(3)
-        if self.rotate != 0.0:
+        if abs(self.rotate) > 1e-6:
             theta = np.radians(self.rotate)
             cos_t, sin_t = np.cos(theta), np.sin(theta)
             rot = np.array([[cos_t, -sin_t, 0], [sin_t, cos_t, 0], [0, 0, 1]])
-            if dimensions.width > 0 and dimensions.height > 0:
+            if dimensions.width > 1e-6 and dimensions.height > 1e-6:
                 cx = dimensions.width * self.rotation_center[0]
                 cy = dimensions.height * self.rotation_center[1]
                 center_t = np.array([[1, 0, cx], [0, 1, cy], [0, 0, 1]])
@@ -142,22 +127,19 @@ class Transform(BaseModel):
                 r_mat = center_t @ rot @ uncenter_t
             else:
                 r_mat = rot
-        # translate
         t_mat = np.array([[1, 0, self.translate[0]], [0, 1, self.translate[1]], [0, 0, 1]])
-        # combined: T * R * Sk * Sc
-        final_matrix = t_mat @ r_mat @ skew_mat @ s_mat
-        return final_matrix
+        return t_mat @ r_mat @ skew_mat @ s_mat
 
     def __repr__(self) -> str:
         parts = []
         if self.translate != (0.0, 0.0):
             parts.append(f"t={self.translate}")
-        if self.rotate != 0.0:
-            parts.append(f"r={self.rotate}")
+        if abs(self.rotate) > 1e-6:
+            parts.append(f"r={self.rotate:.1f}")
         if self.scale != (1.0, 1.0):
             parts.append(f"s={self.scale}")
-        if self.skew_x != 0.0 or self.skew_y != 0.0:
-            parts.append(f"sk=({self.skew_x},{self.skew_y})")
+        if abs(self.skew_x) > 1e-6 or abs(self.skew_y) > 1e-6:
+            parts.append(f"sk=({self.skew_x:.1f},{self.skew_y:.1f})")
         if self.rotation_center != (0.5, 0.5):
             parts.append(f"rc={self.rotation_center}")
         return f"Transform({', '.join(parts)})" if parts else "Transform()"
@@ -167,9 +149,7 @@ class Transform(BaseModel):
 
 
 class BorderStyle(BaseModel):
-    """Border styling properties."""
-
-    border_color: Optional[str] = None
+    border_color: NormalizedColor = None
     border_width: float = 0.0
     border_width_mode: LineWidthMode = "data"
     border_style: LineStyleType = "solid"
@@ -179,8 +159,6 @@ class BorderStyle(BaseModel):
 
 
 class MarginPadding(BaseModel):
-    """Margin and padding properties (top, right, bottom, left)."""
-
     margin: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     padding: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
 
@@ -217,11 +195,9 @@ class MarginPadding(BaseModel):
         return self.padding[3]
 
     def content_inset(self) -> Tuple[float, float, float, float]:
-        """Returns the padding tuple (top, right, bottom, left)."""
         return self.padding
 
     def content_box(self, bounds: Size) -> Tuple[float, float]:
-        """Calculates the content area size within given bounds."""
         inset = self.content_inset()
         return (
             max(0, bounds.width - inset[1] - inset[3]),
@@ -230,26 +206,20 @@ class MarginPadding(BaseModel):
 
 
 class Shadow(BaseModel):
-    """Shadow styling properties."""
-
     offset_x: float = 0.0
     offset_y: float = 0.0
     blur_radius: float = 3.0
     spread: float = 0.0
-    color: str = "#00000080"
+    color: NormalizedColor = "#00000080"
     resolution: float = 1.0
 
 
 class BoxStyle(BorderStyle, MarginPadding):
-    """Combined styling for borders, margins, padding, background, and shadow."""
-
-    background_color: Optional[str] = None
+    background_color: NormalizedColor = None
     shadow: Optional[Shadow] = None
 
 
 class LayoutConstraints(BaseModel):
-    """Defines how children are arranged within a container."""
-
     direction: LayoutDirection = "row"
     align_items: AlignType = "start"
     justify_content: DistributeType = "start"
@@ -261,3 +231,11 @@ class LayoutConstraints(BaseModel):
 
     def __str__(self) -> str:
         return self.__repr__()
+
+
+class TextMetrics(BaseModel):
+    """stores measured text metrics at a reference size."""
+
+    ref_font_size: float = 10.0
+    width_points: float = 0.0
+    height_points: float = 0.0
