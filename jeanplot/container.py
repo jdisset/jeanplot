@@ -13,7 +13,7 @@ from jeanplot.component import Component, AnchorComponent
 from jeanplot.models import Size, LayoutConstraints, BoxStyle, Offset
 from jeanplot.debug import debug_print
 from jeanplot.style import jstyle
-from jeanplot.renderer import BaseRenderer  # Use explicit import with BaseRenderer
+from jeanplot.renderer import BaseRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class Container(Component):
     """component that holds, lays out, and renders child components."""
 
-    children: List[Component] = Field(default_factory=list)
+    children: list[Component] = Field(default_factory=list)
     layout: LayoutConstraints = Field(default_factory=LayoutConstraints)
 
     _layout_children_cache: List[Component] = PrivateAttr(default_factory=list)
@@ -29,41 +29,48 @@ class Container(Component):
 
     def add_child(self, child: Component):
         """add child component and set parent link."""
-        if child not in self.children:
+        is_already_present = any(child is c for c in self.children)
+        if not is_already_present:
             self.children.append(child)
         child.parent = self
-        # add anchors to main children list if they are added this way
-        # but usually they are added via anchor_points field directly
-        if isinstance(child, AnchorComponent) and child not in self.anchor_points:
-            self.anchor_points.append(child)
+        if isinstance(child, AnchorComponent):
+            is_in_anchors = any(child is a for a in self.anchor_points)
+            if not is_in_anchors:
+                self.anchor_points.append(child)
 
     def add_children(self, children: Sequence[Component]):
         for child in children:
             self.add_child(child)
 
     def _prepare_children(self, for_render: bool = False):
-        """
-        categorize children for layout/overlay and ensure parent links.
-        if for_render=True, uses current children list. otherwise uses cache.
-        """
+        """categorize children and ensure parent links."""
         layout_children, overlay_children = [], []
-        # combine explicitly added children and anchors
-        all_children = self.children + [a for a in self.anchor_points if a not in self.children]
+        layout_ids, overlay_ids = set(), set()
 
-        for child in all_children:
-            if child:
-                child.parent = self  # ensure parent link
-                if child.is_overlay or child.attached_to:
-                    if child not in overlay_children:
-                        overlay_children.append(child)
-                else:
-                    if child not in layout_children:
-                        layout_children.append(child)
-                # ensure anchors added via anchor_points are also in main list if needed
-                if isinstance(child, AnchorComponent) and child not in self.children:
-                    self.children.append(child)
+        all_children_map = {id(c): c for c in self.children if c}
+        for a in self.anchor_points:
+            if a:
+                all_children_map.setdefault(id(a), a)
 
-        # update cache only if not called specifically for render preparation
+        original_children_ids = {id(c) for c in self.children if c}
+
+        for child_obj_id, child in all_children_map.items():
+            child.parent = self
+            is_overlay_or_attached = child.is_overlay or child.attached_to
+
+            if is_overlay_or_attached:
+                if child_obj_id not in overlay_ids:
+                    overlay_children.append(child)
+                    overlay_ids.add(child_obj_id)
+            else:
+                if child_obj_id not in layout_ids:
+                    layout_children.append(child)
+                    layout_ids.add(child_obj_id)
+
+            if isinstance(child, AnchorComponent) and child_obj_id not in original_children_ids:
+                self.children.append(child)
+                original_children_ids.add(child_obj_id)
+
         if not for_render:
             self._layout_children_cache = layout_children
             self._overlay_children_cache = overlay_children
@@ -72,19 +79,20 @@ class Container(Component):
 
     def _measure_natural(self, renderer: Optional[BaseRenderer]) -> Size:
         """calculates natural size based on layout children."""
-        # prepare children and populate caches for layout phase
         self._prepare_children(for_render=False)
 
-        # measure all children first (layout, overlay, anchors)
         all_measurable_children = self._layout_children_cache + self._overlay_children_cache
         for child in all_measurable_children:
             if child:
+                # apply style *before* measuring each child
+                jstyle.apply(child)
                 child.measure_and_layout(renderer)
 
         natural_width, natural_height = 0.0, 0.0
-        # use cache for natural size calculation based on layout children only
         layout_children = self._layout_children_cache
-        insets = self.style.content_inset()  # t, r, b, l
+        # --- Ensure style exists before accessing padding ---
+        container_style = self.style if self.style is not None else BoxStyle()
+        insets = container_style.content_inset()  # t, r, b, l
 
         if not layout_children:
             natural_width, natural_height = insets[1] + insets[3], insets[0] + insets[2]
@@ -92,8 +100,10 @@ class Container(Component):
             is_row = self.layout.direction == "row"
             main_axis_size, cross_axis_size = 0.0, 0.0
             for i, child in enumerate(layout_children):
+                # --- safeguard: use default BoxStyle if child.style is None ---
+                child_style = child.style if child.style is not None else BoxStyle()
                 child_dims = child._dimensions
-                margins = child.style.margin  # t, r, b, l
+                margins = child_style.margin  # t, r, b, l
                 if is_row:
                     main_axis_size += child_dims.width + margins[3] + margins[1]
                     cross_axis_size = max(
@@ -114,27 +124,27 @@ class Container(Component):
             natural_height += insets[0] + insets[2]
 
         natural_width, natural_height = max(0.0, natural_width), max(0.0, natural_height)
+        # self._log_debug(f"_measure_natural: natural size={natural_width:.1f}x{natural_height:.1f}") # optional debug
         return Size(width=natural_width, height=natural_height)
 
     def _layout_children(self, renderer: Optional[BaseRenderer]):
         """positions layout children and triggers layout in child containers."""
-        # prepare children and update caches again (important after _measure_natural)
         layout_children, overlay_children = self._prepare_children(for_render=False)
 
         if not layout_children:
-            # trigger layout for overlay containers even if no layout children
             self._layout_overlay_containers(overlay_children, renderer)
             return
 
-        content_w, content_h = self.style.content_box(self._dimensions)
-        content_x, content_y = self.style.padding[3], self.style.padding[0]
+        # --- Ensure style exists before accessing padding/content_box ---
+        container_style = self.style if self.style is not None else BoxStyle()
+        content_w, content_h = container_style.content_box(self._dimensions)
+        content_x, content_y = container_style.padding[3], container_style.padding[0]
 
         stretched_children = self._calculate_and_apply_stretch(
             content_w, content_h, layout_children
         )
         self._position_layout_children(content_x, content_y, content_w, content_h, layout_children)
 
-        # re-run internal layout for all children that are containers, including overlays
         all_children = layout_children + overlay_children
         for child in all_children:
             if isinstance(child, Container):
@@ -160,20 +170,18 @@ class Container(Component):
         available_cross = content_h if is_row else content_w
 
         for child in layout_children:
+            # --- safeguard: use default BoxStyle if child.style is None ---
+            child_style = child.style if child.style is not None else BoxStyle()
             current_dims = child._dimensions
             min_dims, max_dims = child.min_dimensions, child.max_dimensions
-            margin_t, margin_r, margin_b, margin_l = child.style.margin
+            margin_t, margin_r, margin_b, margin_l = child_style.margin  # use guarded style
             margins_cross = (margin_t + margin_b) if is_row else (margin_l + margin_r)
             target_cross_size = max(0, available_cross - margins_cross)
             min_cross, max_cross = getattr(min_dims, cross_axis), getattr(max_dims, cross_axis)
 
-            final_cross_size = (
-                current_dims.height
-            )  # Default to avoid errors if cross_axis isn't height
-            if cross_axis == "height":
-                final_cross_size = current_dims.height
-            elif cross_axis == "width":
-                final_cross_size = current_dims.width
+            final_cross_size = getattr(
+                current_dims, cross_axis, 0.0
+            )  # handle potential missing attr
 
             if min_cross <= target_cross_size <= max_cross:
                 final_cross_size = target_cross_size
@@ -183,14 +191,14 @@ class Container(Component):
                 final_cross_size = max_cross
 
             min_main, max_main = getattr(min_dims, main_axis), getattr(max_dims, main_axis)
-            current_main = getattr(current_dims, main_axis)
+            current_main = getattr(current_dims, main_axis, 0.0)  # handle potential missing attr
             final_main_size = min(max(min_main, current_main), max_main)
 
             needs_update = False
-            if abs(getattr(current_dims, cross_axis) - final_cross_size) > 1e-6:
+            if abs(getattr(current_dims, cross_axis, 0.0) - final_cross_size) > 1e-6:
                 setattr(child._dimensions, cross_axis, final_cross_size)
                 needs_update = True
-            if abs(getattr(current_dims, main_axis) - final_main_size) > 1e-6:
+            if abs(getattr(current_dims, main_axis, 0.0) - final_main_size) > 1e-6:
                 setattr(child._dimensions, main_axis, final_main_size)
                 needs_update = True
 
@@ -212,9 +220,9 @@ class Container(Component):
         cross_margin_start_idx, cross_margin_end_idx = (0, 2) if is_row else (3, 1)
 
         total_child_main_size_with_margins = sum(
-            getattr(child._dimensions, size_attr)
-            + child.style.margin[margin_start_idx]
-            + child.style.margin[margin_end_idx]
+            getattr(child._dimensions, size_attr, 0.0)  # handle missing attr
+            + (child.style.margin[margin_start_idx] if child.style else 0)  # safeguard style access
+            + (child.style.margin[margin_end_idx] if child.style else 0)  # safeguard style access
             for child in layout_children
         )
         total_gap = self.layout.gap * max(0, num_children - 1)
@@ -243,8 +251,11 @@ class Container(Component):
             if child.attached_to or child.is_overlay:
                 continue
 
+            # --- safeguard: use default BoxStyle if child.style is None ---
+            child_style = child.style if child.style is not None else BoxStyle()
             child_dims = child._dimensions
-            child_margins = child.style.margin
+            child_margins = child_style.margin  # use guarded style
+
             start_margin = child_margins[margin_start_idx]
             main_pos = current_pos_main + start_margin
             if i > 0:
@@ -255,7 +266,7 @@ class Container(Component):
             cross_margins_total = (
                 child_margins[cross_margin_start_idx] + child_margins[cross_margin_end_idx]
             )
-            cross_size = getattr(child_dims, cross_size_attr)
+            cross_size = getattr(child_dims, cross_size_attr, 0.0)  # handle missing attr
             align = self.layout.align_items
 
             if align in ("center", "middle"):
@@ -268,7 +279,7 @@ class Container(Component):
                 cross_pos = (
                     cross_pos_start + cross_avail - child_margins[cross_margin_end_idx] - cross_size
                 )
-            else:  # 'start', 'stretch', 'top', 'left'
+            else:
                 cross_pos = cross_pos_start + child_margins[cross_margin_start_idx]
 
             child_origin_x = main_pos if is_row else cross_pos
@@ -276,14 +287,16 @@ class Container(Component):
             child._layout_origin_in_parent = (child_origin_x, child_origin_y)
 
             current_pos_main = (
-                main_pos + getattr(child_dims, size_attr) + child_margins[margin_end_idx]
-            )
+                main_pos + getattr(child_dims, size_attr, 0.0) + child_margins[margin_end_idx]
+            )  # handle missing attr
 
     def measure_and_layout(self, renderer: Optional[BaseRenderer] = None) -> Size:
-        """coordinates the measurement and layout process, ensuring Size is returned."""
+        """coordinates measurement/layout, ensuring Size return."""
         comp_id_str = self.id or self.__class__.__name__
         try:
-            self._apply_style()
+            # apply style to self *first* before measuring children
+            # self._apply_style() in Component now does this
+            Component._apply_style(self)
             self._resolve_attachment()
             self._natural_dimensions = self._measure_natural(renderer)
             self._dimensions = self._apply_constraints(self._natural_dimensions)
@@ -292,14 +305,12 @@ class Container(Component):
             logger.error(
                 f"exception during measure_and_layout for {comp_id_str}: {e}", exc_info=True
             )
-            # return a default Size on error to prevent None propagation
-            self._dimensions = self._apply_constraints(Size())  # ensure dimensions is a Size object
-        # ensure _dimensions is always a Size object before returning
+            self._dimensions = self._apply_constraints(Size())
         if not isinstance(self._dimensions, Size):
             logger.error(
                 f"measure_and_layout for {comp_id_str} resulted in non-Size _dimensions: {type(self._dimensions)}. Fixing."
             )
-            self._dimensions = Size()  # fallback
+            self._dimensions = Size()
         return self._dimensions
 
     def render(self, renderer: BaseRenderer, context: Any, matrix: np.ndarray):
@@ -307,34 +318,42 @@ class Container(Component):
         if not self.show:
             return
 
-        # Render container background/border first
+        # ensure style exists before accessing properties
+        container_style = self.style if self.style is not None else BoxStyle()
         if (
-            self.style.background_color
-            or (self.style.border_color and self.style.border_width > 0)
-            or self.style.shadow
+            container_style.background_color
+            or (container_style.border_color and container_style.border_width > 0)
+            or container_style.shadow
         ):
-            renderer.render_rectangle(context, self._dimensions, self.style, matrix, component=self)
+            renderer.render_rectangle(
+                context, self._dimensions, container_style, matrix, component=self
+            )
+
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
-        # **Fix:** Get the fresh list of all current children (including overlays added late)
-        all_children = self.children + [a for a in self.anchor_points if a not in self.children]
+        all_children_map = {id(c): c for c in self.children if c}
+        for a in self.anchor_points:
+            if a:
+                all_children_map.setdefault(id(a), a)
 
-        # Filter, sort by z-index, and render
-        visible_children = [child for child in all_children if child and child.show]
+        visible_children = [child for child in all_children_map.values() if child and child.show]
         visible_children.sort(key=lambda c: getattr(c, "z_index", 0))
 
         if visible_children:
             for child in visible_children:
-                # recalculate world matrix for rendering based on parent's current matrix
-                # Important: compute_world_matrix handles whether child uses layout origin or attachment offset
-                child_world_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
-                child.render(renderer, context, child_world_matrix)
+                # check if child has compute_world_matrix method before calling
+                if hasattr(child, "compute_world_matrix") and callable(child.compute_world_matrix):
+                    child_world_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
+                    child.render(renderer, context, child_world_matrix)
+                else:
+                    logger.warning(
+                        f"child component {type(child)} (id={getattr(child, 'id', '?')}) lacks compute_world_matrix, skipping render."
+                    )
 
 
-# --- Explicitly rebuild models ---
-# Need Component for type hints
-from .component import Component, Overlay
+# --- explicit model rebuilds ---
+from jeanplot.component import Component, Overlay  # ensure base types are defined
 
 Component.model_rebuild(force=True)
 Container.model_rebuild(force=True)
