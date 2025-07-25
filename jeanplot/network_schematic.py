@@ -25,7 +25,6 @@ from jeanplot.genetic_elements import (
     ERN5pRecog,
     GeneticPart,
     FluoMarker,
-    PartInfo,
 )
 from jeanplot.connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
 from jeanplot.svg import LineEndFlat
@@ -37,6 +36,7 @@ from jeanplot.network_utils import (
     _get_source_id,
     TUInfo,
     Interaction,
+    PartInfo,
 )
 from jeanplot.style import jstyle
 from jeanplot.debug import debug_print, get_logger
