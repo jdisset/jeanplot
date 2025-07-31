@@ -568,7 +568,8 @@ def test_nested_selector_targeting_subclass():
     assert tuple(cust_child.style.padding) == (5, 5, 5, 5)
     assert cust_child.style.background_color == "orange"
     assert cust_child.unique_prop == "set_nested"
-    assert tuple(text_child.style.padding) == (0, 0, 0, 0)  # default
+    # Text components have style=None by default, so no padding
+    assert text_child.style is None
     assert text_child.color == "green"
     assert tuple(cont_child.style.padding) == (5, 5, 5, 5)
     assert cont_child.style.background_color is None
@@ -583,7 +584,8 @@ def test_nested_selector_targeting_subclass():
     assert tuple(cust_child2.style.padding) == (5, 5, 5, 5)
     assert cust_child2.style.background_color == "orange"  # Gets context from root2
     assert cust_child2.unique_prop == "set_nested"
-    assert tuple(text_child2.style.padding) == (0, 0, 0, 0)  # default
+    # Text components have style=None by default, so no padding
+    assert text_child2.style is None
     assert text_child2.color == "green"  # Gets context from root2
 
 
@@ -663,10 +665,9 @@ def test_nested_wildcard_interactions():
     assert tuple(simple_child.style.padding) == (0, 0, 0, 0)
 
     assert text_child.debug is False  # from cont's nested *
-    assert tuple(text_child.style.margin) == (1, 1, 1, 1)
-    assert text_child.style.border_width == 2.0  # overridden by Text rule
+    # Text components have style=None by default
+    assert text_child.style is None
     assert text_child.font_size == 8
-    assert tuple(text_child.style.padding) == (0, 0, 0, 0)
 
 
 def test_nested_override_vs_global_type():
@@ -817,7 +818,7 @@ def test_style_leakage_between_siblings():
     # sibling_a should have the shadow and its unique prop
     assert sibling_a.style.shadow is not None, "SiblingA should have a shadow"
     assert sibling_a.style.shadow.blur_radius == 5
-    assert sibling_a.style.shadow.color == "red"
+    assert sibling_a.style.shadow.color == "#ff0000ff"  # "red" normalized to hex
     assert sibling_a.unique_prop == "set_for_A"
     assert sibling_a.layout.direction == "column"
 

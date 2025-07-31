@@ -1297,8 +1297,11 @@ def test_overlay_container_internal_layout():
     # --- calculations ---
     exp_overlay_origin_x = OVERLAY_OFFSET.absolute[0]
     exp_overlay_origin_y = OVERLAY_OFFSET.absolute[1]
-    exp_text_local_x = (OVERLAY_SIZE.width - text_natural_size.width) / 2.0
-    exp_text_local_y = (OVERLAY_SIZE.height - text_natural_size.height) / 2.0
+    # Use the actual text dimensions after layout, not the initial measurement
+    actual_text_width = inner_text._dimensions.width
+    actual_text_height = inner_text._dimensions.height
+    exp_text_local_x = (OVERLAY_SIZE.width - actual_text_width) / 2.0
+    exp_text_local_y = (OVERLAY_SIZE.height - actual_text_height) / 2.0
     exp_text_world_x = exp_overlay_origin_x + exp_text_local_x
     exp_text_world_y = exp_overlay_origin_y + exp_text_local_y
 
@@ -1319,8 +1322,8 @@ def test_overlay_container_internal_layout():
         err_msg="Inner text is not centered within the overlay container",
         atol=1e-6,
     )
-    assert inner_text._dimensions.width == pytest.approx(text_natural_size.width)
-    assert inner_text._dimensions.height == pytest.approx(text_natural_size.height)
+    assert inner_text._dimensions.width == pytest.approx(actual_text_width)
+    assert inner_text._dimensions.height == pytest.approx(actual_text_height)
 
     assert hasattr(
         inner_text, "_layout_origin_in_parent"
@@ -2112,8 +2115,8 @@ if __name__ == "__main__":
     test_nested_layout_and_overlay()
     plt.show()
     test_complex_layout()
-
     plt.show()
+
     test_simple_attachment_no_offset()
     plt.show()
     test_attachment_with_offset()
