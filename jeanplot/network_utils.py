@@ -26,6 +26,7 @@ class TUInfo(BaseModel):
     aggregation_ratio_label: str = ""
     marker_in_l2: bool = False
     parts: List[PartInfo] = []
+    cotx_name: Optional[str] = None
 
 
 class Interaction(BaseModel):
@@ -87,8 +88,16 @@ def get_tu_informations(network: Any) -> Dict[str, TUInfo]:
     for agg_id, tu_ids_in_agg in aggr_to_tus.items():
         try:
             agg_node_series = network.compute_graph.loc[agg_id]
-            raw_ratios = agg_node_series.get("extra", {}).get("ratios")
+            extra_data = agg_node_series.get("extra", {})
+            raw_ratios = extra_data.get("ratios") if isinstance(extra_data, dict) else None
+            cotx_name = extra_data.get("name") if isinstance(extra_data, dict) else None
             output_tu_ids = agg_node_series.get("cdg_output", [])
+            
+            # First, assign cotx_name to all TUs in this aggregation
+            if cotx_name:
+                for tu_id in tu_ids_in_agg:
+                    if tu_id in tus:
+                        tus[tu_id].cotx_name = cotx_name
 
             if raw_ratios is None or not isinstance(raw_ratios, list):
                 continue

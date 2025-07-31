@@ -488,6 +488,25 @@ class Connection(Overlay):
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
+    def _get_world_connection_points(self) -> Optional[Tuple[Tuple[float, float], Tuple[float, float], CurveDefinition]]:
+        """
+        Get world-space start and end points of the connection.
+        Returns (start_point, end_point, active_curve) in world coordinates or None if not calculated.
+        """
+        # First ensure endpoints are resolved
+        if not self._resolve_connection_endpoints_late():
+            return None
+            
+        # Get the world positions from the render targets
+        if self._render_start_target and self._render_end_target:
+            world_start = self._get_offset_world_position(self._render_start_target, self._render_start_offset)
+            world_end = self._get_offset_world_position(self._render_end_target, self._render_end_offset)
+            
+            if world_start and world_end and self._render_active_curve:
+                return (world_start, world_end, self._render_active_curve)
+        
+        return None
+
     def _log_debug(self, message: str, data: Any = None):
         """concise debug logging with connection identity"""
         start_id = "?"

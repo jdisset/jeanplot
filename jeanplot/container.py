@@ -131,20 +131,19 @@ class Container(Component):
         """positions layout children and triggers layout in child containers."""
         layout_children, overlay_children = self._prepare_children(for_render=False)
 
-        if not layout_children:
-            self._layout_overlay_containers(overlay_children, renderer)
-            return
-
         # --- Ensure style exists before accessing padding/content_box ---
         container_style = self.style if self.style is not None else BoxStyle()
         content_w, content_h = container_style.content_box(self._dimensions)
         content_x, content_y = container_style.padding[3], container_style.padding[0]
 
-        stretched_children = self._calculate_and_apply_stretch(
-            content_w, content_h, layout_children
-        )
-        self._position_layout_children(content_x, content_y, content_w, content_h, layout_children)
+        # Position layout children if any exist
+        if layout_children:
+            stretched_children = self._calculate_and_apply_stretch(
+                content_w, content_h, layout_children
+            )
+            self._position_layout_children(content_x, content_y, content_w, content_h, layout_children)
 
+        # Trigger layout pass for all child containers (both layout and overlay)
         all_children = layout_children + overlay_children
         for child in all_children:
             if isinstance(child, Container):

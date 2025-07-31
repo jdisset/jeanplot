@@ -212,18 +212,40 @@ class NetworkDiagram(Container):
             node_class = node_class_map[node_type]
             if node_class is AggregationNode:
                 node_label = None
-
-                # tu_infos = get_tu_informations(self.network)
-                # markers = set(
-                #     tu_infos[co].cotx_marker for co in row.get("cdg_output", []) if co in tu_infos
-                # )
-                # if len(markers) == 1:
-                #     marker = markers.pop()
-                #     if marker:
-                #         style_class.append(marker)
-                #         node_label = marker
-
                 style_class = ["aggregation"]
+                
+                # Get the marker for styling
+                tu_infos = get_tu_informations(self.network)
+                
+                # For aggregation nodes, we need to look at the TUs from the connected source nodes
+                markers = set()
+                output_to = row.get("output_to", [])
+                for target_id, _ in output_to:
+                    if target_id in self.network.compute_graph.index:
+                        target_row = self.network.compute_graph.loc[target_id]
+                        if target_row["type"] == "source":
+                            # Get TUs from this source node
+                            source_cdg_outputs = target_row.get("cdg_output", [])
+                            for cdg_idx in source_cdg_outputs:
+                                # Look up the TU ID from the central dogma graph
+                                if cdg_idx in self.network.central_dogma_graph.index:
+                                    tu_id = self.network.central_dogma_graph.loc[cdg_idx]["tu_id"]
+                                    if isinstance(tu_id, list) and tu_id:
+                                        tu_id = tu_id[0]
+                                    if tu_id in tu_infos and tu_infos[tu_id].cotx_marker:
+                                        markers.add(tu_infos[tu_id].cotx_marker)
+                if len(markers) == 1:
+                    marker = markers.pop()
+                    if marker:
+                        style_class.append(marker)
+                        node_label = marker  # Default to marker name
+                        
+                        # Check if there's a cotransfection name to use instead
+                        extra_data = row.get("extra", {})
+                        cotx_name = extra_data.get("name", None) if isinstance(extra_data, dict) else None
+                        if cotx_name:
+                            # Replace the marker name with the cotx name
+                            node_label = cotx_name
 
                 return AggregationNode(
                     style_class=style_class, node_label=node_label, collapsed=True, **kw

@@ -232,6 +232,7 @@ class NetworkGeneticSchematic(Container):
     show_all_tus: bool = False
     grid_gap: Tuple[float, float] = (40.0, 20.0)
     connection_style: Literal["orthogonal", "bezier", "straight"] = "orthogonal"
+    node_type: Literal["translation", "transcription"] = "translation"
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(align_items="start", justify_content="start")
     )
@@ -269,7 +270,23 @@ class NetworkGeneticSchematic(Container):
             return
         self._log_debug("processing network data...")
         self._tu_infos = get_tu_informations(self.network)
-        raw_grid_layers = get_tu_grid_layout(self.network)
+        raw_grid_layers = get_tu_grid_layout(self.network, node_type=self.node_type)
+        
+        # Find TUs that are missing from the grid (those without translation nodes)
+        all_tus = set(self._tu_infos.keys())
+        tus_in_grid = set()
+        for layer in raw_grid_layers:
+            tus_in_grid.update(layer)
+        missing_tus = all_tus - tus_in_grid
+        
+        # Add missing TUs to appropriate layers based on their connections
+        if missing_tus and raw_grid_layers:
+            # For now, add missing TUs to the first layer where they have connections
+            # In this case, x2_a+ and b_a- should be in layer 0 with other source TUs
+            self._log_debug(f"Adding missing TUs to grid: {missing_tus}")
+            # Add to first layer (they're all source-level TUs)
+            raw_grid_layers[0].extend(sorted(missing_tus))
+        
         optimized_layers = optimize_grid_for_source_adjacency(raw_grid_layers, self._tu_infos)
         self._interactions = get_interactions(self.network)
 
@@ -501,9 +518,13 @@ class NetworkGeneticSchematic(Container):
             # determine marker for styling from the marker_tu_info
             annotation_marker = marker_tu_info.cotx_marker if marker_tu_info else None
 
-            # start with the marker name if available (prioritize actual marker)
+            # Use cotx_name if available, otherwise fall back to marker name
             tag_str_parts = []
-            if annotation_marker:
+            if tag_label_tu_info.cotx_name:
+                # If we have a cotx name, use it as the primary label
+                tag_str_parts.append(tag_label_tu_info.cotx_name)
+            elif annotation_marker:
+                # Otherwise use the marker name
                 tag_str_parts.append(annotation_marker)
             if tag_label_tu_info.aggregation_ratio_label:
                 tag_str_parts.append(tag_label_tu_info.aggregation_ratio_label)

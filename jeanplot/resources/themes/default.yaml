@@ -234,11 +234,12 @@ FluoNode:
   AggregationNode[style_class=~${e[0]}]:
     style.background_color: ${e[1]['light']}
   #   style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01 }
-  #   Text:
-  #     color: ${e[1]['dark']}
-  #     font_size: 6
-  #     vertical_align: middle
-  #     align: center
+    Text:
+      color: "#222" 
+      font_size: 6    
+      vertical_align: middle
+      align: center
+      offset: !Offset { relative: [0, 2] }  # Offset down a bit
 
   TUNode[style_class=~${e[0]}]:
     # style.background_color: ${e[1]['light']}

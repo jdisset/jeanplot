@@ -129,7 +129,7 @@ def make_and_save(mnet, lib, func, fname, **kw):
         plt.close("all")
 
 
-for i, mnet in tqdm(list(enumerate(networks[:])), desc="Processing networks"):
+for i, mnet in tqdm(list(enumerate(networks[:2])), desc="Processing networks"):
     ninfo = mnet.network.generate_network_info()
 
     fname = BIOCOMP_ROOT / "Plots" / "auto" / "network_diagram" / f"{mnet.name}.svg"

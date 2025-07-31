@@ -11,6 +11,7 @@ from jeanplot.container import Container
 from jeanplot.text import Text
 from jeanplot.models import LayoutConstraints, BoxStyle, Size, Shadow
 from jeanplot.matplotlib_renderer import MatplotlibRenderer
+from jeanplot.network_cotx_utils import inject_cotx_names_into_compute_graph
 
 
 def render_network_card(mnet: Any, lib: Any, ax: Axes, show_recipe: bool = False):
@@ -234,10 +235,18 @@ def render_network_card(mnet: Any, lib: Any, ax: Axes, show_recipe: bool = False
     renderer.render_component(ax, root, adjust_lims=True)
 
 
-def render_network_diagram(mnet: Any, lib: Any, ax: Axes):
+def render_network_diagram(mnet: Any, lib: Any, ax: Axes, style=None, **kw):
+    from jeanplot.style import jstyle
+
     mnet.build(lib)
     net = mnet.network
-    diagram = NetworkDiagram(network=net)
+
+    jstyle.update(style or {})
+
+    # Inject cotransfection names into the compute graph
+    inject_cotx_names_into_compute_graph(net)
+
+    diagram = NetworkDiagram(network=net, **kw)
 
     root = Container(
         children=[diagram],
@@ -247,16 +256,21 @@ def render_network_diagram(mnet: Any, lib: Any, ax: Axes):
             align_items="stretch",
         ),
     )
+    jstyle.apply(root)
     ax.set_aspect("equal")
     ax.axis("off")
     renderer = MatplotlibRenderer()
     renderer.render_component(ax, root, adjust_lims=True)
 
 
-def render_circuit_schematic(mnet: Any, lib: Any, ax: Axes):
+def render_circuit_schematic(mnet: Any, lib: Any, ax: Axes, **kw):
     mnet.build(lib)
     net = mnet.network
-    schema = NetworkGeneticSchematic(network=net)
+
+    # Inject cotransfection names into the compute graph
+    inject_cotx_names_into_compute_graph(net)
+
+    schema = NetworkGeneticSchematic(network=net, **kw)
 
     root = Container(
         children=[schema],
