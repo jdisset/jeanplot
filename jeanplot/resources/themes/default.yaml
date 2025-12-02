@@ -135,7 +135,8 @@ TranscriptionUnit:
       reference_relative: [0, 1.3]
 
 SourceAnnotation:
-  style.padding: [15, 15, 17, 15]
+  style.padding: [18, 18, 20, 18]
+  style.margin: [4, 4, 4, 4]
   style.border_color: *border_color
   style.border_width: 1
   style.corner_radius: 5
@@ -425,7 +426,69 @@ NetworkDiagram:
       radius: 1.5
       z-index: 10
 
-    
+
+  Connection[style_class=dst-deadend]:
+    end_offset: !Offset { reference_relative: [0.5, 0.5] }
+
+  Connection[style_class=dst-source]:
+    end_offset: !Offset { reference_relative: [0.5, 0.5] }
+    curve_type: !StraightCurve {}
+
+
+  Container[style_class=layer]:
+    layout.gap: 10
+    layout.direction: column
+    layout.align_items: center
+    layout.justify_content: center
+
+  Container[style_class=input_layer]:
+    layout.gap: 15
+
+  Container[style_class=auto_layer]:
+    style.padding: [0, 0, 0, 0]
+
+  Container[style_class=output_layer]:
+    style.padding: [0, 0, 0, 20]
+
+  Container[style_class=main_layer]:
+    layout.direction: column
+    layout.align_items: center
+    layout.justify_content: center
+    style.margin: [0, 0, 0, 0]
+    layout.gap: 20
+
+  Text[style_class=layer_title]:
+    color: "#777"
+    font_size: 7
+
+
+# NetworkDiagramV2 uses the same styles as NetworkDiagram
+NetworkDiagramV2:
+
+  layout.gap: 25
+  layout.direction: row
+  layout.align_items: center
+  layout.justify_content: center
+
+
+  Connection[style_class=comp-connection]:
+    color: ${theme.comp_connection_color}
+    line_width: 1
+    start_offset: !Offset { reference_relative: [0.99, 0.5] }
+    end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
+    curve_type: !SimpleBezierCurve
+      start_mode: vector
+      end_mode: vector
+      start_vector: [20, 0]
+      end_vector: [-15, 0]
+
+    end_cap: !LineEndCircle
+      fill_color: ${theme.comp_connection_color}
+      stroke_width: 0
+      radius: 1.5
+      z-index: 10
+
+
   Connection[style_class=dst-deadend]:
     end_offset: !Offset { reference_relative: [0.5, 0.5] }
 

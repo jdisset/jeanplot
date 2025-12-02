@@ -429,6 +429,128 @@ class MatplotlibRenderer(BaseRenderer):
                 if is_data_width:
                     self.track_patch(main_patch, scaled_width_data_for_tracking)
 
+    def render_polygon(
+        self, context: Axes, path: List[Tuple[float, float]], style: BoxStyle, matrix: np.ndarray, component=None
+    ):
+        """Render a polygon path with the given style (border only, no fill)."""
+        if len(path) < 3:
+            return
+
+        transform = mtransforms.Affine2D(matrix=matrix) + context.transData
+        edgecolor = style.border_color or "none"
+        linewidth_data = style.border_width
+        width_mode = getattr(style, "border_width_mode", "data")
+
+        if edgecolor == "none" or linewidth_data <= 0:
+            return
+
+        # create matplotlib path from points
+        vertices = list(path)
+        if vertices[-1] != vertices[0]:
+            vertices.append(vertices[0])  # close the path
+
+        codes = [MplPath.MOVETO] + [MplPath.LINETO] * (len(vertices) - 2) + [MplPath.CLOSEPOLY]
+        mpl_path = MplPath(vertices, codes)
+
+        initial_lw_points = 0.0
+        scaled_width_data_for_tracking = 0.0
+        is_data_width = width_mode == "data" and linewidth_data > 0
+
+        if is_data_width:
+            matrix_scale = _get_matrix_avg_scale(matrix)
+            scaled_width_data = linewidth_data * matrix_scale
+            scaled_width_data_for_tracking = scaled_width_data
+            initial_lw_points = _linewidth_in_points(scaled_width_data, context)
+        else:
+            initial_lw_points = linewidth_data
+
+        border_path_data = SVGPathData(
+            d="",
+            line_style=style.border_style,
+            dash_array=style.dash_sequence,
+            dash_offset=style.dash_offset,
+        )
+        linestyle = _get_mpl_linestyle(border_path_data)
+
+        with _no_autoscale(context):
+            patch = mpatches.PathPatch(
+                mpl_path,
+                facecolor="none",
+                edgecolor=edgecolor,
+                linewidth=initial_lw_points,
+                linestyle=linestyle,
+                transform=transform,
+                capstyle="round",
+                joinstyle="round",
+            )
+            context.add_patch(patch)
+            if is_data_width:
+                self.track_patch(patch, scaled_width_data_for_tracking)
+
+    def render_edges(
+        self, context: Axes, edges: List[Tuple[Tuple[float, float], Tuple[float, float]]], style: BoxStyle, matrix: np.ndarray, component=None
+    ):
+        """Render multiple line segments (edges) with the given style."""
+        if not edges:
+            return
+
+        transform = mtransforms.Affine2D(matrix=matrix) + context.transData
+        edgecolor = style.border_color or "none"
+        linewidth_data = style.border_width
+        width_mode = getattr(style, "border_width_mode", "data")
+
+        if edgecolor == "none" or linewidth_data <= 0:
+            return
+
+        initial_lw_points = 0.0
+        scaled_width_data_for_tracking = 0.0
+        is_data_width = width_mode == "data" and linewidth_data > 0
+
+        if is_data_width:
+            matrix_scale = _get_matrix_avg_scale(matrix)
+            scaled_width_data = linewidth_data * matrix_scale
+            scaled_width_data_for_tracking = scaled_width_data
+            initial_lw_points = _linewidth_in_points(scaled_width_data, context)
+        else:
+            initial_lw_points = linewidth_data
+
+        border_path_data = SVGPathData(
+            d="",
+            line_style=style.border_style,
+            dash_array=style.dash_sequence,
+            dash_offset=style.dash_offset,
+        )
+        linestyle = _get_mpl_linestyle(border_path_data)
+
+        # build a multi-segment path from all edges
+        vertices = []
+        codes = []
+        for (start, end) in edges:
+            vertices.append(start)
+            vertices.append(end)
+            codes.append(MplPath.MOVETO)
+            codes.append(MplPath.LINETO)
+
+        if not vertices:
+            return
+
+        mpl_path = MplPath(vertices, codes)
+
+        with _no_autoscale(context):
+            patch = mpatches.PathPatch(
+                mpl_path,
+                facecolor="none",
+                edgecolor=edgecolor,
+                linewidth=initial_lw_points,
+                linestyle=linestyle,
+                transform=transform,
+                capstyle="round",
+                joinstyle="round",
+            )
+            context.add_patch(patch)
+            if is_data_width:
+                self.track_patch(patch, scaled_width_data_for_tracking)
+
     def render_svg(self, context: Axes, svg_element: SVGElement, matrix: np.ndarray):
         # render svg content within the component's bounds
         comp_id = svg_element.id or "unknown_svg"
