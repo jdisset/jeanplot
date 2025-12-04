@@ -1,7 +1,7 @@
 """Network genetic schematic for GraphState-based networks"""
 
 from typing import Dict, List, Optional, Any, Tuple, Literal
-from pydantic import Field, PrivateAttr, BaseModel
+from pydantic import Field, PrivateAttr
 from collections import defaultdict
 
 from jeanplot.component import Component
@@ -17,20 +17,7 @@ from jeanplot.network_adapter import get_tu_informations_v2, get_interactions_v2
 from jeanplot.network_utils import Interaction
 from jeanplot.style import jstyle
 from jeanplot.renderer import BaseRenderer
-
-
-class CellRegionInfo(BaseModel):
-    cells: List[Tuple[int, int]]
-
-    def _minmax(self, idx): return min(c[idx] for c in self.cells), max(c[idx] for c in self.cells)
-    @property
-    def r_min(self): return self._minmax(0)[0]
-    @property
-    def r_max(self): return self._minmax(0)[1]
-    @property
-    def c_min(self): return self._minmax(1)[0]
-    @property
-    def c_max(self): return self._minmax(1)[1]
+from jeanplot.grid_utils import CellRegion
 
 
 class SourceAnnotation(Container):
@@ -42,7 +29,7 @@ class SourceAnnotation(Container):
     tag_label: Optional[str] = None
     style_class: list[str] = ["source_annotation"]
     _source_proxy: Optional[Source] = PrivateAttr(default=None)
-    _cell_region: Optional[CellRegionInfo] = PrivateAttr(default=None)
+    _cell_region: Optional[CellRegion] = PrivateAttr(default=None)
     _cell_bounds: Optional[Dict[Tuple[int, int], Tuple[float, float, float, float]]] = PrivateAttr(default=None)
     _original_offset: Optional[Tuple[float, float]] = PrivateAttr(default=None)
     layout: LayoutConstraints = Field(default_factory=lambda: LayoutConstraints(align_items="start", justify_content="start"))
@@ -64,63 +51,6 @@ class SourceAnnotation(Container):
                 tag_cont.parent = self
                 self.add_child(tag_cont)
 
-    def _compute_boundary_edges(self) -> List[Tuple[Tuple[float, float], Tuple[float, float]]]:
-        if not self._cell_region or not self._cell_bounds:
-            return []
-        cells = set(self._cell_region.cells)
-        if not cells:
-            return []
-
-        off_x, off_y = self._original_offset or (0.0, 0.0)
-        edges = []
-
-        def bounds(r, c):
-            if (r, c) not in self._cell_bounds:
-                return None
-            gx0, gy0, gx1, gy1 = self._cell_bounds[(r, c)]
-            return (gx0 - off_x, gy0 - off_y, gx1 - off_x, gy1 - off_y)
-
-        for (r, c) in cells:
-            b = bounds(r, c)
-            if not b:
-                continue
-            x0, y0, x1, y1 = b
-
-            # boundary edges for exposed sides
-            for dr, dc, edge in [(-1, 0, ((x0, y0), (x1, y0))), (0, 1, ((x1, y0), (x1, y1))),
-                                  (1, 0, ((x1, y1), (x0, y1))), (0, -1, ((x0, y1), (x0, y0)))]:
-                if (r + dr, c + dc) not in cells:
-                    edges.append(edge)
-
-            # gap connectors to adjacent cells
-            for dr, dc, cond1, cond2, corner_fn in [
-                (1, 0, (0, -1), (0, 1), lambda b2: (((x0, y1), (b2[0], b2[1])), ((x1, y1), (b2[2], b2[1])))),
-                (0, 1, (-1, 0), (1, 0), lambda b2: (((x1, y0), (b2[0], b2[1])), ((x1, y1), (b2[0], b2[3])))),
-            ]:
-                adj = bounds(r + dr, c + dc)
-                if (r + dr, c + dc) in cells and adj:
-                    e1, e2 = corner_fn(adj)
-                    if (r + cond1[0], c + cond1[1]) not in cells:
-                        edges.append(e1)
-                    if (r + cond2[0], c + cond2[1]) not in cells:
-                        edges.append(e2)
-
-            # concave corners (L-shape)
-            for dr, dc, corner_fn in [
-                (1, 1, lambda b1, b2: ((b1[2], b1[1]), (b1[2], b2[3]), (b2[0], b2[3]))),
-                (1, -1, lambda b1, b2: ((b1[0], b1[1]), (b1[0], b2[3]), (b2[2], b2[3]))),
-                (-1, 1, lambda b1, b2: ((b1[2], b1[3]), (b1[2], b2[1]), (b2[0], b2[1]))),
-                (-1, -1, lambda b1, b2: ((b1[0], b1[3]), (b1[0], b2[1]), (b2[2], b2[1]))),
-            ]:
-                adj1, adj2, diag = (r + dr, c), (r, c + dc), (r + dr, c + dc)
-                if adj1 in cells and adj2 in cells and diag not in cells:
-                    b1, b2 = bounds(*adj1), bounds(*adj2)
-                    if b1 and b2:
-                        p1, corner, p2 = corner_fn(b1, b2)
-                        edges.extend([(p1, corner), (corner, p2)])
-
-        return edges
-
     def render(self, renderer, context, matrix):
         if not self.show:
             return
@@ -129,7 +59,7 @@ class SourceAnnotation(Container):
         rendered_border = False
 
         if has_border and self._cell_region and self._cell_bounds:
-            edges = self._compute_boundary_edges()
+            edges = self._cell_region.compute_boundary_edges(self._cell_bounds, self._original_offset or (0.0, 0.0))
             if edges:
                 border_style = self.style.model_copy(update={"background_color": None, "shadow": None})
                 renderer.render_edges(context, edges, border_style, matrix, component=self)
@@ -362,7 +292,7 @@ class NetworkGeneticSchematicV2(Container):
                 marker=marker, tag_label="\n".join(tag_parts),
                 source_type="plasmid" if tag_tu.in_l2 else "cotx", z_index=-5,
             )
-            anno._cell_region = CellRegionInfo(cells=list(cells))
+            anno._cell_region = CellRegion(cells=list(cells))
             self._annotation_components.append(anno)
 
     def _position_components(self, measured_sizes: Dict[str, Size]):
@@ -415,7 +345,7 @@ class NetworkGeneticSchematicV2(Container):
                            for (r, c) in region.cells if c < cols and r < rows}
             anno._cell_bounds = cell_bounds
 
-            rmin, rmax, cmin, cmax = region.r_min, region.r_max, region.c_min, region.c_max
+            rmin, rmax, cmin, cmax = region.bounds()
             ax, ay = col_x[cmin] + ml, row_y[rmin] + mt
             aw = col_x[cmax] + cell_w[cmax] - col_x[cmin] - ml - mr
             ah = row_y[rmax] + cell_h[rmax] - row_y[rmin] - mt - mb
