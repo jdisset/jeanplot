@@ -30,6 +30,7 @@ class TUData(BaseModel):
     parts: list[PartData] = Field(default_factory=list)
     source_id: str | None = None
     position: int = 0
+    ratio_percent: float | None = None  # percentage of cotx (0-100)
 
 
 class SourceData(BaseModel):
@@ -37,7 +38,7 @@ class SourceData(BaseModel):
     name: str | None = None
     source_type: Literal["plasmid", "linear", "mix"] = "plasmid"
     tu_ids: list[str] = Field(default_factory=list)
-    ratio: float | None = None
+    ratios: list[float] | None = None  # per-TU ratios (normalized, smallest=1)
     marker: str | None = None
 
 

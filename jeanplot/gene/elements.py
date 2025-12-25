@@ -87,6 +87,7 @@ class TranscriptionUnit(Container):
 
     name: str | None = None
     label: Text | None = None
+    ratio_percent: float | None = None  # percentage of cotx (0-100)
     line_thickness: float = 1.0
     line_color: str = "#333333"
     layout: LayoutConstraints = Field(
@@ -97,6 +98,7 @@ class TranscriptionUnit(Container):
     style: BoxStyle = Field(default_factory=lambda: BoxStyle(padding=(5, 0, 5, 0)))
 
     _tu_line: SVGElement | None = PrivateAttr(default=None)
+    _ratio_label: Text | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def setup_label_and_line(self):
@@ -114,6 +116,28 @@ class TranscriptionUnit(Container):
         elif self.label and self.label not in self.children:
             if not any(c.id == self.label.id for c in self.children if c.id and self.label.id):
                 self.add_child(self.label)
+
+        # create ratio percentage label if ratio_percent is set (prepended to name)
+        if self.ratio_percent is not None and self._ratio_label is None:
+            pct = int(round(self.ratio_percent)) if abs(self.ratio_percent - round(self.ratio_percent)) < 0.1 else self.ratio_percent
+            pct_text = f"{pct:.0f}%" if isinstance(pct, int) or pct == int(pct) else f"{pct:.1f}%"
+            # Combine percentage with name: "40% TU_name" (only if not already added)
+            if self.label and "%" not in self.label.text:
+                self.label.text = f"{pct_text} {self.label.text}"
+                self.label.font_weight = "bold"
+                self._ratio_label = self.label  # mark as processed
+            elif not self.label:
+                self._ratio_label = Text(
+                    id=f"ratio_{self.id}",
+                    text=pct_text,
+                    style_class=["tu-ratio-label"],
+                    is_overlay=True,
+                    color="#666666",
+                    font_size=4.5,
+                    font_weight="bold",
+                    offset=Offset(relative=(0.5, 0.0), absolute=(0, -3)),
+                )
+                self.add_child(self._ratio_label)
 
         # create the tu line element (initially zero width)
         if not self._tu_line:
@@ -163,11 +187,26 @@ class TranscriptionUnit(Container):
             self._tu_line.offset = Offset(absolute=(min_x, line_y))
 
 
+def _format_ratios(ratios: list[float] | None) -> str | None:
+    """Format ratios as a colon-separated string like '1:2:1'."""
+    if not ratios:
+        return None
+    # Round to integers if close enough, otherwise 1 decimal
+    parts = []
+    for r in ratios:
+        if abs(r - round(r)) < 0.01:
+            parts.append(str(int(round(r))))
+        else:
+            parts.append(f"{r:.1f}")
+    return ":".join(parts)
+
+
 class Source(Container):
     """represents a source of genetic material (e.g., plasmid, cotransfection mix)."""
 
     source_type: Literal["plasmid", "cotx", "mix", "linear"] | None = "cotx"
     marker: str | None = None
+    ratios: list[float] | None = None  # per-TU ratios (normalized, smallest=1)
     tag_label: str | None = None
 
     layout: LayoutConstraints = Field(
@@ -188,18 +227,32 @@ class Source(Container):
             self.children.remove(self._tag_container)
             self._tag_container = None
 
-        if self.source_type or self.tag_label:
+        if self.source_type or self.tag_label or self.ratios:
             svg_path = None
             if self.source_type:
-                svg_path = {"plasmid": PLASMID_LOGO_PATH, "cotx": AGGREGATION_LOGO_PATH}.get(
-                    self.source_type
-                )
+                svg_path = {
+                    "plasmid": PLASMID_LOGO_PATH,
+                    "cotx": AGGREGATION_LOGO_PATH,
+                    "mix": AGGREGATION_LOGO_PATH,
+                }.get(self.source_type)
+
+            # Build effective label: ratios + marker
+            effective_label = self.tag_label
+            if effective_label is None:
+                parts = []
+                ratio_str = _format_ratios(self.ratios)
+                if ratio_str:
+                    parts.append(ratio_str)
+                if self.marker:
+                    parts.append(self.marker)
+                if parts:
+                    effective_label = " ".join(parts)
 
             tag_elements = []
             if svg_path:
                 tag_elements.append(SVGElement(svg_content=svg_path, id=f"{self.id}_tag_icon"))
-            if self.tag_label is not None:
-                label_lines = self.tag_label.split("\n")
+            if effective_label is not None:
+                label_lines = effective_label.split("\n")
                 for i, line in enumerate(label_lines):
                     # use the correct text component id format if self.id is set
                     text_id = f"{self.id}_tag_label_{i}" if self.id else f"tag_label_{i}"
