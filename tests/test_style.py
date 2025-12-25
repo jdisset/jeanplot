@@ -1,13 +1,9 @@
 import pytest
 from typing import Optional, List
 import copy
-from jeanplot.component import Component
-from jeanplot.container import Container
-from jeanplot.text import Text
-from pydantic import BaseModel, ValidationError, Field
-from jeanplot.style import jstyle
-from jeanplot.models import BoxStyle, Size
-from jeanplot.models import LayoutConstraints
+from pydantic import Field
+
+from jeanplot import Component, Container, Text, jstyle, BoxStyle, LayoutConstraints
 
 # --- Test Fixtures ---
 
@@ -772,7 +768,6 @@ def test_style_leakage_between_siblings():
     for one subclass incorrectly affects a sibling subclass that inherits
     the same base style object reference initially.
     """
-    from jeanplot.models import LayoutConstraints
 
     # --- component definitions for this test ---
     class SiblingBase(Container):

@@ -1,25 +1,30 @@
 # File: tests/test_layout.py
 import pytest
-from jeanplot.component import Component
 import numpy as np
 import matplotlib.pyplot as plt
-from jeanplot.models import Transform, Size, BoxStyle, LayoutConstraints, Offset
-from jeanplot.style import jstyle
-from jeanplot.matplotlib_renderer import MatplotlibRenderer
-from jeanplot.container import Container
-from jeanplot.text import Text
-from jeanplot.component import Overlay, AnchorComponent
 from numpy.testing import assert_allclose
-from jeanplot.debug import set_debug
 import math
-from jeanplot.connector import (
+from pydantic import Field
+
+from jeanplot import (
+    Component,
+    Container,
+    Text,
+    Overlay,
+    AnchorComponent,
     Connection,
     StraightCurve,
-    SimpleBezierCurve,
     OrthogonalCurve,
+    MatplotlibRenderer,
+    Transform,
+    Size,
+    BoxStyle,
+    LayoutConstraints,
+    Offset,
+    jstyle,
+    set_debug,
 )
-from jeanplot.path_utils import find_component_by_path
-from pydantic import BaseModel, Field
+from jeanplot.core.path_utils import find_component_by_path
 
 set_debug(False)
 

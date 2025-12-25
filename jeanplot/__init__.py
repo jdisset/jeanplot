@@ -1,17 +1,49 @@
-from .component import Component, AnchorComponent
-from .container import Container
-from .models import Size, BoxStyle, LayoutConstraints, Offset, Transform, Shadow
-from .connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
-from .svg import LineEndFlat, LineEndCircle, LineEndArrow, SVGElement
-from .curve import CurveDefinition
-from .network_utils import TUInfo, Interaction
-from .style import jstyle
-from .debug import debug_print, get_logger, set_debug
-from .renderer import BaseRenderer
-from .network_schematic import NetworkGeneticSchematic
-from .matplotlib_renderer import MatplotlibRenderer
-from .text import Text
-from .network_diagram import (
+# Core
+from jeanplot.core.component import Component, AnchorComponent, Overlay
+from jeanplot.core.container import Container
+from jeanplot.core.models import Size, BoxStyle, LayoutConstraints, Offset, Transform, Shadow
+from jeanplot.core.connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
+from jeanplot.core.svg import LineEndFlat, LineEndCircle, LineEndArrow, SVGElement
+from jeanplot.core.curve import CurveDefinition
+from jeanplot.core.style import jstyle
+from jeanplot.core.debug import (
+    debug_print as debug_print,
+    get_logger as get_logger,
+    set_debug as set_debug,
+    DebugMixin as DebugMixin,
+)
+from jeanplot.core.renderer import BaseRenderer, MatplotlibRenderer, SVGRenderer
+from jeanplot.core.text import Text
+from jeanplot.core.table import Table, TableRow, TableCell
+
+# Testing utilities
+from jeanplot.testing import (
+    MockRenderer as MockRenderer,
+    render_to_svg as render_to_svg,
+    parse_svg as parse_svg,
+    get_element_bounds as get_element_bounds,
+    assert_element_position as assert_element_position,
+    assert_element_size as assert_element_size,
+    svg_hash as svg_hash,
+)
+
+# Gene visualization
+from jeanplot.gene.elements import (
+    GeneticPart,
+    Promoter,
+    Terminator,
+    ERN,
+    ERN5pRecog,
+    FluoMarker,
+    UorfGroup,
+    TranscriptionUnit,
+    Source,
+)
+
+# Deprecated (backward compatibility) - these will move to biocomptools
+from jeanplot._deprecated.network_utils import TUInfo, Interaction
+from jeanplot._deprecated.network_schematic import NetworkGeneticSchematic
+from jeanplot._deprecated.network_diagram import (
     ComputeNode,
     TranscriptionNode,
     TranslationNode,
@@ -27,6 +59,7 @@ from .network_diagram import (
 DEFAULT_TYPES = [
     Component,
     AnchorComponent,
+    Overlay,
     Container,
     Size,
     BoxStyle,
@@ -46,6 +79,7 @@ DEFAULT_TYPES = [
     Interaction,
     BaseRenderer,
     MatplotlibRenderer,
+    SVGRenderer,
     NetworkGeneticSchematic,
     ComputeNode,
     TranscriptionNode,
@@ -59,6 +93,18 @@ DEFAULT_TYPES = [
     NetworkDiagram,
     Text,
     SVGElement,
+    Table,
+    TableRow,
+    TableCell,
+    GeneticPart,
+    Promoter,
+    Terminator,
+    ERN,
+    ERN5pRecog,
+    FluoMarker,
+    UorfGroup,
+    TranscriptionUnit,
+    Source,
 ]
 
 # --- Explicit model rebuilds after all types are defined ---
@@ -71,8 +117,7 @@ Text.model_rebuild(force=True)
 
 
 def make_context_from_types(types):
-    d = {t.__name__: t for t in types}
-    return d
+    return {t.__name__: t for t in types}
 
 
 def load_default_theme(force=False):

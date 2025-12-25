@@ -251,6 +251,9 @@ FluoNode:
       vertical_align: middle
       align: center
 
+  Text[style_class=tu_label_marker][style_class=~${e[0]}]:
+    color: ${e[1]['dark']}
+
 
 ComputeNode:
   min_dimensions: !Size { width: 18, height: 18 }
@@ -272,6 +275,16 @@ TranscriptionNode:
 
 TranslationNode:
   style.background_color: "#333"
+
+InputNode:
+  style.background_color: "#222"
+  Text:
+    color: "#fff"
+
+BiasNode:
+  style.background_color: "#bbb"
+  Text:
+    color: "#444"
 
 ERNNode:
   min_dimensions: !Size { width: 70, height: 70 }
@@ -336,6 +349,19 @@ TUNode: # Diagram node (small bar)
     align: right
     is_overlay: true
     offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
+  Container[style_class=tu_label_container]:
+    offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
+    Text[style_class=tu_label_prefix]:
+      color: "#000000"
+      font_size: 6
+      vertical_align: middle
+    Text[style_class=tu_label_suffix]:
+      color: "#000000"
+      font_size: 6
+      vertical_align: middle
+    Text[style_class=tu_label_marker]:
+      font_size: 6
+      vertical_align: middle
 
 
 # AggregationNode: # Base style for aggregation node container
@@ -362,6 +388,10 @@ AggregationNode[collapsed]: # Collapsed aggregation node
   TUNode:
     is_overlay: true
     offset: !Offset { absolute: [0, 0] }
+
+AggregationNode[collapsed][bias_connected]: # Bias-connected collapsed aggregation (grey instead of black)
+  TUNode:
+    style.background_color: "#999"
 
 Container[style_class=input_layer]:
   style.padding: [0, 0, 0, 40]
@@ -398,127 +428,63 @@ Table:
     Text:
       font_weight: bold
 
+!noconstruct _network_diagram_base: &nd_base
+  layout.gap: 25
+  layout.direction: row
+  layout.align_items: center
+  layout.justify_content: center
 
+  Connection[style_class=comp-connection]:
+    color: ${theme.comp_connection_color}
+    line_width: 1
+    start_offset: !Offset { reference_relative: [0.99, 0.5] }
+    end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
+    curve_type: !SimpleBezierCurve
+      start_mode: vector
+      end_mode: vector
+      start_vector: [20, 0]
+      end_vector: [-15, 0]
+    end_cap: !LineEndCircle
+      fill_color: ${theme.comp_connection_color}
+      stroke_width: 0
+      radius: 1.5
+      z-index: 10
 
+  Connection[style_class=dst-deadend]:
+    end_offset: !Offset { reference_relative: [0.5, 0.5] }
+
+  Connection[style_class=dst-source]:
+    end_offset: !Offset { reference_relative: [0.5, 0.5] }
+    curve_type: !StraightCurve {}
+
+  Container[style_class=layer]:
+    layout.gap: 10
+    layout.direction: column
+    layout.align_items: center
+    layout.justify_content: center
+
+  Container[style_class=input_layer]:
+    layout.gap: 15
+
+  Container[style_class=auto_layer]:
+    style.padding: [0, 0, 0, 0]
+
+  Container[style_class=output_layer]:
+    style.padding: [0, 0, 0, 20]
+
+  Container[style_class=main_layer]:
+    layout.direction: column
+    layout.align_items: center
+    layout.justify_content: center
+    style.margin: [0, 0, 0, 0]
+    layout.gap: 20
+
+  Text[style_class=layer_title]:
+    color: "#777"
+    font_size: 7
 
 NetworkDiagram:
+  <<: *nd_base
 
-  layout.gap: 25
-  layout.direction: row
-  layout.align_items: center
-  layout.justify_content: center
-
-
-  Connection[style_class=comp-connection]:
-    color: ${theme.comp_connection_color}
-    line_width: 1
-    start_offset: !Offset { reference_relative: [0.99, 0.5] }
-    end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
-    curve_type: !SimpleBezierCurve
-      start_mode: vector
-      end_mode: vector
-      start_vector: [20, 0]
-      end_vector: [-15, 0]
-
-    end_cap: !LineEndCircle
-      fill_color: ${theme.comp_connection_color}
-      stroke_width: 0
-      radius: 1.5
-      z-index: 10
-
-
-  Connection[style_class=dst-deadend]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
-
-  Connection[style_class=dst-source]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
-    curve_type: !StraightCurve {}
-
-
-  Container[style_class=layer]:
-    layout.gap: 10
-    layout.direction: column
-    layout.align_items: center
-    layout.justify_content: center
-
-  Container[style_class=input_layer]:
-    layout.gap: 15
-
-  Container[style_class=auto_layer]:
-    style.padding: [0, 0, 0, 0]
-
-  Container[style_class=output_layer]:
-    style.padding: [0, 0, 0, 20]
-
-  Container[style_class=main_layer]:
-    layout.direction: column
-    layout.align_items: center
-    layout.justify_content: center
-    style.margin: [0, 0, 0, 0]
-    layout.gap: 20
-
-  Text[style_class=layer_title]:
-    color: "#777"
-    font_size: 7
-
-
-# NetworkDiagramV2 uses the same styles as NetworkDiagram
 NetworkDiagramV2:
-
-  layout.gap: 25
-  layout.direction: row
-  layout.align_items: center
-  layout.justify_content: center
-
-
-  Connection[style_class=comp-connection]:
-    color: ${theme.comp_connection_color}
-    line_width: 1
-    start_offset: !Offset { reference_relative: [0.99, 0.5] }
-    end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
-    curve_type: !SimpleBezierCurve
-      start_mode: vector
-      end_mode: vector
-      start_vector: [20, 0]
-      end_vector: [-15, 0]
-
-    end_cap: !LineEndCircle
-      fill_color: ${theme.comp_connection_color}
-      stroke_width: 0
-      radius: 1.5
-      z-index: 10
-
-
-  Connection[style_class=dst-deadend]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
-
-  Connection[style_class=dst-source]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
-    curve_type: !StraightCurve {}
-
-
-  Container[style_class=layer]:
-    layout.gap: 10
-    layout.direction: column
-    layout.align_items: center
-    layout.justify_content: center
-
-  Container[style_class=input_layer]:
-    layout.gap: 15
-
-  Container[style_class=auto_layer]:
-    style.padding: [0, 0, 0, 0]
-
-  Container[style_class=output_layer]:
-    style.padding: [0, 0, 0, 20]
-
-  Container[style_class=main_layer]:
-    layout.direction: column
-    layout.align_items: center
-    layout.justify_content: center
-    style.margin: [0, 0, 0, 0]
-    layout.gap: 20
-
-  Text[style_class=layer_title]:
-    color: "#777"
-    font_size: 7
+  <<: *nd_base
