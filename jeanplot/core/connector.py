@@ -426,6 +426,7 @@ class Connection(Overlay):
             matrix,
             line_width_mode=self.linewidth_mode,
             component_id=f"{self.id}_main_curve",
+            opacity=self.opacity,
         )
 
         # --- Render Caps ---
@@ -457,6 +458,7 @@ class Connection(Overlay):
                         matrix,
                         line_width_mode=self.linewidth_mode,
                         component_id=f"{self.id}_start_cap",
+                        opacity=self.opacity,
                     )
 
             if self.end_cap:
@@ -469,6 +471,7 @@ class Connection(Overlay):
                         matrix,
                         line_width_mode=self.linewidth_mode,
                         component_id=f"{self.id}_end_cap",
+                        opacity=self.opacity,
                     )
 
         if self.debug:

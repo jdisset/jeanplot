@@ -33,6 +33,16 @@ EPSILON = 1e-9
 DEFAULT_REF_FONT_SIZE = 10.0  # reference size for point measurement
 
 
+def _apply_opacity(color: str | tuple | None, opacity: float) -> str | tuple | None:
+    if color is None or color == "none" or opacity >= 1.0:
+        return color
+    try:
+        rgba = to_rgba(color)
+        return (*rgba[:3], rgba[3] * opacity)
+    except (ValueError, TypeError):
+        return color
+
+
 def _get_point_scale_factor(axis: Axes) -> float:
     # average points per data unit for the current view
     fig = axis.get_figure()
@@ -269,6 +279,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         line_width_mode: str = "data",
         color_remap: dict[str, str | None] | None = None,
         component_id: str | None = None,
+        opacity: float = 1.0,
     ):
         # render a single path definition
         comp_id_str = component_id or "unknown"
@@ -293,8 +304,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             stroke_color_out = (
                 remap.get(path_data.stroke, path_data.stroke) if path_data.stroke else None
             )
-            final_facecolor = "none" if fill_color_out is None else fill_color_out
-            final_edgecolor = "none" if stroke_color_out is None else stroke_color_out
+            final_facecolor = _apply_opacity(fill_color_out, opacity) if fill_color_out else "none"
+            final_edgecolor = _apply_opacity(stroke_color_out, opacity) if stroke_color_out else "none"
 
             initial_lw_points = 0.0
             scaled_width_data_for_tracking = 0.0
@@ -439,8 +450,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                     )
 
         # render main rectangle fill and border
-        facecolor = style.background_color or "none"
-        edgecolor = style.border_color or "none"
+        opacity = getattr(component, "opacity", 1.0) if component else 1.0
+        facecolor = _apply_opacity(style.background_color, opacity) or "none"
+        edgecolor = _apply_opacity(style.border_color, opacity) or "none"
         has_edge = edgecolor != "none" and style.border_width > 0
 
         if facecolor != "none" or has_edge:
@@ -476,7 +488,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if len(path) < 3:
             return
 
-        edgecolor = style.border_color or "none"
+        opacity = getattr(component, "opacity", 1.0) if component else 1.0
+        edgecolor = _apply_opacity(style.border_color, opacity) or "none"
         if edgecolor == "none" or style.border_width <= 0:
             return
 
@@ -576,6 +589,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         final_matrix = matrix @ svg_internal_matrix  # world = parent_world * local_svg
 
         # render paths using combined transform
+        opacity = getattr(svg_element, "opacity", 1.0)
         for path_data in svg_data.paths:
             self.render_path(
                 context,
@@ -584,6 +598,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 svg_element.line_width_mode,
                 svg_element.color_remap,
                 component_id=comp_id,
+                opacity=opacity,
             )
         if svg_element.debug:
             self.render_debug(context, svg_element, matrix)
@@ -820,13 +835,15 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             style=text_component.font_style,
         )
 
+        opacity = getattr(text_component, "opacity", 1.0)
+        text_color = _apply_opacity(text_component.color, opacity) if text_component.color else None
         with _no_autoscale(context):
             text_artist = context.text(
                 anchor_x,
                 anchor_y,
                 text_component.text,
                 fontsize=required_point_size,
-                color=text_component.color,
+                color=text_color,
                 ha=mpl_ha,
                 va=mpl_va,
                 rotation=rotation_deg,

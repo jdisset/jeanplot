@@ -39,22 +39,8 @@ from jeanplot.gene.elements import (
     TranscriptionUnit,
     Source,
 )
-
-# Deprecated (backward compatibility) - these will move to biocomptools
-from jeanplot._deprecated.network_utils import TUInfo, Interaction
-from jeanplot._deprecated.network_schematic import NetworkGeneticSchematic
-from jeanplot._deprecated.network_diagram import (
-    ComputeNode,
-    TranscriptionNode,
-    TranslationNode,
-    AggregationNode,
-    ERNNode,
-    InvNode,
-    FluoNode,
-    DeadEndNode,
-    TUNode,
-    NetworkDiagram,
-)
+from jeanplot.gene.schematic import GeneticSchematic, SourceAnnotation
+from jeanplot.gene.data import CircuitData, TUData, PartData, SourceData, InteractionData
 
 DEFAULT_TYPES = [
     Component,
@@ -75,22 +61,9 @@ DEFAULT_TYPES = [
     LineEndCircle,
     LineEndArrow,
     CurveDefinition,
-    TUInfo,
-    Interaction,
     BaseRenderer,
     MatplotlibRenderer,
     SVGRenderer,
-    NetworkGeneticSchematic,
-    ComputeNode,
-    TranscriptionNode,
-    TranslationNode,
-    AggregationNode,
-    ERNNode,
-    InvNode,
-    FluoNode,
-    DeadEndNode,
-    TUNode,
-    NetworkDiagram,
     Text,
     SVGElement,
     Table,
@@ -105,6 +78,13 @@ DEFAULT_TYPES = [
     UorfGroup,
     TranscriptionUnit,
     Source,
+    GeneticSchematic,
+    SourceAnnotation,
+    CircuitData,
+    TUData,
+    PartData,
+    SourceData,
+    InteractionData,
 ]
 
 # --- Explicit model rebuilds after all types are defined ---

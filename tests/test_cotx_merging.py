@@ -1,9 +1,13 @@
 """Test case for cotransfection merging issue"""
+import pytest
 import matplotlib.pyplot as plt
+
+pytest.importorskip("biocomptools", reason="biocomptools required for this test")
+
 from biocomp.recipe import Recipe, CoTransfection, TranscriptionUnit
 from biocomp.network import recipe_to_networks
 from biocomp.library import load_lib, LibraryContext
-from jeanplot._deprecated.biocomp_diagrams import render_circuit_schematic
+from biocomptools.toollib.figuremakers.geneticcircuit import render_circuit_to_ax
 
 # Test data
 P = "hEF1a"
@@ -77,11 +81,11 @@ def test_cotx_merging():
         # Create figure and render
         fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
 
-        render_circuit_schematic(network, lib, ax)
+        render_circuit_to_ax(network, ax)
 
         # Check TU information
-        from jeanplot._deprecated.network_adapter import get_tu_informations_v2
-        tu_infos = get_tu_informations_v2(network)
+        from biocomptools.toollib.figuremakers.network_adapter import get_tu_informations
+        tu_infos = get_tu_informations(network)
         print("\nTU Information (checking cotx_name):")
         for tu_id, tu_info in sorted(tu_infos.items()):
             print(f"  TU {tu_id}:")

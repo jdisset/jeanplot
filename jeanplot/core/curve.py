@@ -90,7 +90,6 @@ class SimpleBezierCurve(CurveDefinition):
         end: tuple[float, float],
         local_checkpoints: list[tuple[float, float]] | None = None,
     ) -> tuple[str, list[tuple[float, float]]]:
-        # determine start control point vector (points away from start)
         if self.start_mode == "auto" or not self.start_vector:
             auto_dir = self._calculate_auto_direction_vector(start, end, for_start=True)
             sx, sy = (
@@ -101,9 +100,7 @@ class SimpleBezierCurve(CurveDefinition):
             sx, sy = self.start_vector
         c1 = (start[0] + sx, start[1] + sy)
 
-        # determine end control point vector (points away from end)
         if self.end_mode == "auto" or not self.end_vector:
-            # get outward vector *from end*
             auto_dir = self._calculate_auto_direction_vector(start, end, for_start=False)
             ex, ey = (
                 auto_dir[0] * self.auto_direction_strength,
@@ -111,7 +108,7 @@ class SimpleBezierCurve(CurveDefinition):
             )
         else:
             ex, ey = self.end_vector
-        c2 = (end[0] + ex, end[1] + ey)  # add vector pointing *away* from end
+        c2 = (end[0] + ex, end[1] + ey)
 
         path = f"M {start[0]:.3f} {start[1]:.3f} C {c1[0]:.3f} {c1[1]:.3f}, {c2[0]:.3f} {c2[1]:.3f}, {end[0]:.3f} {end[1]:.3f}"
         control_points = [c1, c2]

@@ -175,26 +175,9 @@ Container[style_class=source_tag]:
     SVGElement:
       transform.scale: [0.9, 0.9]
 
-NetworkGeneticSchematic:
-  grid_gap: [50, 50]
-  style.padding: [5,5,5,5]
-
-# Schematic Anchor Points
-"[style_class=ern-anchor-top]":
-  offset.reference_relative: [0.77, 1.1]
-  min_segment: 25
-
-"[style_class=ern-anchor-bottom]":
-  offset.reference_relative: [0.77, -0.1]
-  min_segment: 12
-
-"[style_class=ern-recog-anchor-top]":
-  offset.reference_relative: [0.5, 1.1]
-  min_segment: 15
-
-"[style_class=ern-recog-anchor-bottom]":
-  offset.reference_relative: [0.5, -0.2] 
-  min_segment: 5
+GeneticSchematic:
+  grid_gap: [40, 20]
+  style.padding: [10, 10, 10, 10]
 
 
 
@@ -486,5 +469,5 @@ Table:
 NetworkDiagram:
   <<: *nd_base
 
-NetworkDiagramV2:
-  <<: *nd_base
+"[style_class=disabled]":
+  opacity: 0.3

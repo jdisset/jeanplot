@@ -1,4 +1,4 @@
-"""Test text sizes in actual NetworkDiagramV2 components.
+"""Test text sizes in actual NetworkDiagram components.
 
 The user reports:
 - simple_single_reporter: Tx/Tl labels are about the same height as node diameter (BAD)
@@ -14,6 +14,8 @@ from pathlib import Path
 
 from jeanplot import jstyle
 from jeanplot.core.renderer.matplotlib import MatplotlibRenderer, _get_points_per_unit_vector
+
+pytest.importorskip("biocomptools", reason="biocomptools required for this test")
 
 
 def get_test_network(name: str):
@@ -51,14 +53,13 @@ class TestNetworkDiagramText:
 
     def measure_diagram_text(self, network, name: str):
         """Measure text sizes in a network diagram."""
-        from jeanplot._deprecated.network_diagram_v2 import NetworkDiagramV2, TranscriptionNode
+        from biocomptools.toollib.figuremakers.networkdiagram import NetworkDiagram, TranscriptionNode
         from jeanplot import Container, LayoutConstraints
 
-        # Load the default theme (conftest clears jstyle before each test)
         from jeanplot import load_default_theme
         load_default_theme(force=True)
 
-        diagram = NetworkDiagramV2(network=network, simplified=True)
+        diagram = NetworkDiagram(network=network, simplified=True)
         root = Container(
             children=[diagram],
             layout=LayoutConstraints(direction="row", justify_content="center", align_items="stretch"),

@@ -3,7 +3,7 @@ from typing import Literal, TYPE_CHECKING
 from pydantic import Field, PrivateAttr
 
 from jeanplot.core.container import Container
-from jeanplot.core.connector import Connection, OrthogonalCurve
+from jeanplot.core.connector import Connection, OrthogonalCurve, SimpleBezierCurve
 from jeanplot.core.models import LayoutConstraints, BoxStyle
 from jeanplot.core.style import jstyle
 from jeanplot.gene.data import CircuitData
@@ -122,7 +122,12 @@ class GeneticSchematic(Container):
         rows_dict: dict[int, list[TranscriptionUnit]] = {}
 
         for tu_data in self.data.transcription_units:
-            tu = TranscriptionUnit(id=tu_data.id, name=tu_data.name, ratio_percent=tu_data.ratio_percent)
+            tu = TranscriptionUnit(
+                id=tu_data.id,
+                name=tu_data.name,
+                ratio_percent=tu_data.ratio_percent,
+                disabled=tu_data.disabled,
+            )
             for part_data in tu_data.parts:
                 part = GeneticPart.from_data(part_data)
                 tu.add_child(part)
@@ -161,18 +166,23 @@ class GeneticSchematic(Container):
                 self.add_child(row_container)
 
     def _build_interactions(self):
-        """Create connection lines between interacting parts."""
+        from jeanplot.core.svg import LineEndFlat
+
         for interaction in self.data.interactions:
             source_tu = self._tu_components.get(interaction.source_tu)
             target_tu = self._tu_components.get(interaction.target_tu)
             if not source_tu or not target_tu:
                 continue
 
+            end_cap = LineEndFlat(stroke_width=1.5, length=8.0) if interaction.interaction_type in ("inhibition", "repression") else None
+            curve = SimpleBezierCurve() if self.connection_style == "bezier" else OrthogonalCurve()
+
             conn = Connection(
                 id=f"conn_{interaction.id}",
                 start_component=f"//{interaction.source_tu}/{interaction.source_part}",
                 end_component=f"//{interaction.target_tu}/{interaction.target_part}",
-                curve_type=OrthogonalCurve() if self.connection_style == "orthogonal" else None,
+                curve_type=curve,
+                end_cap=end_cap,
                 is_overlay=True,
             )
             self._connections.append(conn)

@@ -66,20 +66,53 @@ def is_on_segment(
 
 
 # --- component path finding ---
-# (find_component_by_path remains the same)
+def _find_recursive(root: Component, target_id: str) -> Component | None:
+    """Recursively search for a component with the given id anywhere in the tree."""
+    if getattr(root, "id", None) == target_id:
+        return root
+    children = []
+    if hasattr(root, "children"):
+        children.extend(root.children)
+    if hasattr(root, "anchor_points"):
+        children.extend([a for a in root.anchor_points if a not in children])
+    for child in children:
+        found = _find_recursive(child, target_id)
+        if found:
+            return found
+    return None
+
+
 def find_component_by_path(root: Component, path: str) -> Component | None:
-    """find component by path relative to root (e.g., "parent/child/grandchild")."""
+    """Find component by path relative to root.
+
+    Supports:
+    - "parent/child/grandchild" - direct descent
+    - "//component_id/child" - recursive search for first component, then descend
+    """
     if not path:
         return None
-    parts = [p for p in path.split("/") if p]
-    current = root
+
+    # Handle // prefix (recursive search for first component)
+    if path.startswith("//"):
+        path = path[2:]  # strip //
+        parts = [p for p in path.split("/") if p]
+        if not parts:
+            return None
+        # Recursively find the first component
+        current = _find_recursive(root, parts[0])
+        if not current:
+            return None
+        parts = parts[1:]  # remaining parts for direct descent
+    else:
+        parts = [p for p in path.split("/") if p]
+        current = root
+
+    # Direct descent for remaining parts
     for i, part_id in enumerate(parts):
-        # combine explicitly added children and anchors
         children = []
         if hasattr(current, "children"):
             children.extend(current.children)
         if hasattr(current, "anchor_points"):
-            # Avoid duplicating anchors if they were already added via add_child
             children.extend([a for a in current.anchor_points if a not in children])
 
         found = next((c for c in children if getattr(c, "id", None) == part_id), None)

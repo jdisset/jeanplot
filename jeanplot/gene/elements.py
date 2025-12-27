@@ -88,6 +88,7 @@ class TranscriptionUnit(Container):
     name: str | None = None
     label: Text | None = None
     ratio_percent: float | None = None  # percentage of cotx (0-100)
+    disabled: bool = False
     line_thickness: float = 1.0
     line_color: str = "#333333"
     layout: LayoutConstraints = Field(
@@ -96,13 +97,16 @@ class TranscriptionUnit(Container):
         )
     )
     style: BoxStyle = Field(default_factory=lambda: BoxStyle(padding=(5, 0, 5, 0)))
+    style_class: list[str] = Field(default_factory=lambda: ["TranscriptionUnit"])
 
     _tu_line: SVGElement | None = PrivateAttr(default=None)
     _ratio_label: Text | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def setup_label_and_line(self):
-        # create label from name if needed
+        if self.disabled and "disabled" not in self.style_class:
+            self.style_class.append("disabled")
+
         if self.name and not self.label and not any(isinstance(c, Text) for c in self.children):
             self.label = Text(
                 id=f"lbl_{self.id}",
@@ -368,7 +372,8 @@ class GeneticPart(Container):
             "uorf": UorfGroup,
         }
         part_cls = role_map.get(data.role, cls)
-        return part_cls(id=data.id, part_name=data.name)
+        # Use part name as ID so interactions can reference by name
+        return part_cls(id=data.name, part_name=data.name)
 
 
 class ERN(GeneticPart, AutoLabelMixin):

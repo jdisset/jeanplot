@@ -66,6 +66,7 @@ class BaseRenderer:
         line_width_mode: str = "point",
         main_color: str | None = None,
         secondary_color: str | None = None,
+        opacity: float = 1.0,
     ):
         """render a single SVG path data object."""
         raise NotImplementedError

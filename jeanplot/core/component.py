@@ -63,6 +63,7 @@ class Component(DebugMixin, BaseModel):
 
     # --- Style ---
     style: BoxStyle = Field(default_factory=BoxStyle)
+    opacity: float = 1.0
 
     # --- Backend Specific ---
     renderer_options: dict[str, dict[str, Any]] = Field(default_factory=lambda: defaultdict(dict))

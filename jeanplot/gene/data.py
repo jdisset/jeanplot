@@ -31,6 +31,7 @@ class TUData(BaseModel):
     source_id: str | None = None
     position: int = 0
     ratio_percent: float | None = None  # percentage of cotx (0-100)
+    disabled: bool = False
 
 
 class SourceData(BaseModel):
@@ -48,7 +49,7 @@ class InteractionData(BaseModel):
     source_part: str
     target_tu: str
     target_part: str
-    interaction_type: Literal["inhibition", "activation", "cleavage", "sequestration"] = (
+    interaction_type: Literal["inhibition", "activation", "cleavage", "sequestration", "repression"] = (
         "inhibition"
     )
 
