@@ -137,12 +137,12 @@ class TestPartTypes:
     def test_promoter_part_type(self):
         """Promoter has correct part_type."""
         p = Promoter(id="p1")
-        assert p.part_type == "Promoter"
+        assert p.part_type == "promoter"
 
     def test_terminator_part_type(self):
         """Terminator has correct part_type."""
         t = Terminator(id="t1")
-        assert t.part_type == "Terminator"
+        assert t.part_type == "terminator"
 
     def test_ern_has_anchors(self):
         """ERN has vertical anchors."""

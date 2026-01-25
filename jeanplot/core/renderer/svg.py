@@ -220,6 +220,7 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         line_width_mode: str = "data",
         color_remap: dict[str, str | None] | None = None,
         component_id: str | None = None,
+        opacity: float | None = None,
     ):
         parent = self._current_group if self._current_group is not None else context
         path = etree.SubElement(parent, "path")
@@ -228,6 +229,9 @@ class SVGRenderer(DebugMixin, BaseRenderer):
 
         path.set("d", path_data.d)
         path.set("transform", _matrix_to_svg_transform(matrix))
+
+        if opacity is not None and opacity < 1.0:
+            path.set("opacity", f"{opacity:.2f}")
 
         remap = color_remap or {}
         fill = remap.get(path_data.fill, path_data.fill) if path_data.fill else None
