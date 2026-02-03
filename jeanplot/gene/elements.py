@@ -372,8 +372,7 @@ class GeneticPart(Container):
             "uorf": UorfGroup,
         }
         part_cls = role_map.get(data.role, cls)
-        # Use part name as ID so interactions can reference by name
-        return part_cls(id=data.name, part_name=data.name)
+        return part_cls(id=data.id, part_name=data.name)
 
 
 class ERN(GeneticPart, AutoLabelMixin):
@@ -394,11 +393,11 @@ class FluoMarker(GeneticPart, AutoLabelMixin):
 
 
 class Promoter(GeneticPart):
-    part_type: str = "Promoter"
+    part_type: str = "promoter"
 
 
 class Terminator(GeneticPart):
-    part_type: str = "Terminator"
+    part_type: str = "terminator"
 
 
 class UorfGroup(GeneticPart, AutoLabelMixin):
