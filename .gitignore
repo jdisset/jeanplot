@@ -6,3 +6,11 @@ tests/__pycache__
 .DS_Store
 *.pdf
 *.txt
+jeanplot/core/__pycache__
+jeanplot/core/renderer/__pycache__
+jeanplot/gene/__pycache__
+jeanplot/tests/__pycache__
+tests/test_core/__pycache__
+tests/test_gene/__pycache__
+tests/test_integration/__pycache__
+tests/test_renderer/__pycache__
