@@ -8,7 +8,6 @@ from svgpath2mpl import parse_path
 from matplotlib.axes import Axes
 import matplotlib.patches as mpatches
 import matplotlib.transforms as mtransforms
-import matplotlib.font_manager as fm
 from matplotlib.textpath import TextPath
 from matplotlib.path import Path as MplPath
 from matplotlib.colors import to_rgba
@@ -17,7 +16,7 @@ import re
 import math
 
 from jeanplot.core.component import Component
-from jeanplot.core.models import Size, BoxStyle, TextMetrics
+from jeanplot.core.models import Size, BoxStyle
 from jeanplot.core.renderer.base import BaseRenderer
 from jeanplot.core.svg import (
     SVGElement,
@@ -27,10 +26,14 @@ from jeanplot.core.svg import (
 from jeanplot.core.debug import DebugMixin, get_logger
 from jeanplot.core.connector import Connection
 from jeanplot.core.text import Text
+from jeanplot.core.text_metrics import (
+    DEFAULT_TEXT_REF_FONT_SIZE,
+    build_font_properties,
+    measure_text_metrics,
+)
 
 logger = get_logger(__name__)
 EPSILON = 1e-9
-DEFAULT_REF_FONT_SIZE = 10.0  # reference size for point measurement
 
 
 def _apply_opacity(color: str | tuple | None, opacity: float) -> str | tuple | None:
@@ -156,7 +159,7 @@ def _get_rotation_from_matrix(matrix: np.ndarray) -> float:
 class MatplotlibRenderer(DebugMixin, BaseRenderer):
     RENDERER_NAME = "matplotlib"
 
-    def __init__(self, debug=False):
+    def __init__(self, debug: bool = False, force_native_text: bool = False):
         super().__init__()
         self._data_width_patches: list[tuple[mpatches.Patch, float]] = []
         # Track text artists for font size refresh: (text_artist, data_font_size, world_matrix)
@@ -165,6 +168,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         self._draw_event_cid: int | None = None
         # points per data unit at identity transform (for font_size_mode="points")
         self._points_per_data_unit: float = 1.0
+        self.force_native_text: bool = force_native_text
 
     def _disconnect_draw_event(self):
         # disconnect the draw event callback if it exists
@@ -691,38 +695,16 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         context.set_aspect("equal", adjustable="box")
 
     def measure_text(self, text_component: Text) -> Size:
-        """using TextToPath to measure text size"""
-
-        from matplotlib.path import Path
-        from matplotlib.textpath import TextToPath
-        from matplotlib.font_manager import FontProperties
-
-        fp = FontProperties(
-            family=text_component.font_name or "sans-serif",
-            weight=text_component.font_weight,
-            style=text_component.font_style,
+        metrics = measure_text_metrics(
+            text=text_component.text or "",
+            font_name=text_component.font_name,
+            font_weight=text_component.font_weight,
+            font_style=text_component.font_style,
+            line_spacing=text_component.line_spacing,
+            ref_font_size=DEFAULT_TEXT_REF_FONT_SIZE,
         )
-
-        all_lines = text_component.text.split("\n")
-
-        full_width = full_height = 0
-        all_paths = []
-
-        for line in all_lines:
-            verts, codes = TextToPath().get_text_path(fp, line)
-            path = Path(verts, codes, closed=False)
-            all_paths.append(path)
-            bbox = path.get_extents()
-            width = bbox.width
-            height = bbox.height
-            full_width = max(full_width, width)
-            full_height += height * 1.2
-
-        text_component._text_metrics_cache = TextMetrics(
-            ref_font_size=DEFAULT_REF_FONT_SIZE, width_points=full_width, height_points=full_height
-        )
-
-        return Size(width=full_width, height=full_height)
+        text_component._text_metrics_cache = metrics
+        return Size(width=metrics.width_points, height=metrics.height_points)
 
     def get_font_size_in_points(self, font_size) -> float:
         # convert font size from data units to points
@@ -831,10 +813,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             anchor_y = world_bottom_center[1] if mpl_ha == "center" else world_bottom_left[1]
 
         rotation_deg = _get_rotation_from_matrix(matrix)
-        props = fm.FontProperties(
-            family=text_component.font_name or "sans-serif",
-            weight=text_component.font_weight,
-            style=text_component.font_style,
+        props = build_font_properties(
+            font_name=text_component.font_name,
+            font_weight=text_component.font_weight,
+            font_style=text_component.font_style,
         )
 
         opacity = getattr(text_component, "opacity", 1.0)
@@ -882,10 +864,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             text_comp._render_path_cache is None
             or text_comp._render_path_cache[0] != required_point_size
         ):
-            props = fm.FontProperties(
-                family=text_comp.font_name or "sans-serif",
-                weight=text_comp.font_weight,
-                style=text_comp.font_style,
+            props = build_font_properties(
+                font_name=text_comp.font_name,
+                font_weight=text_comp.font_weight,
+                font_style=text_comp.font_style,
             )
             mpl_render_path = TextPath((0, 0), text_comp.text, size=required_point_size, prop=props)
             text_comp._render_path_cache = (required_point_size, mpl_render_path)

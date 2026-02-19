@@ -168,3 +168,98 @@ class TestMatplotlibTextAlignment:
             assert abs(((ty0 + ty1) / 2.0) - ((cy0 + cy1) / 2.0)) < 1.0
         else:
             assert abs(ty0 - cy0) < 1.5
+
+
+class TestTextMeasurementPrecision:
+    """Regression checks for text measurement precision against rendered extents."""
+
+    @staticmethod
+    def _render_bbox(text: Text) -> tuple[float, float]:
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
+        ax.set_xlim(0, 320)
+        ax.set_ylim(0, 220)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        parent = Container(id="p", children=[text])
+        renderer = MatplotlibRenderer()
+        renderer.create_context(ax=ax)
+        renderer.render_component(ax, parent, adjust_lims=False)
+        fig.canvas.draw()
+
+        artist = next(a for a in ax.texts if a.get_text() == text.text)
+        bbox = artist.get_window_extent(fig.canvas.get_renderer())
+        inv = ax.transData.inverted()
+        (x0, y0), (x1, y1) = inv.transform([[bbox.x0, bbox.y0], [bbox.x1, bbox.y1]])
+        plt.close(fig)
+        return max(1e-6, x1 - x0), max(1e-6, y1 - y0)
+
+    def test_single_line_dimensions_track_rendered_bbox(self):
+        probes = [
+            Text(id="t1", text="A", font_size=9),
+            Text(id="t2", text="WMWM", font_size=12),
+            Text(id="t3", text="mKO2 cotx_alpha", font_size=7),
+            Text(id="t4", text="gjpqy", font_size=11),
+            Text(id="t5", text="B1z9Q", font_size=10),
+        ]
+        width_errors = []
+        height_errors = []
+        for probe in probes:
+            rendered_w, rendered_h = self._render_bbox(probe)
+            measured_w = max(1e-6, probe._dimensions.width)
+            measured_h = max(1e-6, probe._dimensions.height)
+            width_errors.append(abs(rendered_w - measured_w) / rendered_w)
+            height_errors.append(abs(rendered_h - measured_h) / rendered_h)
+
+        assert max(width_errors) < 0.05
+        assert max(height_errors) < 0.14
+
+    def test_multiline_dimensions_track_rendered_bbox(self):
+        probes = [
+            Text(id="m1", text="Line1\nLine2", font_size=8, line_spacing=0.0),
+            Text(id="m2", text="gypq\nWMWM", font_size=8, line_spacing=0.2),
+            Text(id="m3", text="mKO2\ncotx_alpha", font_size=9, line_spacing=0.4),
+            Text(id="m4", text="ABCD\n1234", font_size=10, line_spacing=0.6),
+        ]
+        width_errors = []
+        height_errors = []
+        for probe in probes:
+            rendered_w, rendered_h = self._render_bbox(probe)
+            measured_w = max(1e-6, probe._dimensions.width)
+            measured_h = max(1e-6, probe._dimensions.height)
+            width_errors.append(abs(rendered_w - measured_w) / rendered_w)
+            height_errors.append(abs(rendered_h - measured_h) / rendered_h)
+
+        assert max(width_errors) < 0.05
+        assert max(height_errors) < 0.14
+
+
+class TestNativeTextMode:
+    """Renderer-level switch for always-actual text artists."""
+
+    def test_force_native_text_disables_path_rendering(self):
+        fig, ax = plt.subplots(figsize=(5, 3), dpi=100)
+        ax.set_xlim(0, 200)
+        ax.set_ylim(0, 120)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        text = Text(
+            id="skewed",
+            text="Skewed",
+            font_size=10,
+            render_as_path=True,
+        )
+        parent = Container(id="p", children=[text])
+
+        renderer = MatplotlibRenderer(force_native_text=True)
+        renderer.create_context(ax=ax)
+        renderer.render_component(ax, parent, adjust_lims=False)
+        fig.canvas.draw()
+
+        assert any(a.get_text() == "Skewed" for a in ax.texts)
+        assert not any(
+            patch.__class__.__name__ == "PathPatch" and patch.get_facecolor()[3] > 0
+            for patch in ax.patches
+        )
+        plt.close(fig)

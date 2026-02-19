@@ -7,11 +7,15 @@ import numpy as np
 from lxml import etree
 
 from jeanplot.core.component import Component
-from jeanplot.core.models import Size, BoxStyle, TextMetrics
+from jeanplot.core.models import Size, BoxStyle
 from jeanplot.core.renderer.base import BaseRenderer
 from jeanplot.core.svg import SVGElement, SVGPathData
 from jeanplot.core.connector import Connection
 from jeanplot.core.text import Text
+from jeanplot.core.text_metrics import (
+    DEFAULT_TEXT_REF_FONT_SIZE,
+    measure_text_metrics,
+)
 from jeanplot.core.debug import DebugMixin, get_logger
 
 logger = get_logger(__name__)
@@ -396,12 +400,13 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         line2.set("stroke-width", "0.5")
 
     def measure_text(self, text_component: Text) -> Size:
-        text = text_component.text or ""
-        font_size = text_component.font_size
-        lines = text.split("\n")
-        max_width = max(len(line) for line in lines) * font_size * 0.6 if lines else 0
-        total_height = len(lines) * font_size * 1.2
-        text_component._text_metrics_cache = TextMetrics(
-            ref_font_size=font_size, width_points=max_width, height_points=total_height
+        metrics = measure_text_metrics(
+            text=text_component.text or "",
+            font_name=text_component.font_name,
+            font_weight=text_component.font_weight,
+            font_style=text_component.font_style,
+            line_spacing=text_component.line_spacing,
+            ref_font_size=DEFAULT_TEXT_REF_FONT_SIZE,
         )
-        return Size(width=max_width, height=total_height)
+        text_component._text_metrics_cache = metrics
+        return Size(width=metrics.width_points, height=metrics.height_points)

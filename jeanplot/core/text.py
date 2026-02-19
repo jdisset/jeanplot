@@ -53,13 +53,11 @@ class Text(Component):
 
     def _measure_natural(self, renderer) -> Size:
         """
-        calculates natural data-unit size based on point metrics
-        and target data height (self.font_size).
+        calculates natural data-unit size from renderer-provided point metrics.
 
-        For font_size_mode="points": we need to convert from points to data units
-        for layout purposes. The actual rendering will use the point size directly.
-
-        For font_size_mode="data": font_size is already in data units.
+        The renderer stores text metrics at a reference point size
+        (TextMetrics.ref_font_size). We scale those metrics linearly to the
+        requested font size and convert to data units when needed.
         """
         if not self.text or not renderer or not hasattr(renderer, "measure_text"):
             self._text_metrics_cache = None
@@ -71,27 +69,28 @@ class Text(Component):
             self._log_debug("warning: text metrics measurement failed or yielded zero height.")
             return Size(0, 0)
 
-        nlines = len(self.text.split("\n"))
         point_height = self._text_metrics_cache.height_points
         point_width = self._text_metrics_cache.width_points
+        ref_font_size = self._text_metrics_cache.ref_font_size
+
+        if ref_font_size <= 1e-6:
+            return Size(0, 0)
+
+        scale_factor = self.font_size / ref_font_size
+        target_point_width = point_width * scale_factor
+        target_point_height = point_height * scale_factor
 
         if self.font_size_mode == "points":
-            # font_size is in points - use it directly for point calculations
-            # For layout, we need to convert to data units using renderer's context
-            target_point_height = self.font_size * nlines * 1.2
-            # Get points per data unit from renderer (if available)
-            points_per_data_unit = getattr(renderer, '_points_per_data_unit', 1.0)
+            points_per_data_unit = getattr(renderer, "_points_per_data_unit", 1.0)
             if points_per_data_unit > 1e-6:
+                natural_data_width = target_point_width / points_per_data_unit
                 target_data_height = target_point_height / points_per_data_unit
             else:
-                target_data_height = target_point_height  # fallback
-            scale_factor = target_point_height / point_height if point_height > 1e-6 else 0.0
-            natural_data_width = (point_width * scale_factor) / points_per_data_unit if points_per_data_unit > 1e-6 else 0.0
+                natural_data_width = 0.0
+                target_data_height = 0.0
         else:
-            # font_size_mode == "data" - original behavior
-            target_data_height = self.font_size * nlines * 1.2
-            scale_factor = target_data_height / point_height if point_height > 1e-6 else 0.0
-            natural_data_width = point_width * scale_factor
+            natural_data_width = target_point_width
+            target_data_height = target_point_height
 
         natural_size = Size(width=natural_data_width, height=target_data_height)
         return natural_size
@@ -141,8 +140,12 @@ class Text(Component):
                     renderer.render_debug(context, self, matrix)
                 return
 
-        if self.render_as_path is True or (
-            self.render_as_path == "auto" and self.has_effective_skew(matrix)
+        force_native_text = bool(getattr(renderer, "force_native_text", False))
+        if not force_native_text and (
+            self.render_as_path is True
+            or (
+                self.render_as_path == "auto" and self.has_effective_skew(matrix)
+            )
         ):
             if hasattr(renderer, "_render_text_as_paths"):
                 renderer._render_text_as_paths(context, self, matrix)
