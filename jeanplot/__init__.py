@@ -92,9 +92,6 @@ DEFAULT_TYPES = [
 ]
 
 # --- Explicit model rebuilds after all types are defined ---
-Component.model_rebuild(force=True)
-AnchorComponent.model_rebuild(force=True)
-Container.model_rebuild(force=True)
 SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)
 Text.model_rebuild(force=True)

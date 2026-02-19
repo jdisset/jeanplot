@@ -326,11 +326,3 @@ class Container(Component):
                     logger.warning(
                         f"child component {type(child)} (id={getattr(child, 'id', '?')}) lacks compute_world_matrix, skipping render."
                     )
-
-
-# --- explicit model rebuilds ---
-from jeanplot.core.component import Component, Overlay  # noqa: E402
-
-Component.model_rebuild(force=True)
-Container.model_rebuild(force=True)
-Overlay.model_rebuild(force=True)

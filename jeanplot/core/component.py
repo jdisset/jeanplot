@@ -206,12 +206,8 @@ class Component(DebugMixin, BaseModel):
 
     def _apply_style(self):
         """apply styles from the global jstyle object."""
-        # Only style this component here. Children are styled during their own
-        # measure/layout pass, avoiding repeated recursive style walks.
-        if hasattr(jstyle, "apply_one"):
-            jstyle.apply_one(self)
-        else:
-            jstyle.apply(self)
+        # Style only this component; children are styled during their own measure/layout pass.
+        jstyle.apply_one(self)
 
     def _measure_natural(self, renderer: "BaseRenderer | None") -> Size:
         """calculates the component's intrinsic size. subclasses override."""
@@ -295,5 +291,11 @@ class AnchorComponent(Component):
                 if not np.allclose(self.direction, norm_dir):
                     self.direction = norm_dir
             else:
-                self.direction = (0.0, 1.0)  # default up if zero vector
+                    self.direction = (0.0, 1.0)  # default up if zero vector
         return self
+
+
+# Resolve forward references (notably `AnchorComponent`) for direct-module imports.
+Component.model_rebuild(force=True)
+AnchorComponent.model_rebuild(force=True)
+Overlay.model_rebuild(force=True)
