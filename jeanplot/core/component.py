@@ -206,7 +206,12 @@ class Component(DebugMixin, BaseModel):
 
     def _apply_style(self):
         """apply styles from the global jstyle object."""
-        jstyle.apply(self)
+        # Only style this component here. Children are styled during their own
+        # measure/layout pass, avoiding repeated recursive style walks.
+        if hasattr(jstyle, "apply_one"):
+            jstyle.apply_one(self)
+        else:
+            jstyle.apply(self)
 
     def _measure_natural(self, renderer: "BaseRenderer | None") -> Size:
         """calculates the component's intrinsic size. subclasses override."""

@@ -10,7 +10,6 @@ import logging
 # use absolute imports
 from jeanplot.core.component import Component, AnchorComponent
 from jeanplot.core.models import Size, LayoutConstraints
-from jeanplot.core.style import jstyle
 from jeanplot.core.renderer import BaseRenderer
 
 logger = logging.getLogger(__name__)
@@ -82,8 +81,6 @@ class Container(Component):
         all_measurable_children = self._layout_children_cache + self._overlay_children_cache
         for child in all_measurable_children:
             if child:
-                # apply style *before* measuring each child
-                jstyle.apply(child)
                 child.measure_and_layout(renderer)
 
         natural_width, natural_height = 0.0, 0.0
