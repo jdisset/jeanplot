@@ -485,24 +485,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if vertices[-1] != vertices[0]:
             vertices.append(vertices[0])
         codes = [MplPath.MOVETO] + [MplPath.LINETO] * (len(vertices) - 2) + [MplPath.CLOSEPOLY]
-
-        lw_pts, scaled_w, is_data_w = _calc_linewidth(
-            style.border_width, style.border_width_mode, matrix, context, True
-        )
-        with _no_autoscale(context):
-            patch = mpatches.PathPatch(
-                MplPath(vertices, codes),
-                facecolor="none",
-                edgecolor=edgecolor,
-                linewidth=lw_pts,
-                linestyle=get_mpl_linestyle_from_boxstyle(style),
-                transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
-                capstyle="round",
-                joinstyle="round",
-            )
-            context.add_patch(patch)
-            if is_data_w:
-                self.track_patch(patch, scaled_w)
+        self._render_stroked_path(context, vertices, codes, style, matrix, edgecolor)
 
     def render_edges(
         self,
@@ -524,7 +507,17 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         for start, end in edges:
             vertices.extend([start, end])
             codes.extend([MplPath.MOVETO, MplPath.LINETO])
+        self._render_stroked_path(context, vertices, codes, style, matrix, edgecolor)
 
+    def _render_stroked_path(
+        self,
+        context: Axes,
+        vertices: list[tuple[float, float]],
+        codes: list[int],
+        style: BoxStyle,
+        matrix: np.ndarray,
+        edgecolor: str,
+    ):
         lw_pts, scaled_w, is_data_w = _calc_linewidth(
             style.border_width, style.border_width_mode, matrix, context, True
         )
@@ -799,6 +792,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if text_comp.font_size_mode == "points":
             # font_size is directly in typographic points - use as-is
             required_point_size = max(0.1, text_comp.font_size)
+            ppu_y = _get_points_per_unit_vector(context, matrix, vector=(0, 1))
         else:
             # font_size_mode == "data": scale with transformation matrix
             target_data_height = text_comp.font_size
