@@ -9,6 +9,7 @@ from jeanplot.core.models import (
     BoxStyle,
     LayoutConstraints,
 )
+from jeanplot.core.svg import SVGPathData
 from jeanplot.core.text import Text
 from jeanplot.core.style import jstyle
 
@@ -159,10 +160,29 @@ class TableCell(Container):
                         context, self._dimensions, bg_style, matrix, component=self
                     )
 
-                # manually draw border segments if needed
+                # Draw only the enabled border edges.
                 if render_style.border_color and render_style.border_width > 0:
-                    pass  # TODO: implement manual border segment drawing if needed
-                    # for now, we just skip the border if any side is hidden
+                    border_path = self._build_border_edges_path(
+                        draw_top=draw_top,
+                        draw_right=draw_right,
+                        draw_bottom=draw_bottom,
+                        draw_left=draw_left,
+                    )
+                    if border_path:
+                        renderer.render_path(
+                            context,
+                            SVGPathData(
+                                d=border_path,
+                                fill=None,
+                                stroke=render_style.border_color,
+                                stroke_width=render_style.border_width,
+                                line_style=render_style.border_style,
+                                dash_array=render_style.dash_sequence,
+                                dash_offset=render_style.dash_offset,
+                            ),
+                            matrix,
+                            line_width_mode=render_style.border_width_mode,
+                        )
             else:
                 # all borders visible, render normally
                 renderer.render_rectangle(
@@ -176,6 +196,26 @@ class TableCell(Container):
         for child in self.children:
             child_matrix = matrix @ child.compute_local_matrix()
             child.render(renderer, context, child_matrix)
+
+    def _build_border_edges_path(
+        self, *, draw_top: bool, draw_right: bool, draw_bottom: bool, draw_left: bool
+    ) -> str:
+        w = self._dimensions.width
+        h = self._dimensions.height
+        if w <= 0 or h <= 0:
+            return ""
+
+        segments: list[str] = []
+        if draw_top:
+            segments.append(f"M 0 0 L {w:.3f} 0")
+        if draw_right:
+            segments.append(f"M {w:.3f} 0 L {w:.3f} {h:.3f}")
+        if draw_bottom:
+            segments.append(f"M 0 {h:.3f} L {w:.3f} {h:.3f}")
+        if draw_left:
+            segments.append(f"M 0 0 L 0 {h:.3f}")
+
+        return " ".join(segments)
 
 
 class TableRow(Container):
@@ -500,6 +540,8 @@ class Table(Container):
                 for c in range(num_cols):
                     if is_auto[c]:
                         widths[c] += equal_share
-        # TODO: handle shrinkage if current_total_width > available_width
+        if current_total_width > available_width and current_total_width > 0:
+            shrink_ratio = available_width / current_total_width
+            widths = [w * shrink_ratio for w in widths]
 
         return widths
