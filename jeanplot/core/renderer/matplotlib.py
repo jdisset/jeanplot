@@ -781,11 +781,13 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             ]
         ).T
         world_corners = (matrix @ local_corners).T
-        world_top_left = world_corners[0, :2]
-        world_top_right = world_corners[1, :2]
-        world_bottom_left = world_corners[2, :2]
-        world_top_center = world_corners[4, :2]
-        world_bottom_center = world_corners[5, :2]
+        # Local coordinates use y increasing upward, so y=0 is bottom and y=height is top.
+        world_bottom_left = world_corners[0, :2]
+        world_bottom_right = world_corners[1, :2]
+        world_top_left = world_corners[2, :2]
+        world_top_right = world_corners[3, :2]
+        world_bottom_center = world_corners[4, :2]
+        world_top_center = world_corners[5, :2]
         world_middle_left = world_corners[6, :2]
         world_middle_right = world_corners[7, :2]
         world_center_center = world_corners[8, :2]
@@ -923,11 +925,13 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             local_dx = (comp_w - path_w_data) / 2.0
         elif align == "right":
             local_dx = comp_w - path_w_data
-        # path TextPath starts at baseline-left (roughly ymin=0)
-        if va == "middle":
+        # Path TextPath starts near baseline-left (roughly ymin=0 in local data units).
+        if va == "top":
+            local_dy = comp_h - path_h_data
+        elif va == "middle":
             local_dy = (comp_h - path_h_data) / 2.0  # center path bbox in comp bbox
         elif va == "bottom":
-            local_dy = comp_h - path_h_data  # align path bottom to comp bottom
+            local_dy = 0.0
 
         # apply offset to path origin before world transform
         offset_mat = np.array([[1, 0, local_dx], [0, 1, local_dy], [0, 0, 1]])
