@@ -118,12 +118,10 @@ class TableCell(Container):
         # --- Enforce final width ---
         # Ensure final dimensions strictly respect the calculated width constraint if it was set
         # And if style constraints didn't conflict
-        width_changed = False
         if target_width >= 0 and self.min_dimensions.width == self.max_dimensions.width:
             # Check if size differs significantly before forcing
             if abs(self._dimensions.width - target_width) > 1e-6:
                 self._dimensions.width = target_width
-                width_changed = True
 
         # Also enforce max_width if it's less than current width
         elif (
@@ -131,11 +129,6 @@ class TableCell(Container):
             and self._dimensions.width > self.max_dimensions.width
         ):
             self._dimensions.width = self.max_dimensions.width
-            width_changed = True
-
-        if width_changed:
-            # Recompute AABB if dimensions changed significantly
-            self._transformed_aabb = self.compute_transformed_aabb()
         # --- End of width enforcement ---
 
         return self._dimensions  # Return the potentially adjusted dimensions
