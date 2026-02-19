@@ -25,7 +25,7 @@ COLORS = {
 }
 
 
-def test_cotx_merging():
+def test_cotx_merging(tmp_path):
     """Test that all 4 cotransfections are rendered correctly"""
     erns = ERNS
     recs = [f"{ern}_rec" for ern in erns]
@@ -70,10 +70,7 @@ def test_cotx_merging():
         # Build networks from recipe
         networks = recipe_to_networks(recipe, invert=True)
 
-        # Debug: Print networks
-        print(f"Number of networks generated: {len(networks)}")
-        for i, net in enumerate(networks):
-            print(f"  Network {i+1}: {net.name}")
+        assert len(networks) == 1
 
         # Use the first network for testing
         network = networks[0]
@@ -83,35 +80,30 @@ def test_cotx_merging():
 
         render_circuit_to_ax(network, ax)
 
-        # Check TU information
+        # Check TU information and cotx grouping from generated network
         from biocomptools.toollib.figuremakers.network_adapter import get_tu_informations
         tu_infos = get_tu_informations(network)
-        print("\nTU Information (checking cotx_name):")
-        for tu_id, tu_info in sorted(tu_infos.items()):
-            print(f"  TU {tu_id}:")
-            print(f"    cotx_name: {tu_info.cotx_name}")
-            print(f"    is_marker: {tu_info.is_marker}")
-            print(f"    cotx_marker: {tu_info.cotx_marker}")
+        expected_tu_ids = {
+            "x1_marker_TNFa",
+            "x1_a+_TNFa",
+            "x2_marker_TGF-β",
+            "x2_a+_TGF-β",
+            "x3_marker_IFNab",
+            "x3_a-_IFNab",
+            "ba_marker_Bb",
+            "b_a-_Bb",
+        }
+        assert set(tu_infos.keys()) == expected_tu_ids
+        assert sum(1 for info in tu_infos.values() if info.is_marker) == 4
 
-        # Save the figure for inspection
-        fig.savefig('test_cotx_merging_output.png', dpi=300, bbox_inches='tight')
+        # Save artifact in tmp_path for debugging if needed
+        fig.savefig(tmp_path / "test_cotx_merging_output.png", dpi=300, bbox_inches='tight')
         plt.close(fig)
-
-        # Check the recipe content
-        print(f"\nRecipe cotx count: {len(recipe.content)}")
-        for i, cotx in enumerate(recipe.content):
-            print(f"  CoTx {i+1}: {cotx.name}")
-            print(f"    Units: {len(cotx.units)}")
 
         # Assert we have 4 cotransfections
         assert len(recipe.content) == 4, f"Expected 4 cotransfections, got {len(recipe.content)}"
 
         # Check names are preserved
-        expected_names = ["TNFa", "TGF-β", "IFNab", "Bb"]
+        expected_names = {"TNFa", "TGF-β", "IFNab", "Bb"}
         actual_names = [cotx.name for cotx in recipe.content]
-        assert set(actual_names) == set(expected_names), f"Expected names {expected_names}, got {actual_names}"
-
-
-if __name__ == "__main__":
-    test_cotx_merging()
-    print("Test completed - check test_cotx_merging_output.png")
+        assert set(actual_names) == expected_names, f"Expected names {sorted(expected_names)}, got {actual_names}"

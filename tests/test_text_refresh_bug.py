@@ -37,7 +37,7 @@ class TestTextRefreshBug:
             id="box",
             children=[text],
             min_dimensions=Size(50, 30),
-            style=BoxStyle(border_width=2.0),  # 2 data units border
+            style=BoxStyle(border_width=2.0, border_color="#000000"),  # 2 data units border
         )
         jstyle.apply(box)
 
@@ -65,33 +65,15 @@ class TestTextRefreshBug:
         # Check text font sizes after redraw
         after_font_size = text_artists[0].get_fontsize() if text_artists else None
 
-        print("\nInitial axis limits: (0, 100)")
-        print("After axis limits: (0, 200)")
-        print(f"Initial font size: {initial_font_size:.2f} points")
-        print(f"After font size: {after_font_size:.2f} points")
-        print(f"Initial linewidths: {initial_linewidths}")
-        print(f"After linewidths: {after_linewidths}")
+        assert initial_linewidths and after_linewidths
+        assert initial_font_size is not None and after_font_size is not None
 
-        # With 2x axis range, data-unit elements should appear at half the pixel size
-        # Linewidths should be ~half (refresh_linewidths updates them)
-        # But text font sizes likely stayed the same (BUG!)
+        linewidth_ratio = after_linewidths[0] / initial_linewidths[0]
+        font_ratio = after_font_size / initial_font_size
 
-        if initial_linewidths and after_linewidths:
-            linewidth_ratio = after_linewidths[0] / initial_linewidths[0]
-            print(f"Linewidth ratio (should be ~0.5): {linewidth_ratio:.3f}")
-
-        if initial_font_size and after_font_size:
-            font_ratio = after_font_size / initial_font_size
-            print(f"Font size ratio (should be ~0.5 if refreshed): {font_ratio:.3f}")
-
-            # This is the bug: font size ratio is 1.0 (not refreshed)
-            # while linewidth ratio is ~0.5 (correctly refreshed)
-            if abs(font_ratio - 1.0) < 0.1 and linewidth_ratio < 0.6:
-                pytest.fail(
-                    f"BUG CONFIRMED: Text font size not refreshed on axis change! "
-                    f"Font ratio={font_ratio:.3f} (expected ~0.5), "
-                    f"Linewidth ratio={linewidth_ratio:.3f}"
-                )
+        # With 2x axis range, data-unit elements should appear at half the pixel size.
+        assert 0.35 < linewidth_ratio < 0.65, f"linewidth ratio out of range: {linewidth_ratio:.3f}"
+        assert 0.35 < font_ratio < 0.65, f"font ratio out of range: {font_ratio:.3f}"
 
     def test_text_point_size_consistency_at_render_time(self, cleanup):
         """Verify text is rendered with correct point size at initial render."""
@@ -131,18 +113,8 @@ class TestTextRefreshBug:
 
             plt.close(fig)
 
-        print("\nAt-render-time font sizes:")
-        for r in results:
-            print(f"  axis_range={r['axis_range']}: font={r['font_size_pts']:.2f} pts, "
-                  f"expected={r['expected_pts']:.2f} pts, ppu={r['ppu']:.2f}")
-
         # Font sizes should be 2x different for 2x different axis ranges
         ratio = results[0]['font_size_pts'] / results[1]['font_size_pts']
-        print(f"Ratio (should be ~2.0): {ratio:.3f}")
 
         # At render time, font sizes should be correct
         assert 1.8 < ratio < 2.2, f"Initial render font sizes incorrect: ratio={ratio:.3f}"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
