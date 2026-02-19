@@ -18,13 +18,19 @@ import math
 from jeanplot.core.component import Component
 from jeanplot.core.models import Size, BoxStyle
 from jeanplot.core.renderer.base import BaseRenderer
+from jeanplot.core.renderer.common import (
+    EPSILON,
+    get_matrix_avg_scale,
+    get_mpl_linestyle,
+    get_mpl_linestyle_from_boxstyle,
+    get_recursive_world_bounds,
+)
 from jeanplot.core.svg import (
     SVGElement,
     SVGPathData,
     arc_to_bezier,
 )
 from jeanplot.core.debug import DebugMixin, get_logger
-from jeanplot.core.connector import Connection
 from jeanplot.core.text import Text
 from jeanplot.core.text_metrics import (
     DEFAULT_TEXT_REF_FONT_SIZE,
@@ -33,7 +39,6 @@ from jeanplot.core.text_metrics import (
 )
 
 logger = get_logger(__name__)
-EPSILON = 1e-9
 
 
 def _apply_opacity(color: str | tuple | None, opacity: float) -> str | tuple | None:
@@ -79,27 +84,6 @@ def _linewidth_in_points(data_unit_value: float, axis: Axes) -> float:
     return max(0.0, data_unit_value * axis_scale_factor) if axis_scale_factor > EPSILON else 0.0
 
 
-def _get_matrix_avg_scale(matrix: np.ndarray) -> float:
-    # average scale factor from a 3x3 affine matrix
-    scale_x = np.sqrt(matrix[0, 0] ** 2 + matrix[1, 0] ** 2)
-    scale_y = np.sqrt(matrix[0, 1] ** 2 + matrix[1, 1] ** 2)
-    avg_scale = (scale_x + scale_y) / 2.0
-    return avg_scale if avg_scale > EPSILON else 0.0
-
-
-def _get_mpl_linestyle(path_data: SVGPathData) -> str | tuple[float, tuple[float, ...] | None]:
-    if path_data.dash_array and path_data.line_style == "custom":
-        return (path_data.dash_offset, path_data.dash_array)
-    return {"solid": "-", "dashed": "--", "dotted": ":"}.get(path_data.line_style, "-")
-
-
-def _get_linestyle_from_boxstyle(style: BoxStyle) -> str | tuple[float, tuple[float, ...] | None]:
-    """Get matplotlib linestyle directly from BoxStyle border settings."""
-    if style.dash_sequence and style.border_style == "custom":
-        return (style.dash_offset, style.dash_sequence)
-    return {"solid": "-", "dashed": "--", "dotted": ":"}.get(style.border_style, "-")
-
-
 def _calc_linewidth(
     linewidth_data: float, width_mode: str, matrix: np.ndarray, context: "Axes", has_edge: bool
 ) -> tuple[float, float, bool]:
@@ -109,7 +93,7 @@ def _calc_linewidth(
     if not has_edge or linewidth_data <= 0:
         return 0.0, 0.0, False
     if width_mode == "data":
-        scaled = linewidth_data * _get_matrix_avg_scale(matrix)
+        scaled = linewidth_data * get_matrix_avg_scale(matrix)
         return _linewidth_in_points(scaled, context), scaled, True
     return linewidth_data, 0.0, False
 
@@ -321,14 +305,14 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
 
             # calculate initial linewidth in points
             if is_data_width:
-                matrix_scale = _get_matrix_avg_scale(final_matrix)
+                matrix_scale = get_matrix_avg_scale(final_matrix)
                 scaled_width_data = path_data.stroke_width * matrix_scale
                 scaled_width_data_for_tracking = scaled_width_data  # store for refresh
                 initial_lw_points = _linewidth_in_points(scaled_width_data, context)
             elif final_edgecolor != "none" and path_data.stroke_width > 0:
                 initial_lw_points = path_data.stroke_width  # point mode
 
-            linestyle = _get_mpl_linestyle(path_data)
+            linestyle = get_mpl_linestyle(path_data)
             with _no_autoscale(context):
                 patch = mpatches.PathPatch(
                     mpl_path,
@@ -464,7 +448,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             lw_pts, scaled_w, is_data_w = _calc_linewidth(
                 style.border_width, style.border_width_mode, matrix, context, has_edge
             )
-            linestyle = _get_linestyle_from_boxstyle(style)
+            linestyle = get_mpl_linestyle_from_boxstyle(style)
             with _no_autoscale(context):
                 main_patch = mpatches.PathPatch(
                     main_path,
@@ -511,7 +495,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 facecolor="none",
                 edgecolor=edgecolor,
                 linewidth=lw_pts,
-                linestyle=_get_linestyle_from_boxstyle(style),
+                linestyle=get_mpl_linestyle_from_boxstyle(style),
                 transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
                 capstyle="round",
                 joinstyle="round",
@@ -550,7 +534,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 facecolor="none",
                 edgecolor=edgecolor,
                 linewidth=lw_pts,
-                linestyle=_get_linestyle_from_boxstyle(style),
+                linestyle=get_mpl_linestyle_from_boxstyle(style),
                 transform=mtransforms.Affine2D(matrix=matrix) + context.transData,
                 capstyle="round",
                 joinstyle="round",
@@ -637,45 +621,11 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             cb(context)
         self._refresh_data_units()  # initial update for linewidths and text sizes
 
-    def _get_recursive_world_bounds(
-        self, component: Component, current_bounds=None
-    ) -> tuple[float, float, float, float] | None:
-        # helper to find overall bounds of visible components
-        if not component or not component.show:
-            return current_bounds
-        overall = list(current_bounds) if current_bounds else [np.inf, np.inf, -np.inf, -np.inf]
-
-        if not isinstance(component, Connection):
-            comp_b = component.get_world_bounds()
-            if comp_b:
-                overall = [
-                    min(overall[0], comp_b[0]),
-                    min(overall[1], comp_b[1]),
-                    max(overall[2], comp_b[2]),
-                    max(overall[3], comp_b[3]),
-                ]
-
-        # recurse into children and anchors
-        children_to_check = getattr(component, "children", []) + getattr(
-            component, "anchor_points", []
-        )
-        for child in children_to_check:
-            if not child or not child.show:
-                continue
-            child_bounds = self._get_recursive_world_bounds(child, None)  # recursive call
-            if child_bounds:
-                overall = [
-                    min(overall[0], child_bounds[0]),
-                    min(overall[1], child_bounds[1]),
-                    max(overall[2], child_bounds[2]),
-                    max(overall[3], child_bounds[3]),
-                ]
-
-        return tuple(overall) if overall[0] != np.inf else None
-
     def _adjust_limits(self, context: Axes, root: Component, padding: float = 0.1):
         # set axis limits to encompass rendered content with padding
-        bounds = self._get_recursive_world_bounds(root)
+        from jeanplot.core.connector import Connection
+
+        bounds = get_recursive_world_bounds(root, exclude_types=(Connection,))
         if bounds:
             min_x, min_y, max_x, max_y = bounds
             width = max(max_x - min_x, 1.0)
@@ -765,7 +715,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         world_corners = (matrix @ local_corners).T
         # Local coordinates use y increasing upward, so y=0 is bottom and y=height is top.
         world_bottom_left = world_corners[0, :2]
-        world_bottom_right = world_corners[1, :2]
         world_top_left = world_corners[2, :2]
         world_top_right = world_corners[3, :2]
         world_bottom_center = world_corners[4, :2]

@@ -9,8 +9,14 @@ from lxml import etree
 from jeanplot.core.component import Component
 from jeanplot.core.models import Size, BoxStyle
 from jeanplot.core.renderer.base import BaseRenderer
-from jeanplot.core.svg import SVGElement, SVGPathData
+from jeanplot.core.renderer.common import (
+    EPSILON,
+    get_matrix_avg_scale,
+    get_recursive_world_bounds,
+    get_svg_dasharray,
+)
 from jeanplot.core.connector import Connection
+from jeanplot.core.svg import SVGElement, SVGPathData
 from jeanplot.core.text import Text
 from jeanplot.core.text_metrics import (
     DEFAULT_TEXT_REF_FONT_SIZE,
@@ -19,26 +25,12 @@ from jeanplot.core.text_metrics import (
 from jeanplot.core.debug import DebugMixin, get_logger
 
 logger = get_logger(__name__)
-EPSILON = 1e-9
 SVG_NS = "http://www.w3.org/2000/svg"
 NSMAP = {None: SVG_NS}
 
 
 def _matrix_to_svg_transform(matrix: np.ndarray) -> str:
     return f"matrix({matrix[0, 0]:.6f},{matrix[1, 0]:.6f},{matrix[0, 1]:.6f},{matrix[1, 1]:.6f},{matrix[0, 2]:.6f},{matrix[1, 2]:.6f})"
-
-
-def _get_mpl_linestyle_svg(path_data: SVGPathData) -> str | None:
-    if path_data.dash_array and path_data.line_style == "custom":
-        return ",".join(str(d) for d in path_data.dash_array)
-    style_map = {"dashed": "5,5", "dotted": "2,2"}
-    return style_map.get(path_data.line_style)
-
-
-def _get_matrix_avg_scale(matrix: np.ndarray) -> float:
-    scale_x = np.sqrt(matrix[0, 0] ** 2 + matrix[1, 0] ** 2)
-    scale_y = np.sqrt(matrix[0, 1] ** 2 + matrix[1, 1] ** 2)
-    return (scale_x + scale_y) / 2.0 if (scale_x + scale_y) / 2.0 > EPSILON else 0.0
 
 
 class SVGRenderer(DebugMixin, BaseRenderer):
@@ -73,7 +65,9 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         component.measure_and_layout(self)
 
         if adjust_lims and component.parent is None:
-            bounds = self._get_recursive_world_bounds(component)
+            from jeanplot.core.connector import Connection
+
+            bounds = get_recursive_world_bounds(component, exclude_types=(Connection,))
             if bounds:
                 min_x, min_y, max_x, max_y = bounds
                 width = max(max_x - min_x, 1.0)
@@ -94,40 +88,6 @@ class SVGRenderer(DebugMixin, BaseRenderer):
 
         for cb in self.post_render_callbacks:
             cb(context)
-
-    def _get_recursive_world_bounds(
-        self, component: Component, current_bounds=None
-    ) -> tuple[float, float, float, float] | None:
-        if not component or not component.show:
-            return current_bounds
-        overall = list(current_bounds) if current_bounds else [np.inf, np.inf, -np.inf, -np.inf]
-
-        if not isinstance(component, Connection):
-            comp_b = component.get_world_bounds()
-            if comp_b:
-                overall = [
-                    min(overall[0], comp_b[0]),
-                    min(overall[1], comp_b[1]),
-                    max(overall[2], comp_b[2]),
-                    max(overall[3], comp_b[3]),
-                ]
-
-        children_to_check = getattr(component, "children", []) + getattr(
-            component, "anchor_points", []
-        )
-        for child in children_to_check:
-            if not child or not child.show:
-                continue
-            child_bounds = self._get_recursive_world_bounds(child, None)
-            if child_bounds:
-                overall = [
-                    min(overall[0], child_bounds[0]),
-                    min(overall[1], child_bounds[1]),
-                    max(overall[2], child_bounds[2]),
-                    max(overall[3], child_bounds[3]),
-                ]
-
-        return tuple(overall) if overall[0] != np.inf else None
 
     def render_to_string(self, component: Component) -> str:
         root = self.create_context(800, 600)
@@ -247,10 +207,10 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             path.set("stroke", stroke)
             sw = path_data.stroke_width
             if line_width_mode == "data":
-                sw *= _get_matrix_avg_scale(matrix)
+                sw *= get_matrix_avg_scale(matrix)
             path.set("stroke-width", f"{sw:.2f}")
 
-            dash = _get_mpl_linestyle_svg(path_data)
+            dash = get_svg_dasharray(path_data)
             if dash:
                 path.set("stroke-dasharray", dash)
         else:
