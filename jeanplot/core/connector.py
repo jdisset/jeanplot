@@ -6,8 +6,8 @@ import numpy as np
 import copy
 import logging
 
-# NOTE: Import normalize_vector from path_utils here
 from jeanplot.core.path_utils import find_component_by_path
+from jeanplot.core.connection_routing import find_best_anchor_pair
 from jeanplot.core.curve import (
     CurveDefinition,
     OrthogonalCurve,
@@ -17,7 +17,6 @@ from jeanplot.core.curve import (
 from jeanplot.core.component import Component, Overlay, AnchorComponent
 from jeanplot.core.models import Size, Offset, NormalizedColor, LineWidthMode
 from jeanplot.core.svg import LineEndType, LineStyle, SVGPathData
-from jeanplot.core.path_utils import normalize_vector
 
 logger = logging.getLogger(__name__)
 
@@ -113,93 +112,6 @@ class Connection(Overlay):
         center_offset = Offset(reference_relative=(0.5, 0.5))
         return self._get_offset_world_position(component, center_offset)
 
-    def _get_anchors(self, component: Component) -> list[AnchorComponent]:
-        """helper to get all valid anchor components associated with a component."""
-        anchors = [a for a in getattr(component, "children", []) if isinstance(a, AnchorComponent)]
-        anchors += [a for a in getattr(component, "anchor_points", []) if a not in anchors]
-        valid_anchors = []
-        for a in anchors:
-            # ensure anchor has parent link
-            if not a.parent:
-                a.parent = component
-            valid_anchors.append(a)
-        return valid_anchors
-
-    def _get_effective_anchor_pos(self, anchor: AnchorComponent) -> tuple[float, float] | None:
-        """calculates the effective connection point considering min_segment."""
-        anchor_pos = anchor.get_world_origin()
-        if anchor_pos is None:
-            return None
-
-        direction = getattr(anchor, "direction", None)
-        min_len = getattr(anchor, "min_segment", 0.0)
-
-        if direction and min_len > 1e-6:
-            norm_dir = normalize_vector(direction, default=(0, 0))
-            if norm_dir != (0, 0):
-                effective_pos = (
-                    anchor_pos[0] + norm_dir[0] * min_len,
-                    anchor_pos[1] + norm_dir[1] * min_len,
-                )
-                return effective_pos
-        # return anchor origin if no direction/length
-        return anchor_pos
-
-    def _find_best_anchor_pair(
-        self, start_comp: Component, end_comp: Component
-    ) -> tuple[AnchorComponent, AnchorComponent] | None:
-        """
-        finds the pair of anchors (one from start, one from end) with min distance
-        between their effective connection points (origin + direction*min_length).
-        """
-        start_anchors = self._get_anchors(start_comp)
-        end_anchors = self._get_anchors(end_comp)
-
-        if not start_anchors or not end_anchors:
-            return None
-
-        best_pair = None
-        min_dist_sq = float("inf")
-
-        start_anchor_details = []
-        for s_anchor in start_anchors:
-            s_eff_pos = self._get_effective_anchor_pos(s_anchor)
-            if s_eff_pos:
-                start_anchor_details.append({"anchor": s_anchor, "eff_pos": s_eff_pos})
-
-        end_anchor_details = []
-        for e_anchor in end_anchors:
-            e_eff_pos = self._get_effective_anchor_pos(e_anchor)
-            if e_eff_pos:
-                end_anchor_details.append({"anchor": e_anchor, "eff_pos": e_eff_pos})
-
-        if not start_anchor_details or not end_anchor_details:
-            self._log_debug("could not get effective positions for all anchors.")
-            return None  # could not calculate effective positions
-
-
-        for s_detail in start_anchor_details:
-            s_anchor = s_detail["anchor"]
-            s_eff_pos = s_detail["eff_pos"]
-            for e_detail in end_anchor_details:
-                e_anchor = e_detail["anchor"]
-                e_eff_pos = e_detail["eff_pos"]
-
-                dist_sq = (s_eff_pos[0] - e_eff_pos[0]) ** 2 + (s_eff_pos[1] - e_eff_pos[1]) ** 2
-
-                if dist_sq < min_dist_sq:
-                    min_dist_sq = dist_sq
-                    best_pair = (s_anchor, e_anchor)
-
-        # if best_pair:
-        #     s_id = getattr(best_pair[0], 'id', '?')
-        #     e_id = getattr(best_pair[1], 'id', '?')
-        #     self._log_debug(f"best anchor pair found: ({s_id}, {e_id}), eff_dist_sq={min_dist_sq:.2f}")
-        # else:
-        #     self._log_debug("no suitable anchor pair found.")
-
-        return best_pair
-
     def _update_curve_params_from_anchor(
         self, anchor: Component, is_start: bool, curve_instance: CurveDefinition
     ):
@@ -290,7 +202,7 @@ class Connection(Overlay):
         if self.auto_route:
             # find the pair of anchors (one on start, one on end) with min distance
             # between their effective points (origin + dir*len)
-            best_pair = self._find_best_anchor_pair(start_comp_orig, end_comp_orig)
+            best_pair = find_best_anchor_pair(start_comp_orig, end_comp_orig)
             if best_pair:
                 start_target, end_target = best_pair
                 start_offset = Offset()  # anchor position is inherent
