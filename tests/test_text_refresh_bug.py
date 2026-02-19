@@ -6,13 +6,10 @@ breaking the data-unit proportions.
 """
 
 import pytest
-import numpy as np
 import matplotlib.pyplot as plt
-from io import BytesIO
 
-from jeanplot import Container, Text, Connection, jstyle
-from jeanplot.core.models import LayoutConstraints, BoxStyle, Size
-from jeanplot.core.connector import StraightCurve
+from jeanplot import Container, Text, jstyle
+from jeanplot.core.models import BoxStyle, Size
 from jeanplot.core.renderer.matplotlib import MatplotlibRenderer, _get_points_per_unit_vector
 
 
@@ -68,8 +65,8 @@ class TestTextRefreshBug:
         # Check text font sizes after redraw
         after_font_size = text_artists[0].get_fontsize() if text_artists else None
 
-        print(f"\nInitial axis limits: (0, 100)")
-        print(f"After axis limits: (0, 200)")
+        print("\nInitial axis limits: (0, 100)")
+        print("After axis limits: (0, 200)")
         print(f"Initial font size: {initial_font_size:.2f} points")
         print(f"After font size: {after_font_size:.2f} points")
         print(f"Initial linewidths: {initial_linewidths}")

@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from jeanplot import Container, Text, jstyle
-from jeanplot.core.models import LayoutConstraints, BoxStyle, Transform
+from jeanplot.core.models import LayoutConstraints, Transform
 from jeanplot.core.renderer.matplotlib import MatplotlibRenderer
 
 

@@ -13,10 +13,8 @@ import pytest
 import matplotlib.pyplot as plt
 from PIL import Image
 import io
-import tempfile
-from pathlib import Path
 
-from jeanplot import Container, Text, BoxStyle, LayoutConstraints, Transform, jstyle
+from jeanplot import Container, Text, Transform, jstyle
 from jeanplot.core.renderer.matplotlib import MatplotlibRenderer, _get_points_per_unit_vector
 
 

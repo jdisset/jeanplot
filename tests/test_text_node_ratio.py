@@ -5,7 +5,6 @@ then the rendered pixel ratio should be 7/18 ≈ 0.389 regardless of diagram com
 """
 
 import pytest
-import numpy as np
 import matplotlib.pyplot as plt
 
 from jeanplot import Container, Text, jstyle
@@ -67,7 +66,6 @@ class TestTextNodeRatio:
 
         # Calculate node pixel size from data units
         # Nodes are 18 data units, need to convert to pixels
-        xlim = ax.get_xlim()
         ylim = ax.get_ylim()
         bbox = ax.get_window_extent()
 

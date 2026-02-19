@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 from numpy.testing import assert_allclose
 
-from jeanplot import Container, Size
+from jeanplot import Container
 from jeanplot.core.path_utils import (
     normalize_vector,
     is_collinear,
