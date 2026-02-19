@@ -192,10 +192,7 @@ class TableCell(Container):
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
-        # render children (cell content)
-        for child in self.children:
-            child_matrix = matrix @ child.compute_local_matrix()
-            child.render(renderer, context, child_matrix)
+        self._render_children(renderer, context, matrix)
 
     def _build_border_edges_path(
         self, *, draw_top: bool, draw_right: bool, draw_bottom: bool, draw_left: bool
@@ -265,7 +262,7 @@ class Table(Container):
 
     @model_validator(mode="after")
     def build_table(self):
-        self.children = []  # clear any existing children
+        self.children.clear()  # clear in place to avoid assignment-validation recursion
         if not self.data:
             self._num_columns = 0  # Explicitly set for empty data case
             return self
@@ -477,10 +474,12 @@ class Table(Container):
                 max_natural = 0.0
                 for r in range(len(self.data)):
                     cell_col_idx = 0
-                    for cell_idx_in_row, cell_data in enumerate(self.data[r]):
-                        cell_comp = self.children[r].children[
-                            cell_idx_in_row
-                        ]  # get the actual cell component
+                    row_children = (
+                        self.children[r].children
+                        if r < len(self.children) and isinstance(self.children[r], TableRow)
+                        else []
+                    )
+                    for cell_idx_in_row, cell_comp in enumerate(row_children):
                         colspan = cell_comp.colspan
 
                         # is this cell part of the current column 'c'?

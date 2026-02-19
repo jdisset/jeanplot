@@ -308,6 +308,10 @@ class Container(Component):
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
+        self._render_children(renderer, context, matrix)
+
+    def _render_children(self, renderer: BaseRenderer, context: Any, matrix: np.ndarray):
+        """Render visible children and anchors in z-order."""
         all_children_map = {id(c): c for c in self.children if c}
         for a in self.anchor_points:
             if a:

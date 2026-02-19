@@ -1,5 +1,6 @@
 """Tests for SVG renderer output."""
 
+from io import BytesIO
 import pytest
 
 from jeanplot import (
@@ -12,6 +13,7 @@ from jeanplot import (
     parse_svg,
 )
 from jeanplot.core.renderer.svg import SVGRenderer
+from jeanplot.core.svg import SVGContent, SVGElement, SVGPathData
 
 
 class TestSVGOutput:
@@ -243,3 +245,31 @@ class TestRendererAPI:
         assert output_file.exists()
         content = output_file.read_text()
         assert "<svg" in content
+
+    def test_render_to_output_bytesio(self):
+        """Binary stream output writes bytes instead of str."""
+        renderer = SVGRenderer()
+        container = Container(id="box", min_dimensions=Size(100, 50))
+        ctx = renderer.create_context()
+        renderer.render_component(ctx, container)
+
+        bio = BytesIO()
+        renderer.render_to_output(ctx, bio)
+        assert b"<svg" in bio.getvalue()
+
+    def test_component_path_ids_are_unique(self):
+        """Each emitted path gets a unique DOM id."""
+        renderer = SVGRenderer()
+        multi = SVGElement(
+            id="multi",
+            svg_content=SVGContent(
+                paths=(
+                    SVGPathData(d="M 0 0 L 10 0", stroke="#000000", fill=None),
+                    SVGPathData(d="M 0 1 L 10 1", stroke="#000000", fill=None),
+                )
+            ),
+        )
+        svg = renderer.render_to_string(multi)
+        root = parse_svg(svg)
+        ids = [p.get("id") for p in root.findall(".//{http://www.w3.org/2000/svg}path")]
+        assert len(ids) == len(set(ids))

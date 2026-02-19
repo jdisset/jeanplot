@@ -43,10 +43,12 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         self._current_group: etree._Element | None = None
         self._width: float = 0
         self._height: float = 0
+        self._path_id_counter: int = 0
 
     def create_context(self, width: float = 800, height: float = 600, **kwargs) -> etree._Element:
         self._width = width
         self._height = height
+        self._path_id_counter = 0
         self._root = etree.Element("svg", nsmap=NSMAP)
         self._root.set("width", str(width))
         self._root.set("height", str(height))
@@ -107,10 +109,10 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             with open(output, "w") as f:
                 f.write(svg_str)
         else:
-            if hasattr(output, "mode") and "b" in output.mode:
-                output.write(svg_str.encode("utf-8"))
-            else:
+            try:
                 output.write(svg_str)
+            except TypeError:
+                output.write(svg_str.encode("utf-8"))
         return svg_str
 
     def render_rectangle(
@@ -188,7 +190,8 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         parent = self._current_group if self._current_group is not None else context
         path = etree.SubElement(parent, "path")
         if component_id:
-            path.set("id", f"{component_id}_path")
+            path.set("id", f"{component_id}_path_{self._path_id_counter}")
+            self._path_id_counter += 1
 
         path.set("d", path_data.d)
         path.set("transform", _matrix_to_svg_transform(matrix))
