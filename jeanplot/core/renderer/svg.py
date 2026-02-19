@@ -15,7 +15,6 @@ from jeanplot.core.renderer.common import (
     get_recursive_world_bounds,
     get_svg_dasharray,
 )
-from jeanplot.core.connector import Connection
 from jeanplot.core.svg import SVGElement, SVGPathData
 from jeanplot.core.text import Text
 from jeanplot.core.text_metrics import (
@@ -268,10 +267,37 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             g.set("id", text_component.id)
         g.set("transform", _matrix_to_svg_transform(matrix))
 
+        comp_w = max(0.0, text_component._dimensions.width)
+        comp_h = max(0.0, text_component._dimensions.height)
+
+        if text_component.align == "center":
+            x = comp_w / 2.0
+        elif text_component.align == "right":
+            x = comp_w
+        else:
+            x = 0.0
+
+        if text_component.vertical_align == "top":
+            y = 0.0
+        elif text_component.vertical_align == "middle":
+            y = comp_h / 2.0
+        elif text_component.vertical_align == "bottom":
+            y = comp_h
+        else:
+            y = text_component.font_size
+
+        if text_component.font_size_mode == "points":
+            matrix_scale = max(get_matrix_avg_scale(matrix), EPSILON)
+            effective_font_size = text_component.font_size / matrix_scale
+            font_size_attr = f"{effective_font_size:.4f}pt"
+        else:
+            effective_font_size = text_component.font_size
+            font_size_attr = str(effective_font_size)
+
         text_elem = etree.SubElement(g, "text")
-        text_elem.set("x", "0")
-        text_elem.set("y", str(text_component.font_size))
-        text_elem.set("font-size", str(text_component.font_size))
+        text_elem.set("x", f"{x:.3f}")
+        text_elem.set("y", f"{y:.3f}")
+        text_elem.set("font-size", font_size_attr)
         text_elem.set("fill", text_component.color or "#000000")
 
         if text_component.font_name:
@@ -282,42 +308,34 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             text_elem.set("font-style", text_component.font_style)
 
         anchor_map = {"left": "start", "center": "middle", "right": "end"}
+        baseline_map = {
+            "top": "text-before-edge",
+            "middle": "middle",
+            "bottom": "text-after-edge",
+            "baseline": "alphabetic",
+        }
         text_elem.set("text-anchor", anchor_map.get(text_component.align, "start"))
+        text_elem.set(
+            "dominant-baseline",
+            baseline_map.get(text_component.vertical_align, "alphabetic"),
+        )
 
-        text_elem.text = text_component.text
+        lines = text_component.text.split("\n")
+        if len(lines) == 1:
+            text_elem.text = lines[0]
+        else:
+            line_step = max(0.0, 1.0 + text_component.line_spacing)
+            for i, line in enumerate(lines):
+                tspan = etree.SubElement(text_elem, "tspan")
+                tspan.set("x", f"{x:.3f}")
+                if i == 0:
+                    tspan.set("dy", "0")
+                else:
+                    tspan.set("dy", f"{line_step:.3f}em")
+                tspan.text = line
 
         if text_component.debug:
             self.render_debug(context, text_component, matrix)
-
-    def render_connection_curve(
-        self,
-        context: etree._Element,
-        connection: Connection,
-        local_start: tuple[float, float],
-        local_end: tuple[float, float],
-        local_control_points: list[tuple[float, float]],
-        path_string: str,
-        matrix: np.ndarray,
-    ):
-        parent = self._current_group if self._current_group is not None else context
-        g = etree.SubElement(parent, "g")
-        if connection.id:
-            g.set("id", connection.id)
-        g.set("transform", _matrix_to_svg_transform(matrix))
-
-        path = etree.SubElement(g, "path")
-        path.set("d", path_string)
-        path.set("fill", "none")
-
-        style = connection.safe_style
-        if style.border_color and style.border_color != "none":
-            path.set("stroke", style.border_color)
-            path.set("stroke-width", f"{style.border_width:.2f}")
-            if style.dash_sequence:
-                path.set("stroke-dasharray", ",".join(str(d) for d in style.dash_sequence))
-        else:
-            path.set("stroke", "#000000")
-            path.set("stroke-width", "1")
 
     def render_debug(self, context: etree._Element, component: Component, matrix: np.ndarray):
         if (

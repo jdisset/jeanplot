@@ -44,11 +44,6 @@ class MockRenderer(BaseRenderer):
     def render_text(self, context, text_component, matrix):
         pass
 
-    def render_connection_curve(
-        self, context, connection, local_start, local_end, local_control_points, path_string, matrix
-    ):
-        pass
-
     def render_debug(self, context, component, matrix):
         pass
 

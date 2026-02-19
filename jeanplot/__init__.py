@@ -99,18 +99,11 @@ SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)
 Text.model_rebuild(force=True)
 
-_THEME_LOADED = False
-
-
 def make_context_from_types(types):
     return {t.__name__: t for t in types}
 
 
-def load_default_theme(force=False):
-    global _THEME_LOADED
-    if _THEME_LOADED and not force and getattr(jstyle, "_raw_styles", None):
-        return
-
+def load_default_theme():
     _DEFAULT_THEME_PATH = "pkg:jeanplot:resources/themes/default.yaml"
 
     import dracon as dr
@@ -124,7 +117,3 @@ def load_default_theme(force=False):
     dr.resolve_all_lazy(_theme_dict)
     jstyle.clear()
     jstyle.update(_theme_dict)
-    _THEME_LOADED = True
-
-
-load_default_theme()

@@ -7,7 +7,6 @@ import numpy as np
 from jeanplot.core.component import Component
 from jeanplot.core.models import Size, BoxStyle
 from jeanplot.core.svg import SVGElement, SVGPathData
-from jeanplot.core.connector import Connection  # needed for type hint
 
 
 class BaseRenderer:
@@ -73,19 +72,6 @@ class BaseRenderer:
 
     def render_text(self, context: Any, text_component: Any, matrix: np.ndarray):
         """render text (specific component type handled by implementation)."""
-        raise NotImplementedError
-
-    def render_connection_curve(
-        self,
-        context: Any,
-        connection: Connection,
-        local_start: tuple[float, float],
-        local_end: tuple[float, float],
-        local_control_points: list[tuple[float, float]],
-        path_string: str,
-        matrix: np.ndarray,
-    ):
-        """render the main curve part of a connection."""
         raise NotImplementedError
 
     def render_debug(self, context: Any, component: Component, matrix: np.ndarray):

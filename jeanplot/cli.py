@@ -15,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "theme-check":
-        load_default_theme(force=True)
+        load_default_theme()
         print("theme ok")
         return 0
 
