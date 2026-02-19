@@ -3,7 +3,7 @@
 """Core data models for geometry, styling, and layout."""
 
 from typing import Literal, TypeVar, Annotated
-from pydantic import BaseModel, Field, AliasChoices, BeforeValidator
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 import numpy as np
 import logging
 
@@ -62,10 +62,10 @@ class Size(BaseModel):
 
 
 class Offset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     relative: tuple[float, float] = (0.0, 0.0)
-    reference_relative: tuple[float, float] = Field(
-        default=(0.0, 0.0), validation_alias=AliasChoices("reference_relative", "parent_relative")
-    )
+    reference_relative: tuple[float, float] = (0.0, 0.0)
     absolute: tuple[float, float] = (0.0, 0.0)
 
     def compute(self, self_dims: Size, reference_dims: Size | None = None) -> tuple[float, float]:

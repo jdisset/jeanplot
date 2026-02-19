@@ -278,7 +278,7 @@ def test_layout_children_offsets():
     box4 = Container(
         id="b4",
         min_dimensions=Size(width=BOXW, height=BOXW),
-        offset=Offset(parent_relative=(B4_PR_OFF_X, B4_PR_OFF_Y)),
+        offset=Offset(reference_relative=(B4_PR_OFF_X, B4_PR_OFF_Y)),
         style=BoxStyle(background_color="lightpink"),
     )
 
@@ -291,7 +291,7 @@ def test_layout_children_offsets():
         min_dimensions=Size(width=BOXW, height=BOXW),
         offset=Offset(
             relative=(B5_R_OFF_X, B5_R_OFF_Y),
-            parent_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
+            reference_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
             absolute=(B5_ABS_OFF_X, B5_ABS_OFF_Y),
         ),
         style=BoxStyle(background_color="lightgrey"),
@@ -348,7 +348,7 @@ def test_layout_children_offsets():
 
     # box4 (parent relative offset)
     pos_b4 = get_world_origin(box4)
-    user_offset_b4 = Offset(parent_relative=(B4_PR_OFF_X, B4_PR_OFF_Y))
+    user_offset_b4 = Offset(reference_relative=(B4_PR_OFF_X, B4_PR_OFF_Y))
     delta_b4_x, delta_b4_y = user_offset_b4.compute(box4._dimensions, parent._dimensions)
     exp_b4_x = exp_base_b4_x + delta_b4_x
     exp_b4_y = exp_base_b4_y + delta_b4_y
@@ -358,7 +358,7 @@ def test_layout_children_offsets():
     pos_b5 = get_world_origin(box5)
     user_offset_b5 = Offset(
         relative=(B5_R_OFF_X, B5_R_OFF_Y),
-        parent_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
+        reference_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
         absolute=(B5_ABS_OFF_X, B5_ABS_OFF_Y),
     )
     delta_b5_x, delta_b5_y = user_offset_b5.compute(box5._dimensions, parent._dimensions)
@@ -400,7 +400,7 @@ def test_overlay_positioning():
         style=BoxStyle(background_color="lightblue"),
         offset=Offset(
             relative=(B7_R_OFF_X, B7_R_OFF_Y),
-            parent_relative=(B7_PR_OFF_X, B7_PR_OFF_Y),
+            reference_relative=(B7_PR_OFF_X, B7_PR_OFF_Y),
             absolute=(B7_ABS_OFF_X, B7_ABS_OFF_Y),
         ),
     )
@@ -460,7 +460,7 @@ def test_nested_layout_and_overlay():
         min_dimensions=Size(width=IBOXW, height=IBOXH),
         style=BoxStyle(background_color="darkblue"),
         is_overlay=True,
-        offset=Offset(relative=(0.1, 0.25), parent_relative=(0.05, -0.1), absolute=(-10.0, 5.0)),
+        offset=Offset(relative=(0.1, 0.25), reference_relative=(0.05, -0.1), absolute=(-10.0, 5.0)),
     )
     inner_box2 = Container(  # nested layout child inside box8
         id="inner-box2-layout",
@@ -598,7 +598,7 @@ def test_complex_layout():
         id="parent-relative-offset",
         min_dimensions=Size(width=BOXW, height=BOXW),
         style=BoxStyle(background_color="lightpink", border_color="red", border_width=2),
-        offset=Offset(parent_relative=(B4_PR_OFF_X, B4_PR_OFF_Y)),
+        offset=Offset(reference_relative=(B4_PR_OFF_X, B4_PR_OFF_Y)),
     )
 
     B5_R_OFF_X = 0.2
@@ -613,7 +613,7 @@ def test_complex_layout():
         style=BoxStyle(background_color="lightgrey", border_color="grey", border_width=2),
         offset=Offset(
             relative=(B5_R_OFF_X, B5_R_OFF_Y),
-            parent_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
+            reference_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
             absolute=(B5_ABS_OFF_X, B5_ABS_OFF_Y),
         ),
     )
@@ -637,7 +637,7 @@ def test_complex_layout():
         style=BoxStyle(background_color="lightgrey", border_color="grey", border_width=2),
         offset=Offset(
             relative=(B7_R_OFF_X, B7_R_OFF_Y),
-            parent_relative=(B7_PR_OFF_X, B7_PR_OFF_Y),
+            reference_relative=(B7_PR_OFF_X, B7_PR_OFF_Y),
             absolute=(B7_ABS_OFF_X, B7_ABS_OFF_Y),
         ),
     )
@@ -655,7 +655,7 @@ def test_complex_layout():
         is_overlay=True,
         offset=Offset(
             relative=(IB1_R_OFF_X, IB1_R_OFF_Y),
-            parent_relative=(IB1_PR_OFF_X, IB1_PR_OFF_Y),
+            reference_relative=(IB1_PR_OFF_X, IB1_PR_OFF_Y),
             absolute=(IB1_ABS_OFF_X, IB1_ABS_OFF_Y),
         ),
     )
@@ -691,7 +691,7 @@ def test_complex_layout():
         children=[inner_box1, inner_box2, inner_box3],
         offset=Offset(
             relative=(B8_R_OFF_X, B8_R_OFF_Y),
-            parent_relative=(B8_PR_OFF_X, B8_PR_OFF_Y),
+            reference_relative=(B8_PR_OFF_X, B8_PR_OFF_Y),
             absolute=(B8_ABS_OFF_X, B8_ABS_OFF_Y),
         ),
     )
@@ -760,7 +760,7 @@ def test_complex_layout():
 
     # Box4 Assertions (Parent Relative Offset)
     pos_b4 = get_world_origin(box4)
-    user_offset_b4 = Offset(parent_relative=(B4_PR_OFF_X, B4_PR_OFF_Y))
+    user_offset_b4 = Offset(reference_relative=(B4_PR_OFF_X, B4_PR_OFF_Y))
     delta_b4_x, delta_b4_y = user_offset_b4.compute(box4._dimensions, parent._dimensions)
     exp_b4_x_final = exp_base_b4_x + delta_b4_x
     exp_b4_y_final = exp_base_b4_y + delta_b4_y
@@ -771,7 +771,7 @@ def test_complex_layout():
     pos_b5 = get_world_origin(box5)
     user_offset_b5 = Offset(
         relative=(B5_R_OFF_X, B5_R_OFF_Y),
-        parent_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
+        reference_relative=(B5_PR_OFF_X, B5_PR_OFF_Y),
         absolute=(B5_ABS_OFF_X, B5_ABS_OFF_Y),
     )
     delta_b5_x, delta_b5_y = user_offset_b5.compute(box5._dimensions, parent._dimensions)
@@ -784,7 +784,7 @@ def test_complex_layout():
     pos_b8 = get_world_origin(box8)
     user_offset_b8 = Offset(
         relative=(B8_R_OFF_X, B8_R_OFF_Y),
-        parent_relative=(B8_PR_OFF_X, B8_PR_OFF_Y),
+        reference_relative=(B8_PR_OFF_X, B8_PR_OFF_Y),
         absolute=(B8_ABS_OFF_X, B8_ABS_OFF_Y),
     )
     delta_b8_x, delta_b8_y = user_offset_b8.compute(box8._dimensions, parent._dimensions)
@@ -1630,7 +1630,6 @@ def test_nested_heterogeneous_padding_margin():
 
     ic_content_x = IPAD[3]
     ic_content_y = IPAD[0]
-    ic_content_w = IWIDTH - IPAD[3] - IPAD[1]
     ic_content_h = IHEIGHT - IPAD[0] - IPAD[2]
     exp_gc_local_x = ic_content_x + GMAR[3]
     exp_gc_local_y = ic_content_y + ic_content_h - GMAR[2] - BOXH
@@ -1774,7 +1773,6 @@ def test_container_natural_size_with_constrained_children():
     expected_natural_width = content_natural_w + PARENT_PAD_L + PARENT_PAD_R
     final_parent_w = max(PARENT_MIN_W, expected_natural_width)
     final_parent_h = max(PARENT_MIN_H, expected_natural_height)
-    final_content_h = final_parent_h - PARENT_PAD_T - PARENT_PAD_B
     final_content_x = PARENT_PAD_L
     final_content_y = PARENT_PAD_T
     exp_c1_y = final_content_y + 0

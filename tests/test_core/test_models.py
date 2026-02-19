@@ -1,5 +1,6 @@
 """Tests for core data models."""
 from jeanplot import Size, Offset, BoxStyle, LayoutConstraints, Transform
+from pydantic import ValidationError
 
 
 class TestSize:
@@ -45,9 +46,9 @@ class TestOffset:
         assert dx == 50  # 0.5 * 100
         assert dy == 20  # 0.25 * 80
 
-    def test_parent_relative_offset(self):
-        """Parent-relative offset based on parent size."""
-        o = Offset(parent_relative=(0.1, 0.2))
+    def test_reference_relative_offset(self):
+        """Reference-relative offset based on parent size."""
+        o = Offset(reference_relative=(0.1, 0.2))
         dx, dy = o.compute(Size(50, 50), Size(200, 100))
         assert dx == 20  # 0.1 * 200
         assert dy == 20  # 0.2 * 100
@@ -57,12 +58,20 @@ class TestOffset:
         o = Offset(
             absolute=(5, 5),
             relative=(0.1, 0.1),
-            parent_relative=(0.05, 0.05),
+            reference_relative=(0.05, 0.05),
         )
         dx, dy = o.compute(Size(100, 100), Size(200, 200))
         # 5 + 10 + 10 = 25
         assert dx == 25
         assert dy == 25
+
+    def test_parent_relative_not_supported(self):
+        """Legacy `parent_relative` input is no longer accepted."""
+        try:
+            Offset(parent_relative=(0.1, 0.2))
+        except ValidationError:
+            return
+        raise AssertionError("Offset(parent_relative=...) should fail validation")
 
 
 class TestBoxStyle:
@@ -147,7 +156,6 @@ class TestTransform:
 
     def test_to_matrix_translate(self):
         """Translation in matrix."""
-        import numpy as np
         t = Transform(translate=(10, 20))
         mat = t.to_matrix(Size(100, 100))
         assert mat[0, 2] == 10
@@ -162,7 +170,6 @@ class TestTransform:
 
     def test_to_matrix_rotate(self):
         """Rotation in matrix."""
-        import numpy as np
         from numpy.testing import assert_allclose
         t = Transform(rotate=90)
         mat = t.to_matrix(Size(100, 100))
@@ -172,7 +179,6 @@ class TestTransform:
 
     def test_to_matrix_skew(self):
         """Skew in matrix."""
-        import numpy as np
         t = Transform(skew_x=45)  # 45 degrees
         mat = t.to_matrix(Size(100, 100))
         assert_allclose = __import__('numpy.testing', fromlist=['assert_allclose']).assert_allclose
