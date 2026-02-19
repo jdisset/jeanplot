@@ -5,7 +5,6 @@ When color_remap keys are quoted in YAML (e.g., "${theme.input_main_marker_color
 Dracon doesn't interpolate them, leaving literal strings that fail color normalization.
 """
 
-import pytest
 import dracon as dr
 
 from jeanplot import jstyle, make_context_from_types, DEFAULT_TYPES, SVGElement
@@ -81,3 +80,24 @@ def test_jstyle_loaded_theme_has_resolved_colors():
             assert not key.startswith("${"), (
                 f"jstyle._raw_styles has unresolved color_remap key at {path}: {key}"
             )
+
+
+def test_load_default_theme_replaces_custom_styles():
+    """Calling load_default_theme should restore defaults, not keep ad-hoc styles."""
+    from jeanplot import load_default_theme
+
+    _DEFAULT_THEME_PATH = "pkg:jeanplot:resources/themes/default.yaml"
+    expected_theme = dr.load(
+        _DEFAULT_THEME_PATH,
+        enable_interpolation=True,
+        raw_dict=True,
+        context=make_context_from_types(DEFAULT_TYPES),
+    )
+    dr.resolve_all_lazy(expected_theme)
+
+    jstyle.clear()
+    jstyle.update({"Text": {"color": "red"}})
+    assert jstyle._raw_styles == {"Text": {"color": "red"}}
+
+    load_default_theme()
+    assert jstyle._raw_styles == expected_theme

@@ -1,10 +1,13 @@
 """Tests for SVG renderer output."""
 
+import pytest
+
 from jeanplot import (
     Container,
     Text,
     Size,
     BoxStyle,
+    Transform,
     render_to_svg,
     parse_svg,
 )
@@ -125,6 +128,59 @@ class TestTextRendering:
         assert text_elem is not None
         assert float(text_elem.get("font-size")) == 16.0
         assert text_elem.get("fill").startswith("#ff0000")
+
+    def test_points_mode_scales_font_size_attribute_compensated(self):
+        """Points-mode text should compensate for parent scaling in SVG output."""
+        root = Container(id="root", min_dimensions=Size(200, 80))
+        t1 = Text(id="t1", text="A", font_size=12, font_size_mode="points")
+        scaled = Container(
+            id="scaled",
+            transform=Transform(scale=(2.0, 2.0)),
+            children=[Text(id="t2", text="A", font_size=12, font_size_mode="points")],
+        )
+        root.add_child(t1)
+        root.add_child(scaled)
+
+        svg = render_to_svg(root)
+        xml = parse_svg(svg)
+        text1 = xml.find(".//*[@id='t1']/{http://www.w3.org/2000/svg}text")
+        text2 = xml.find(".//*[@id='t2']/{http://www.w3.org/2000/svg}text")
+        assert text1 is not None
+        assert text2 is not None
+
+        fs1 = text1.get("font-size")
+        fs2 = text2.get("font-size")
+        assert fs1 is not None and fs1.endswith("pt")
+        assert fs2 is not None and fs2.endswith("pt")
+
+        fs1_val = float(fs1[:-2])
+        fs2_val = float(fs2[:-2])
+        # scaled parent should get inverse-compensated font-size attr
+        assert fs2_val == pytest.approx(fs1_val / 2.0, rel=1e-2)
+
+    def test_multiline_text_uses_tspans_and_baseline(self):
+        """Multiline text should emit tspans and baseline metadata."""
+        parent = Container(id="parent", min_dimensions=Size(120, 60))
+        text = Text(
+            id="multi",
+            text="line1\nline2",
+            align="center",
+            vertical_align="bottom",
+            line_spacing=0.5,
+        )
+        parent.add_child(text)
+
+        svg = render_to_svg(parent)
+        xml = parse_svg(svg)
+        text_elem = xml.find(".//*[@id='multi']/{http://www.w3.org/2000/svg}text")
+        assert text_elem is not None
+        assert text_elem.get("text-anchor") == "middle"
+        assert text_elem.get("dominant-baseline") == "text-after-edge"
+
+        tspans = text_elem.findall("{http://www.w3.org/2000/svg}tspan")
+        assert len(tspans) == 2
+        assert tspans[0].get("dy") == "0"
+        assert tspans[1].get("dy") == "1.500em"
 
 
 class TestNestedComponents:
