@@ -15,7 +15,7 @@ from jeanplot.core.svg import SVGElement, get_svg_data, make_svg_line, SVGConten
 from jeanplot.core.container import Container
 from jeanplot.core.style import jstyle
 from jeanplot.core.component import AnchorComponent
-from jeanplot.core.text import Text
+from jeanplot.core.text import Text, TextSegment
 from jeanplot.core.models import BoxStyle, LayoutConstraints, Offset
 import logging
 
@@ -87,7 +87,7 @@ class TranscriptionUnit(Container):
 
     name: str | None = None
     label: Text | None = None
-    ratio_percent: float | None = None  # percentage of cotx (0-100)
+    ratio_normalized: float | None = None  # min-ratio-normalized-to-one value
     disabled: bool = False
     line_thickness: float = 1.0
     line_color: str = "#333333"
@@ -121,23 +121,23 @@ class TranscriptionUnit(Container):
             if not any(c.id == self.label.id for c in self.children if c.id and self.label.id):
                 self.add_child(self.label)
 
-        # create ratio percentage label if ratio_percent is set (prepended to name)
-        if self.ratio_percent is not None and self._ratio_label is None:
-            pct = int(round(self.ratio_percent)) if abs(self.ratio_percent - round(self.ratio_percent)) < 0.1 else self.ratio_percent
-            pct_text = f"{pct:.0f}%" if isinstance(pct, int) or pct == int(pct) else f"{pct:.1f}%"
-            # Combine percentage with name: "40% TU_name" (only if not already added)
-            if self.label and "%" not in self.label.text:
-                self.label.text = f"{pct_text} {self.label.text}"
-                self.label.font_weight = "bold"
+        # append normalized ratio as bold "(×X)" suffix via segments
+        if self.ratio_normalized is not None and self._ratio_label is None:
+            ratio_str = _format_ratio_multiplier(self.ratio_normalized)
+            if self.label and self.label.segments is None:
+                self.label.segments = [
+                    TextSegment(text=self.label.text),
+                    TextSegment(text=f" {ratio_str}", font_weight="bold"),
+                ]
                 self._ratio_label = self.label  # mark as processed
             elif not self.label:
                 self._ratio_label = Text(
                     id=f"ratio_{self.id}",
-                    text=pct_text,
+                    text=ratio_str,
                     style_class=["tu-ratio-label"],
                     is_overlay=True,
                     color="#666666",
-                    font_size=4.5,
+                    font_size=3.5,
                     font_weight="bold",
                     offset=Offset(relative=(0.5, 0.0), absolute=(0, -3)),
                 )
@@ -191,18 +191,10 @@ class TranscriptionUnit(Container):
             self._tu_line.offset = Offset(absolute=(min_x, line_y))
 
 
-def _format_ratios(ratios: list[float] | None) -> str | None:
-    """Format ratios as a colon-separated string like '1:2:1'."""
-    if not ratios:
-        return None
-    # Round to integers if close enough, otherwise 1 decimal
-    parts = []
-    for r in ratios:
-        if abs(r - round(r)) < 0.01:
-            parts.append(str(int(round(r))))
-        else:
-            parts.append(f"{r:.1f}")
-    return ":".join(parts)
+def _format_ratio_multiplier(val: float) -> str:
+    """Format a normalized ratio as '(×X)' with integer or 1-decimal display."""
+    num = f"{int(round(val))}" if abs(val - round(val)) < 0.01 else f"{val:.1f}"
+    return f"(\u00d7{num})"
 
 
 class Source(Container):
@@ -210,6 +202,7 @@ class Source(Container):
 
     source_type: Literal["plasmid", "cotx", "mix", "linear"] | None = "cotx"
     marker: str | None = None
+    marker_ratio: float | None = None  # marker source's normalized ratio
     ratios: list[float] | None = None  # per-TU ratios (normalized, smallest=1)
     tag_label: str | None = None
 
@@ -240,27 +233,29 @@ class Source(Container):
                     "mix": AGGREGATION_LOGO_PATH,
                 }.get(self.source_type)
 
-            # Build effective label: ratios + marker
+            # Build effective label: "marker (×ratio)" with bold ratio
             effective_label = self.tag_label
-            if effective_label is None:
-                parts = []
-                ratio_str = _format_ratios(self.ratios)
-                if ratio_str:
-                    parts.append(ratio_str)
-                if self.marker:
-                    parts.append(self.marker)
-                if parts:
-                    effective_label = " ".join(parts)
+            label_segments: list[TextSegment] | None = None
+            if effective_label is None and self.marker:
+                if self.marker_ratio is not None:
+                    ratio_str = _format_ratio_multiplier(self.marker_ratio)
+                    effective_label = f"{self.marker} {ratio_str}"
+                    label_segments = [
+                        TextSegment(text=self.marker),
+                        TextSegment(text=f" {ratio_str}", font_weight="bold"),
+                    ]
+                else:
+                    effective_label = self.marker
 
             tag_elements = []
             if svg_path:
                 tag_elements.append(SVGElement(svg_content=svg_path, id=f"{self.id}_tag_icon"))
             if effective_label is not None:
-                label_lines = effective_label.split("\n")
-                for i, line in enumerate(label_lines):
-                    # use the correct text component id format if self.id is set
-                    text_id = f"{self.id}_tag_label_{i}" if self.id else f"tag_label_{i}"
-                    tag_elements.append(Text(text=line, id=text_id))
+                text_id = f"{self.id}_tag_label_0" if self.id else "tag_label_0"
+                tag_text = Text(text=effective_label, id=text_id)
+                if label_segments:
+                    tag_text.segments = label_segments
+                tag_elements.append(tag_text)
 
             if tag_elements:
                 # use correct container id format if self.id is set

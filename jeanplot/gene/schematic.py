@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, NamedTuple, TYPE_CHECKING
 from pydantic import Field, PrivateAttr
 
 from jeanplot.core.container import Container
@@ -10,6 +10,16 @@ from jeanplot.gene.data import CircuitData
 
 if TYPE_CHECKING:
     from jeanplot.gene.elements import TranscriptionUnit
+
+
+class _SourceSummary(NamedTuple):
+    marker: str | None
+    source_type: str | None
+    ratios: list[float] | None
+    marker_ratio: float | None
+
+
+_EMPTY_SOURCE = _SourceSummary(None, None, None, None)
 
 
 class TranscriptionUnitRow(Container):
@@ -25,6 +35,7 @@ class SourceAnnotation(Container):
 
     source_id: str | None = None
     marker: str | None = None
+    marker_ratio: float | None = None
     ratios: list[float] | None = None
     source_type: Literal["plasmid", "cotx", "mix", "linear"] | None = "cotx"
     style_class: list[str] = Field(default_factory=lambda: ["SourceAnnotation"])
@@ -44,6 +55,7 @@ class SourceAnnotation(Container):
                 id=f"proxy_{self.id}" if self.id else None,
                 source_type=self.source_type,
                 marker=self.marker,
+                marker_ratio=self.marker_ratio,
                 ratios=self.ratios,
                 parent=self,
             )
@@ -111,13 +123,12 @@ class GeneticSchematic(Container):
         """Create TranscriptionUnit components from data."""
         from jeanplot.gene.elements import TranscriptionUnit, GeneticPart
 
-        # Build source lookup: source_id -> (marker, type, ratios)
         source_by_tu: dict[str, str] = {}
-        source_info: dict[str, tuple[str | None, str | None, list[float] | None]] = {}
+        source_info: dict[str, _SourceSummary] = {}
         for source in self.data.sources:
             for tu_id in source.tu_ids:
                 source_by_tu[tu_id] = source.id
-            source_info[source.id] = (source.marker, source.source_type, source.ratios)
+            source_info[source.id] = _SourceSummary(source.marker, source.source_type, source.ratios, source.marker_ratio)
 
         rows_dict: dict[int, list[TranscriptionUnit]] = {}
 
@@ -125,7 +136,7 @@ class GeneticSchematic(Container):
             tu = TranscriptionUnit(
                 id=tu_data.id,
                 name=tu_data.name,
-                ratio_percent=tu_data.ratio_percent,
+                ratio_normalized=tu_data.ratio_normalized,
                 disabled=tu_data.disabled,
             )
             for part_data in tu_data.parts:
@@ -146,15 +157,16 @@ class GeneticSchematic(Container):
             # Check if this row's TUs belong to a source with marker/ratios
             first_tu_id = tus_in_row[0].id
             source_id = source_by_tu.get(first_tu_id)
-            marker, source_type, ratios = source_info.get(source_id, (None, None, None)) if source_id else (None, None, None)
+            info = source_info.get(source_id, _EMPTY_SOURCE) if source_id else _EMPTY_SOURCE
 
-            if self.show_sources and (marker or ratios):
+            if self.show_sources and (info.marker or info.ratios):
                 wrapper = SourceAnnotation(
                     id=f"source_{source_id}",
                     source_id=source_id,
-                    marker=marker,
-                    ratios=ratios,
-                    source_type=source_type or "cotx",
+                    marker=info.marker,
+                    marker_ratio=info.marker_ratio,
+                    ratios=info.ratios,
+                    source_type=info.source_type or "cotx",
                     children=tus_in_row,
                 )
                 self.add_child(wrapper)

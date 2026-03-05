@@ -30,7 +30,7 @@ class TUData(BaseModel):
     parts: list[PartData] = Field(default_factory=list)
     source_id: str | None = None
     position: int = 0
-    ratio_percent: float | None = None  # percentage of cotx (0-100)
+    ratio_normalized: float | None = None  # min-ratio-normalized-to-one value
     disabled: bool = False
 
 
@@ -41,6 +41,7 @@ class SourceData(BaseModel):
     tu_ids: list[str] = Field(default_factory=list)
     ratios: list[float] | None = None  # per-TU ratios (normalized, smallest=1)
     marker: str | None = None
+    marker_ratio: float | None = None  # marker source's normalized ratio
 
 
 class InteractionData(BaseModel):

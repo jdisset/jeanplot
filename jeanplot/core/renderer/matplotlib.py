@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """matplotlib rendering backend for jeanplot."""
 
+from __future__ import annotations
+
 import numpy as np
 import matplotlib.pyplot as plt
 from svgpath2mpl import parse_path
@@ -37,6 +39,11 @@ from jeanplot.core.text_metrics import (
     build_font_properties,
     measure_text_metrics,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from jeanplot.core.connection_label import ConnectionLabel
 
 logger = get_logger(__name__)
 
@@ -153,6 +160,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         # points per data unit at identity transform (for font_size_mode="points")
         self._points_per_data_unit: float = 1.0
         self.force_native_text: bool = force_native_text
+        self._pending_connection_clips: list = []
 
     def _disconnect_draw_event(self):
         # disconnect the draw event callback if it exists
@@ -293,7 +301,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 remap.get(path_data.stroke, path_data.stroke) if path_data.stroke else None
             )
             final_facecolor = _apply_opacity(fill_color_out, opacity) if fill_color_out else "none"
-            final_edgecolor = _apply_opacity(stroke_color_out, opacity) if stroke_color_out else "none"
+            final_edgecolor = (
+                _apply_opacity(stroke_color_out, opacity) if stroke_color_out else "none"
+            )
 
             initial_lw_points = 0.0
             scaled_width_data_for_tracking = 0.0
@@ -325,6 +335,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                     joinstyle="round",
                 )
                 context.add_patch(patch)
+                if component_id:
+                    patch.set_gid(component_id)
                 if is_data_width:
                     self.track_patch(patch, scaled_width_data_for_tracking)
 
@@ -584,6 +596,63 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if svg_element.debug:
             self.render_debug(context, svg_element, matrix)
 
+    def render_connection_label(
+        self,
+        context: Axes,
+        label: "ConnectionLabel",
+        wx: float,
+        wy: float,
+        angle_deg: float,
+        world_matrix: np.ndarray,
+    ) -> None:
+        """Render a ConnectionLabel at the given world position with rotation."""
+        import matplotlib.patheffects as mpe
+
+        data_fontsize = label.font_size
+        ppu_y = _get_points_per_unit_vector(context, world_matrix, vector=(0, 1))
+        fontsize_pts = data_fontsize * ppu_y if ppu_y > EPSILON else data_fontsize
+
+        path_effects = []
+        if label.halo and label.halo.width > 0:
+            path_effects.append(
+                mpe.withStroke(linewidth=label.halo.width, foreground=label.halo.color)
+            )
+        else:
+            stroke_w = max(2.0, fontsize_pts * 0.4)
+            path_effects.append(mpe.withStroke(linewidth=stroke_w, foreground="white"))
+
+        opacity = getattr(label, "opacity", 1.0)
+        text_color = _apply_opacity(label.color, opacity) if label.color else None
+
+        props = build_font_properties(
+            font_name=label.font_name,
+            font_weight=label.font_weight,
+            font_style=label.font_style,
+        )
+
+        with _no_autoscale(context):
+            text_artist = context.text(
+                wx,
+                wy,
+                label.effective_text,
+                fontsize=fontsize_pts,
+                color=text_color,
+                ha="center",
+                va="center",
+                rotation=angle_deg,
+                path_effects=path_effects,
+                zorder=label.z_index,
+                fontproperties=props,
+                rotation_mode="anchor",
+            )
+        label._text_artist = text_artist
+
+        # Track for font size refresh (data-unit sizing)
+        self._data_font_texts.append((text_artist, data_fontsize, world_matrix.copy()))
+
+        if label.clip_connection:
+            self._pending_connection_clips.append(label)
+
     def render_component(self, context: Axes, component: Component, adjust_lims: bool = True):
         # main entry point to render a component tree
         if self._context != context:
@@ -592,7 +661,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             self._context = context
             fig = context.get_figure()
             if fig and fig.canvas:
-                self._draw_event_cid = fig.canvas.mpl_connect("draw_event", self._refresh_data_units)
+                self._draw_event_cid = fig.canvas.mpl_connect(
+                    "draw_event", self._refresh_data_units
+                )
 
         component.measure_and_layout(self)
 
@@ -608,8 +679,15 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             cb(context)
         self._data_width_patches = []  # clear tracked patches for this render pass
         self._data_font_texts = []  # clear tracked texts for this render pass
+        self._pending_connection_clips = []  # clear pending clips for this render pass
         root_world_matrix = component.compute_world_matrix()
         component.render(self, context, root_world_matrix)  # recursively render
+        # Auto-finalize connection label clips after tree render
+        if self._pending_connection_clips:
+            from jeanplot.core.connection_label import ConnectionLabel
+
+            ConnectionLabel.finalize_clips(self._pending_connection_clips, context)
+            self._pending_connection_clips = []
         for cb in self.post_render_callbacks:
             cb(context)
         self._refresh_data_units()  # initial update for linewidths and text sizes
@@ -639,7 +717,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
 
     def measure_text(self, text_component: Text) -> Size:
         metrics = measure_text_metrics(
-            text=text_component.text or "",
+            text=text_component.effective_text or "",
             font_name=text_component.font_name,
             font_weight=text_component.font_weight,
             font_style=text_component.font_style,
@@ -662,7 +740,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         # render using native ax.text, calculating point size based on target data height
         comp_id = text_component.id or "unknown_text"
         if (
-            not text_component.text
+            not text_component.effective_text
             or not text_component.show
             or not text_component._text_metrics_cache
         ):
@@ -767,7 +845,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             text_artist = context.text(
                 anchor_x,
                 anchor_y,
-                text_component.text,
+                text_component.effective_text,
                 fontsize=required_point_size,
                 color=text_color,
                 ha=mpl_ha,
@@ -777,6 +855,17 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 linespacing=1.0 + text_component.line_spacing,
                 rotation_mode="anchor",
             )
+            if text_component.halo and text_component.halo.width > 0:
+                import matplotlib.patheffects as mpe
+
+                text_artist.set_path_effects(
+                    [
+                        mpe.withStroke(
+                            linewidth=text_component.halo.width,
+                            foreground=text_component.halo.color,
+                        )
+                    ]
+                )
             # Track text for font size refresh if using data-unit sizing
             if text_component.font_size_mode == "data":
                 self._data_font_texts.append((text_artist, target_data_height, matrix.copy()))
@@ -784,7 +873,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
     def _render_text_as_paths(self, context: Axes, text_comp: Text, matrix: np.ndarray):
         """renders text using converted matplotlib paths."""
         comp_id = text_comp.id or "unknown_text_path"
-        if not text_comp.text or not text_comp.show or not text_comp._text_metrics_cache:
+        if not text_comp.effective_text or not text_comp.show or not text_comp._text_metrics_cache:
             self._log_debug(f"_render_text_as_paths skipped for {comp_id}: missing info")
             return
 
@@ -798,7 +887,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             target_data_height = text_comp.font_size
             ppu_y = _get_points_per_unit_vector(context, matrix, vector=(0, 1))
             if ppu_y <= EPSILON:
-                self._log_debug(f"skipping render path '{comp_id}': zero points per vertical data unit")
+                self._log_debug(
+                    f"skipping render path '{comp_id}': zero points per vertical data unit"
+                )
                 return
             required_point_size = max(0.1, target_data_height * ppu_y)
 
@@ -812,7 +903,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 font_weight=text_comp.font_weight,
                 font_style=text_comp.font_style,
             )
-            mpl_render_path = TextPath((0, 0), text_comp.text, size=required_point_size, prop=props)
+            mpl_render_path = TextPath(
+                (0, 0), text_comp.effective_text, size=required_point_size, prop=props
+            )
             text_comp._render_path_cache = (required_point_size, mpl_render_path)
         else:
             mpl_render_path = text_comp._render_path_cache[1]
@@ -864,15 +957,25 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         path_transform = mtransforms.Affine2D(matrix=path_world_matrix) + context.transData
 
         with _no_autoscale(context):
-            context.add_patch(
-                mpatches.PathPatch(
-                    mpl_render_path,
-                    facecolor=text_comp.color,
-                    edgecolor="none",
-                    linewidth=0,
-                    transform=path_transform,  # use transform including calculated offset
-                )
+            patch = mpatches.PathPatch(
+                mpl_render_path,
+                facecolor=text_comp.color,
+                edgecolor="none",
+                linewidth=0,
+                transform=path_transform,  # use transform including calculated offset
             )
+            if text_comp.halo and text_comp.halo.width > 0:
+                import matplotlib.patheffects as mpe
+
+                patch.set_path_effects(
+                    [
+                        mpe.withStroke(
+                            linewidth=text_comp.halo.width,
+                            foreground=text_comp.halo.color,
+                        )
+                    ]
+                )
+            context.add_patch(patch)
 
     def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
         # draw red dashed bounding box and origin marker

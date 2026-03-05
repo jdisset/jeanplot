@@ -2,22 +2,34 @@
 # -*- coding: utf-8 -*-
 """Text component definition."""
 
+from __future__ import annotations
 from typing import Literal, Any
 import numpy as np
-from pydantic import PrivateAttr, Field
+from pydantic import BaseModel, PrivateAttr, Field
 
 # use absolute imports
 from jeanplot.core.component import Component
-from jeanplot.core.models import Size, TextMetrics
+from jeanplot.core.models import Size, TextMetrics, TextHalo
 from jeanplot.core.debug import get_logger
 
 logger = get_logger(__name__)
+
+
+class TextSegment(BaseModel):
+    """A styled segment within a Text element, rendered as a tspan in SVG."""
+
+    text: str
+    font_weight: Literal["normal", "bold"] | None = None
+    font_style: Literal["normal", "italic"] | None = None
+    color: str | None = None
+    font_size: float | None = None  # override, in same units as parent
 
 
 class Text(Component):
     """text component rendered using native matplotlib text."""
 
     text: str = ""
+    segments: list[TextSegment] | None = None  # styled segments (overrides text for rendering)
     font_name: str | None = None
     # font_size meaning depends on font_size_mode:
     # - "points": font_size is in typographic points (consistent visual size)
@@ -38,6 +50,7 @@ class Text(Component):
     align: Literal["left", "center", "right"] = "left"
     vertical_align: Literal["top", "middle", "bottom", "baseline"] = "middle"
     line_spacing: float = 0.2  # factor of base line height
+    halo: TextHalo | None = None
 
     # renderers' native text rendering methods are used by default
     # we switch to path rendering if render_as_path is set to True
@@ -51,6 +64,13 @@ class Text(Component):
     # explicitly set style to None, jstyle can override if needed
     style: Any = Field(default=None, validate_default=False)
 
+    @property
+    def effective_text(self) -> str:
+        """Concatenated text from segments if present, otherwise self.text."""
+        if self.segments:
+            return "".join(s.text for s in self.segments)
+        return self.text
+
     def _measure_natural(self, renderer) -> Size:
         """
         calculates natural data-unit size from renderer-provided point metrics.
@@ -59,7 +79,7 @@ class Text(Component):
         (TextMetrics.ref_font_size). We scale those metrics linearly to the
         requested font size and convert to data units when needed.
         """
-        if not self.text or not renderer or not hasattr(renderer, "measure_text"):
+        if not self.effective_text or not renderer or not hasattr(renderer, "measure_text"):
             self._text_metrics_cache = None
             return Size(0, 0)
 
@@ -126,7 +146,7 @@ class Text(Component):
 
     def render(self, renderer, context: Any, matrix: np.ndarray):
         """render text using the appropriate method based on render_as_path."""
-        if not self.show or not self.text:
+        if not self.show or not self.effective_text:
             return
 
         if not self._text_metrics_cache:
@@ -143,9 +163,7 @@ class Text(Component):
         force_native_text = bool(getattr(renderer, "force_native_text", False))
         if not force_native_text and (
             self.render_as_path is True
-            or (
-                self.render_as_path == "auto" and self.has_effective_skew(matrix)
-            )
+            or (self.render_as_path == "auto" and self.has_effective_skew(matrix))
         ):
             if hasattr(renderer, "_render_text_as_paths"):
                 renderer._render_text_as_paths(context, self, matrix)

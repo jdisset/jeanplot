@@ -1,7 +1,15 @@
 # Core
 from jeanplot.core.component import Component, AnchorComponent, Overlay
 from jeanplot.core.container import Container
-from jeanplot.core.models import Size, BoxStyle, LayoutConstraints, Offset, Transform, Shadow
+from jeanplot.core.models import (
+    Size,
+    BoxStyle,
+    LayoutConstraints,
+    Offset,
+    Transform,
+    Shadow,
+    TextHalo,
+)
 from jeanplot.core.connector import Connection, OrthogonalCurve, SimpleBezierCurve, StraightCurve
 from jeanplot.core.svg import LineEndFlat, LineEndCircle, LineEndArrow, SVGElement
 from jeanplot.core.curve import CurveDefinition
@@ -14,6 +22,7 @@ from jeanplot.core.debug import (
 )
 from jeanplot.core.renderer import BaseRenderer, MatplotlibRenderer, SVGRenderer
 from jeanplot.core.text import Text
+from jeanplot.core.connection_label import ConnectionLabel
 from jeanplot.core.table import Table, TableRow, TableCell
 from jeanplot.render import (
     render as render,
@@ -57,6 +66,7 @@ DEFAULT_TYPES = [
     Offset,
     Transform,
     Shadow,
+    TextHalo,
     Connection,
     OrthogonalCurve,
     SimpleBezierCurve,
@@ -69,6 +79,7 @@ DEFAULT_TYPES = [
     MatplotlibRenderer,
     SVGRenderer,
     Text,
+    ConnectionLabel,
     SVGElement,
     Table,
     TableRow,
@@ -95,6 +106,8 @@ DEFAULT_TYPES = [
 SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)
 Text.model_rebuild(force=True)
+ConnectionLabel.model_rebuild(force=True)
+
 
 def make_context_from_types(types):
     return {t.__name__: t for t in types}

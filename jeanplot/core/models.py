@@ -210,6 +210,13 @@ class Shadow(BaseModel):
     resolution: float = 1.0
 
 
+class TextHalo(BaseModel):
+    """Stroke/outline effect around text (character-level halo)."""
+
+    color: NormalizedColor = "#ffffffee"
+    width: float = 2.0  # stroke width in points
+
+
 class BoxStyle(BorderStyle, MarginPadding):
     background_color: NormalizedColor = None
     shadow: Shadow | None = None

@@ -389,6 +389,25 @@ class Connection(Overlay):
         if self.debug:
             renderer.render_debug(context, self, matrix)
 
+    def get_point_along(
+        self, distance: float, *, relative: bool = True
+    ) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        """(point, tangent) along rendered path in local coords.
+        Returns None if connection hasn't been rendered yet."""
+        if (
+            self._render_active_curve is None
+            or self._render_local_start is None
+            or self._render_local_end is None
+        ):
+            return None
+        return self._render_active_curve.evaluate_at_distance(
+            distance,
+            self._render_local_start,
+            self._render_local_end,
+            self._render_local_control_points,
+            relative=relative,
+        )
+
     def _get_world_connection_points(
         self,
     ) -> tuple[tuple[float, float], tuple[float, float], CurveDefinition] | None:

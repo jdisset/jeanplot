@@ -17,6 +17,7 @@ from jeanplot.core.models import (
     Offset as Offset,
     Transform as Transform,
     Shadow as Shadow,
+    TextHalo as TextHalo,
 )
 from jeanplot.core.style import jstyle as jstyle
 from jeanplot.core.svg import (
@@ -26,6 +27,7 @@ from jeanplot.core.svg import (
     LineEndArrow as LineEndArrow,
 )
 from jeanplot.core.text import Text as Text
+from jeanplot.core.connection_label import ConnectionLabel as ConnectionLabel
 from jeanplot.core.curve import CurveDefinition as CurveDefinition
 from jeanplot.core.debug import (
     debug_print as debug_print,

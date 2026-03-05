@@ -261,7 +261,7 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             self.render_debug(context, svg_element, matrix)
 
     def render_text(self, context: etree._Element, text_component: Text, matrix: np.ndarray):
-        if not text_component.text or not text_component.show:
+        if not text_component.effective_text or not text_component.show:
             return
 
         parent = self._current_group if self._current_group is not None else context
@@ -323,19 +323,37 @@ class SVGRenderer(DebugMixin, BaseRenderer):
             baseline_map.get(text_component.vertical_align, "alphabetic"),
         )
 
-        lines = text_component.text.split("\n")
-        if len(lines) == 1:
-            text_elem.text = lines[0]
-        else:
-            line_step = max(0.0, 1.0 + text_component.line_spacing)
-            for i, line in enumerate(lines):
+        if text_component.segments:
+            # styled segments: each gets its own tspan with optional overrides
+            for seg in text_component.segments:
                 tspan = etree.SubElement(text_elem, "tspan")
-                tspan.set("x", f"{x:.3f}")
-                if i == 0:
-                    tspan.set("dy", "0")
-                else:
-                    tspan.set("dy", f"{line_step:.3f}em")
-                tspan.text = line
+                tspan.text = seg.text
+                if seg.font_weight and seg.font_weight != text_component.font_weight:
+                    tspan.set("font-weight", seg.font_weight)
+                if seg.font_style and seg.font_style != text_component.font_style:
+                    tspan.set("font-style", seg.font_style)
+                if seg.color and seg.color != (text_component.color or "#000000"):
+                    tspan.set("fill", seg.color)
+                if seg.font_size is not None:
+                    if text_component.font_size_mode == "points":
+                        matrix_scale = max(get_matrix_avg_scale(matrix), EPSILON)
+                        tspan.set("font-size", f"{seg.font_size / matrix_scale:.4f}pt")
+                    else:
+                        tspan.set("font-size", str(seg.font_size))
+        else:
+            lines = text_component.text.split("\n")
+            if len(lines) == 1:
+                text_elem.text = lines[0]
+            else:
+                line_step = max(0.0, 1.0 + text_component.line_spacing)
+                for i, line in enumerate(lines):
+                    tspan = etree.SubElement(text_elem, "tspan")
+                    tspan.set("x", f"{x:.3f}")
+                    if i == 0:
+                        tspan.set("dy", "0")
+                    else:
+                        tspan.set("dy", f"{line_step:.3f}em")
+                    tspan.text = line
 
         if text_component.debug:
             self.render_debug(context, text_component, matrix)
@@ -382,7 +400,7 @@ class SVGRenderer(DebugMixin, BaseRenderer):
 
     def measure_text(self, text_component: Text) -> Size:
         metrics = measure_text_metrics(
-            text=text_component.text or "",
+            text=text_component.effective_text or "",
             font_name=text_component.font_name,
             font_weight=text_component.font_weight,
             font_style=text_component.font_style,
