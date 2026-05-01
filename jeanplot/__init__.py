@@ -113,17 +113,20 @@ def make_context_from_types(types):
     return {t.__name__: t for t in types}
 
 
-def load_default_theme():
-    _DEFAULT_THEME_PATH = "pkg:jeanplot:resources/themes/default.yaml"
+_DEFAULT_THEME_CACHE = None
 
-    import dracon as dr
 
-    _theme_dict = dr.load(
-        _DEFAULT_THEME_PATH,
-        enable_interpolation=True,
-        raw_dict=True,
-        context=make_context_from_types(DEFAULT_TYPES),
-    )
-    dr.resolve_all_lazy(_theme_dict)
+def load_default_theme(force: bool = False):
+    global _DEFAULT_THEME_CACHE
+    if _DEFAULT_THEME_CACHE is None or force:
+        import dracon as dr
+        theme = dr.load(
+            "pkg:jeanplot:resources/themes/default.yaml",
+            enable_interpolation=True,
+            raw_dict=True,
+            context=make_context_from_types(DEFAULT_TYPES),
+        )
+        dr.resolve_all_lazy(theme)
+        _DEFAULT_THEME_CACHE = theme
     jstyle.clear()
-    jstyle.update(_theme_dict)
+    jstyle.update(_DEFAULT_THEME_CACHE)
