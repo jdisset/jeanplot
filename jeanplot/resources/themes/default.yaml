@@ -1,9 +1,7 @@
 !noconstruct theme_vars: &tvars
-  # --- Input Marker Colors (used in SVG files) ---
-  input_main_marker_color: &input_main "#0000ff" # blue
-  input_secondary_marker_color: &input_sec "#00ff00" # green
+  input_main_marker_color: &input_main "#0000ff"
+  input_secondary_marker_color: &input_sec "#00ff00"
 
-  # --- Output Theme Colors ---
   fluo_colors: &fcolors
     red: { dark: "#840137", base: "#ef957d", light: "#ffe5de", "bright": "#FF2C4944" }
     green: { dark: "#0e633a", base: "#6ccb83", light: "#efffdd", "bright": "#0EFF7377" }
@@ -12,7 +10,7 @@
     ir: { dark: "#6c1772", base: "#df9ae4", light: "#ffe7f4", "bright": "#FF82FCaa" }
     maroon: { dark: "#734727", base: "#d3a888", light: "#f4decd", "bright": "#FF9853a0" }
 
-  marker_colors: &marker_colors # define alias for easier reference below
+  marker_colors: &marker_colors
     EYFPG5A: *fcolors@yellow
     EYFP: *fcolors@yellow
     NEONGREEN: *fcolors@green
@@ -41,20 +39,19 @@
     MMAROON1: *fcolors@maroon
     MPLUM: *fcolors@maroon
 
-  ern_colors: &ern_colors # define alias
+  ern_colors: &ern_colors
     CSY4: "#aaaaaa"
     CASE: "#cccccc"
     PGU: "#eeeeee"
 
   border_color: &border_color "#222"
   text_color: &text_color "#222"
-  ern_interaction_color: &ern_int_color "#555" # used for connection color
-  comp_connection_color: &comp_conn_color "#222" # used for connection color
+  ern_interaction_color: &ern_int_color "#555"
+  comp_connection_color: &comp_conn_color "#222"
 
 
 !define theme: ${construct(&tvars)}
 
-# --- Genetic Schematic Styles ---
 
 GeneticPart:
   SVGElement:
@@ -102,7 +99,7 @@ UorfGroup:
     offset.absolute: [0, -8]
 
 
-!each(e) ${theme.marker_colors.items()}: # Loop through marker types
+!each(e) ${theme.marker_colors.items()}:
   FluoMarker[part_name=~${e[0]}]:
     SVGElement:
       color_remap:
@@ -115,7 +112,7 @@ UorfGroup:
 
   SourceAnnotation[marker=~${e[0]}]:
     style.border_color: ${e[1]['base']}
-    Container[style_class=source_tag]: # Target the nested tag container
+    Container[style_class=source_tag]:
       style.background_color: ${e[1]['light']}
       style.border_color: ${e[1]['dark']}
       SVGElement:
@@ -128,7 +125,7 @@ TranscriptionUnit:
   line_thickness: 1
   line_color: *border_color
   layout.gap: 4
-  Text: # TU Label
+  Text:
     color: "#999"
     font_size: 5
     offset: !Offset
@@ -180,9 +177,8 @@ GeneticSchematic:
   style.padding: [10, 10, 10, 10]
 
 
-
-!each(e) ${theme.ern_colors.items()}: # Loop through ERN types (CSY4, CASE, etc.)
-  "ERN[part_name=~${e[0]}]": # Style ERN based on part name
+!each(e) ${theme.ern_colors.items()}:
+  "ERN[part_name=~${e[0]}]":
     SVGElement:
       color_remap:
         ${theme.input_main_marker_color}: ${e[1]}
@@ -193,11 +189,6 @@ GeneticSchematic:
     SVGElement:
       color_remap:
         ${theme.input_main_marker_color}: ${e[1][1]}
-
-
-
-# --- Network Diagram Styles ---
-
 
 
 FluoNode:
@@ -217,16 +208,14 @@ FluoNode:
 
   AggregationNode[style_class=~${e[0]}]:
     style.background_color: ${e[1]['light']}
-  #   style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01 }
     Text:
-      color: "#222" 
-      font_size: 6    
+      color: "#222"
+      font_size: 6
       vertical_align: middle
       align: center
-      offset: !Offset { relative: [0, 2] }  # Offset down a bit
+      offset: !Offset { relative: [0, 2] }
 
   TUNode[style_class=~${e[0]}]:
-    # style.background_color: ${e[1]['light']}
     style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01 }
     Text:
       color: ${e[1]['dark']}
@@ -240,7 +229,7 @@ FluoNode:
 
 ComputeNode:
   min_dimensions: !Size { width: 18, height: 18 }
-  style.corner_radius: 1.0e+6 # Circle
+  style.corner_radius: 1.0e+6
   style.background_color: "#aaa"
   style.border_color: ${theme.comp_connection_color}
   style.border_width: 1
@@ -276,12 +265,12 @@ ERNNode:
   style.border_style: custom
   style.dash_sequence: [5, 5]
   style.border_width: 1
-  TranslationNode: # Nested rule for Tl node inside ERNNode
+  TranslationNode:
     style.background_color: "#ee3350"
     offset: !Offset { reference_relative: [0, 0.9], relative: [0, -1] }
-  TranscriptionNode: # Nested rule for Tx node inside ERNNode
+  TranscriptionNode:
     offset: !Offset { reference_relative: [0, 0.1] }
-  Connection[style_class=tlconn]: # Nested rule for TL connection inside ERNNode
+  Connection[style_class=tlconn]:
     color: "#ee3350"
     line_width: 1
     start_offset: !Offset { relative: [1, 0.5] }
@@ -313,15 +302,15 @@ ERNNode:
     is_overlay: true
 
 
-InvNode: # Diagram node
+InvNode:
   style.background_color: "#eee"
   style.border_color: "#111"
   Text:
-    color: *text_color # use theme text color
+    color: *text_color
 
-TUNode: # Diagram node (small bar)
+TUNode:
   min_dimensions: !Size { width: 15, height: 4 }
-  max_dimensions: !Size { width: 15, height: 4 } # ensure it stays small
+  max_dimensions: !Size { width: 15, height: 4 }
   style.background_color: "#111"
   style.border_width: 0
   style.margin: [0, 0, 0, 0]
@@ -347,10 +336,7 @@ TUNode: # Diagram node (small bar)
       vertical_align: middle
 
 
-# AggregationNode: # Base style for aggregation node container
-#   style.shadow: !Shadow { color: "#FFA068aa", blur_radius: 15, resolution: 1 }
-
-AggregationNode[!collapsed]: # Expanded aggregation node
+AggregationNode[!collapsed]:
   style.background_color: "#FFFFFFAA"
   style.border_color: "#FFA068"
   style.border_width: 1.5
@@ -360,26 +346,23 @@ AggregationNode[!collapsed]: # Expanded aggregation node
     is_overlay: false
 
 
-AggregationNode[collapsed]: # Collapsed aggregation node
+AggregationNode[collapsed]:
   min_dimensions: !Size { width: 15, height: 4 }
   max_dimensions: !Size { width: 15, height: 4 }
   style.border_width: 0
   style.padding: [0, 0, 0, 0]
-  # style.shadow: !Shadow { color: "#FFA068", blur_radius: 20, resolution: 0.1 }
-
-
   TUNode:
     is_overlay: true
     offset: !Offset { absolute: [0, 0] }
 
-AggregationNode[collapsed][bias_connected]: # Bias-connected collapsed aggregation (grey instead of black)
+AggregationNode[collapsed][bias_connected]:
   TUNode:
     style.background_color: "#999"
 
 Container[style_class=input_layer]:
   style.padding: [0, 0, 0, 40]
 
-DeadEndNode: # no border, no shadow
+DeadEndNode:
   style.background_color: "#00000000"
   style.border_width: 0
   style.padding: [0, 0, 0, 0]
@@ -392,10 +375,9 @@ DeadEndNode: # no border, no shadow
 Connection[style_class=connection_ERN]:
   line_width: 0.5
   color: *ern_int_color
-  end_cap.stroke_color: *ern_int_color # Match end cap color
+  end_cap.stroke_color: *ern_int_color
   end_cap.stroke_width: 0.5
   end_cap.length: 8
-
 
 
 Table:

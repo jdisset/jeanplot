@@ -1,7 +1,3 @@
-# File: jeanplot/component.py
-# -*- coding: utf-8 -*-
-"""Base class for all visual elements in the scene graph."""
-
 from __future__ import annotations
 
 from typing import Any, Annotated, Sequence, TYPE_CHECKING
@@ -38,11 +34,10 @@ ValidatedSize = Annotated[Size, BeforeValidator(size_from_sequence)]
 
 
 class Component(DebugMixin, BaseModel):
-    """Base visual element with position, size, style, and transformation."""
+    """base visual element with position, size, style, and transformation."""
 
     model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True)
 
-    # --- Configuration ---
     id: str | None = None
     style_class: list[str] = Field(default_factory=list)
     show: bool = True
@@ -50,7 +45,6 @@ class Component(DebugMixin, BaseModel):
     is_overlay: bool = False
     z_index: int = 0
 
-    # --- Geometry & Position ---
     min_dimensions: ValidatedSize = Field(default_factory=Size)
     max_dimensions: ValidatedSize = Field(
         default_factory=partial(Size, width=float("inf"), height=float("inf"))
@@ -61,14 +55,11 @@ class Component(DebugMixin, BaseModel):
     attachment_offset: Offset = Field(default_factory=Offset)
     anchor_points: list[AnchorComponent] = Field(default_factory=list)
 
-    # --- Style ---
     style: BoxStyle = Field(default_factory=BoxStyle)
     opacity: float = 1.0
 
-    # --- Backend Specific ---
     renderer_options: dict[str, dict[str, Any]] = Field(default_factory=lambda: defaultdict(dict))
 
-    # --- Internal State ---
     parent: Component | None = None
     _dimensions: Size = PrivateAttr(default_factory=Size)
     _natural_dimensions: Size = PrivateAttr(default_factory=Size)
@@ -77,7 +68,6 @@ class Component(DebugMixin, BaseModel):
 
     @model_validator(mode="after")
     def _validate_dimension_constraints(self):
-        """ensure min dimensions are not greater than max dimensions."""
         if self.min_dimensions.width > self.max_dimensions.width:
             self._log_debug(
                 f"warning: min_width > max_width, adjusting max_width to {self.min_dimensions.width}"
@@ -106,7 +96,7 @@ class Component(DebugMixin, BaseModel):
                 )
                 return
 
-            from jeanplot.core.path_utils import find_component_by_path  # local import
+            from jeanplot.core.path_utils import find_component_by_path
 
             try:
                 root = self
@@ -117,12 +107,10 @@ class Component(DebugMixin, BaseModel):
                 self._log_debug(f"_resolve_attachment: string resolution error: {e}")
 
     def compute_local_matrix(self) -> np.ndarray:
-        """calculates the 3x3 matrix relative to the component's reference point."""
+        """3x3 matrix relative to the component's reference point."""
         matrix = np.identity(3)
         base_ox, base_oy = self._layout_origin_in_parent
-        parent_dims = (
-            self.parent._dimensions if self.parent else None
-        )  # <-- Need parent type hint here
+        parent_dims = self.parent._dimensions if self.parent else None
         offset_dx, offset_dy = self.offset.compute(self._dimensions, parent_dims)
         ox, oy = base_ox + offset_dx, base_oy + offset_dy
         offset_matrix = np.array([[1, 0, ox], [0, 1, oy], [0, 0, 1]])
@@ -132,13 +120,13 @@ class Component(DebugMixin, BaseModel):
         return matrix
 
     def compute_world_matrix(self, parent_world_matrix: np.ndarray | None = None) -> np.ndarray:
-        """computes the final 3x3 matrix to world coordinates."""
+        """final 3x3 matrix to world coordinates."""
         self._resolve_attachment()
         intrinsic_transform_matrix = self.transform.to_matrix(self._dimensions)
         position_matrix: np.ndarray
 
         if self._resolved_attach_target:
-            self._layout_origin_in_parent = (0.0, 0.0)  # ignore layout origin
+            self._layout_origin_in_parent = (0.0, 0.0)
             target_world_matrix = self._resolved_attach_target.compute_world_matrix()
             attach_ox, attach_oy = self.attachment_offset.compute(
                 self._dimensions, self._resolved_attach_target._dimensions
@@ -168,7 +156,7 @@ class Component(DebugMixin, BaseModel):
                 [[1, 0, total_offset_x], [0, 1, total_offset_y], [0, 0, 1]]
             )
             position_matrix = parent_world @ local_positioning_matrix
-        else:  # root component
+        else:
             user_offset_dx, user_offset_dy = self.offset.compute(self._dimensions, None)
             position_matrix = np.array([[1, 0, user_offset_dx], [0, 1, user_offset_dy], [0, 0, 1]])
 
@@ -176,7 +164,7 @@ class Component(DebugMixin, BaseModel):
         return world_matrix
 
     def get_world_origin(self) -> np.ndarray:
-        """calculates the component's origin (top-left) in world coordinates."""
+        """origin (top-left) in world coordinates."""
         world_matrix = self.compute_world_matrix()
         origin_world = world_matrix @ np.array([0, 0, 1])
         return origin_world[:2]
@@ -205,16 +193,14 @@ class Component(DebugMixin, BaseModel):
         return self.style or BoxStyle()
 
     def _apply_style(self):
-        """apply styles from the global jstyle object."""
-        # Style only this component; children are styled during their own measure/layout pass.
+        """apply styles from the global jstyle object. children are styled during their own pass."""
         jstyle.apply_one(self)
 
     def _measure_natural(self, renderer: "BaseRenderer | None") -> Size:
-        """calculates the component's intrinsic size. subclasses override."""
+        """intrinsic size. subclasses override."""
         return Size(0, 0)
 
     def _apply_constraints(self, natural_size: Size) -> Size:
-        """applies min/max dimension constraints."""
         constrained_w = min(
             max(self.min_dimensions.width, natural_size.width), self.max_dimensions.width
         )
@@ -226,10 +212,9 @@ class Component(DebugMixin, BaseModel):
 
     def _layout_children(self, renderer: "BaseRenderer | None"):
         """positions child components. container subclasses override."""
-        pass  # base component does nothing
+        pass
 
     def measure_and_layout(self, renderer: "BaseRenderer | None" = None):
-        """coordinates the measurement and layout process."""
         self._apply_style()
         self._resolve_attachment()
         self._natural_dimensions = self._measure_natural(renderer)
@@ -237,7 +222,7 @@ class Component(DebugMixin, BaseModel):
         self._layout_children(renderer)
 
     def render(self, renderer: BaseRenderer, context: Any, matrix: np.ndarray):
-        """renders the component. subclasses override."""
+        """subclasses override."""
         if not self.show:
             return
         if self.debug:
@@ -253,7 +238,6 @@ class Component(DebugMixin, BaseModel):
         return self.renderer_options.get(renderer_name, {})
 
     def add_child(self, child: Component):
-        """adds a child component (primarily for containers)."""
         if isinstance(child, AnchorComponent):
             if child not in self.anchor_points:
                 self.anchor_points.append(child)
@@ -278,11 +262,10 @@ class AnchorComponent(Component):
     min_segment: float = 10.0
     min_dimensions: Size = Field(default_factory=lambda: Size(width=1e-6, height=1e-6))
     max_dimensions: Size = Field(default_factory=lambda: Size(width=1e-6, height=1e-6))
-    is_overlay: bool = True  # usually overlays
+    is_overlay: bool = True
 
     @model_validator(mode="after")
     def _normalize_direction_vector(self):
-        """ensure direction vector is normalized."""
         if self.direction is not None:
             dx, dy = self.direction
             length = math.hypot(dx, dy)
@@ -291,11 +274,11 @@ class AnchorComponent(Component):
                 if not np.allclose(self.direction, norm_dir):
                     self.direction = norm_dir
             else:
-                    self.direction = (0.0, 1.0)  # default up if zero vector
+                self.direction = (0.0, 1.0)
         return self
 
 
-# Resolve forward references (notably `AnchorComponent`) for direct-module imports.
+# resolve forward references for direct-module imports
 Component.model_rebuild(force=True)
 AnchorComponent.model_rebuild(force=True)
 Overlay.model_rebuild(force=True)

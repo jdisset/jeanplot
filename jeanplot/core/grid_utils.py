@@ -1,5 +1,3 @@
-"""Grid utilities for computing cell regions and boundaries"""
-
 from pydantic import BaseModel
 
 
@@ -22,17 +20,7 @@ class CellRegion(BaseModel):
         cell_bounds: dict[tuple[int, int], tuple[float, float, float, float]],
         offset: tuple[float, float] = (0.0, 0.0),
     ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-        """
-        Compute boundary edges for this cell region, including gap connectors
-        and concave corners for L-shaped regions.
-
-        Args:
-            cell_bounds: Dict mapping (row, col) -> (x0, y0, x1, y1) in global coords
-            offset: Offset to subtract from global coords to get local coords
-
-        Returns:
-            List of ((x0, y0), (x1, y1)) edge segments
-        """
+        """boundary edges for this cell region, including gap connectors and concave corners for L-shapes."""
         cells = self.cell_set
         if not cells:
             return []

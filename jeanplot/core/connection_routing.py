@@ -1,5 +1,3 @@
-"""Routing helpers for connection endpoints and anchor selection."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -9,7 +7,7 @@ from jeanplot.core.path_utils import normalize_vector
 
 
 def collect_anchors(component: Component) -> list[AnchorComponent]:
-    """Collect anchor components from child and anchor lists with stable dedupe."""
+    """collect anchor components from child and anchor lists, deduped."""
     anchors = [a for a in getattr(component, "children", []) if isinstance(a, AnchorComponent)]
     anchors += [a for a in getattr(component, "anchor_points", []) if a not in anchors]
 
@@ -22,7 +20,7 @@ def collect_anchors(component: Component) -> list[AnchorComponent]:
 
 
 def get_effective_anchor_position(anchor: AnchorComponent) -> tuple[float, float] | None:
-    """Compute a connection point extended by anchor direction/min_segment."""
+    """connection point extended by anchor direction/min_segment."""
     anchor_pos = anchor.get_world_origin()
     if anchor_pos is None:
         return None
@@ -45,7 +43,7 @@ def find_best_anchor_pair(
     start_component: Component,
     end_component: Component,
 ) -> tuple[AnchorComponent, AnchorComponent] | None:
-    """Return anchor pair with minimal effective-point distance."""
+    """anchor pair with minimal effective-point distance."""
     start_anchors = collect_anchors(start_component)
     end_anchors = collect_anchors(end_component)
     if not start_anchors or not end_anchors:

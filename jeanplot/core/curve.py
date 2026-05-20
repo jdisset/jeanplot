@@ -1,4 +1,3 @@
-# File: jeanplot/curve.py
 from typing import Literal, get_args, Any, Sequence, ClassVar
 from pydantic import Field, BaseModel, PrivateAttr
 import numpy as np
@@ -111,25 +110,20 @@ class CurveDefinition(DebugMixin, BaseModel):
         end: tuple[float, float],
         control_points: list[tuple[float, float]],
     ) -> tuple[tuple[float, float], tuple[float, float]]:
-        """get normalized direction vectors pointing *outwards* at start and end."""
+        """normalized outward direction vectors at start and end."""
         dx, dy = end[0] - start[0], end[1] - start[1]
         dir_vec = normalize_vector((dx, dy))
-        # start direction points away from start; end direction points away from end
         return dir_vec, (-dir_vec[0], -dir_vec[1])
 
     @staticmethod
     def _calculate_auto_direction_vector(
         start: tuple[float, float], end: tuple[float, float], for_start: bool
     ) -> tuple[float, float]:
-        """
-        calculate normalized outward direction vector.
-        for start = true, vector points from start towards end.
-        for start = false, vector points from end towards start (away from end).
-        """
+        """normalized outward direction vector along start->end (reversed for end)."""
         dx = end[0] - start[0]
         dy = end[1] - start[1]
-        vec = (dx, dy) if for_start else (-dx, -dy)  # always outward
-        return normalize_vector(vec, default=(0, 1))  # provide default
+        vec = (dx, dy) if for_start else (-dx, -dy)
+        return normalize_vector(vec, default=(0, 1))
 
 
 class StraightCurve(CurveDefinition):
@@ -192,10 +186,8 @@ class SimpleBezierCurve(CurveDefinition):
         p0, p3 = start, end
         p1, p2 = control_points[0], control_points[1]
         u = 1 - t
-        # B(t) = (1-t)^3 P0 + 3(1-t)^2 t P1 + 3(1-t) t^2 P2 + t^3 P3
         px = u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0]
         py = u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]
-        # B'(t) = 3(1-t)^2 (P1-P0) + 6(1-t)t (P2-P1) + 3t^2 (P3-P2)
         tx = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0])
         ty = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1])
         tangent = normalize_vector((tx, ty))
@@ -238,9 +230,9 @@ class OrthogonalCurve(CurveDefinition):
 
     @staticmethod
     def get_direction_from_vector(vector: tuple[float, float]) -> ValidOrthoDirection:
-        """get closest orthogonal direction name from a vector."""
+        """closest orthogonal direction name to a vector."""
         if not any(abs(d) > 1e-9 for d in vector):
-            return "up"  # default for zero vector
+            return "up"
         norm_vec = normalize_vector(vector, default=(0, 1))
         dir_vectors = np.array(list(OrthogonalCurve._DIR_VECTORS.values()))
         dot_products = np.dot(dir_vectors, norm_vec)
@@ -254,20 +246,15 @@ class OrthogonalCurve(CurveDefinition):
         end: tuple[float, float],
         for_start: bool,
     ) -> tuple[float, float]:
-        """
-        resolve direction mode ('up', 'auto', etc.) to a normalized outward vector.
-        'outward' means pointing away from the anchor point (start or end).
-        """
+        """resolve direction mode to a normalized outward vector (away from anchor)."""
         if direction_mode == "auto":
-            # 'auto' direction is derived from the vector between points, always pointing outward.
             auto_vec = self._calculate_auto_direction_vector(start, end, for_start)
             resolved_name = self.get_direction_from_vector(auto_vec)
             return self._DIR_VECTORS[resolved_name]
         elif direction_mode in self._DIR_VECTORS:
-            # use the specified direction vector directly (it's already outward)
             return self._DIR_VECTORS[direction_mode]
         else:
-            return self._DIR_VECTORS["up"]  # default to 'up'
+            return self._DIR_VECTORS["up"]
 
     def get_path(
         self,
@@ -275,16 +262,14 @@ class OrthogonalCurve(CurveDefinition):
         end: tuple[float, float],
         local_checkpoints: list[tuple[float, float]] | None = None,
     ) -> tuple[str, list[tuple[float, float]]]:
-        # calculate the OUTWARD direction vectors for start and end based on curve properties
         start_dir_out = self._resolve_direction_vector(self.start_direction, start, end, True)
         end_dir_out = self._resolve_direction_vector(self.end_direction, start, end, False)
 
-        # pass BOTH outward directions to the path generator
         points = create_orthogonal_path(
             start,
             end,
-            start_dir_out,  # pass outward start direction
-            end_dir_out,  # pass outward end direction
+            start_dir_out,
+            end_dir_out,
             self.start_length,
             self.end_length,
             checkpoints=local_checkpoints or [],
@@ -294,17 +279,15 @@ class OrthogonalCurve(CurveDefinition):
         self._cached_path_points = list(points)
 
         if self.corner_radius > 1e-3 and len(points) >= 3:
-            # use the updated path generator for rounded corners
             path_str = create_rounded_orthogonal_path(points, self.corner_radius)
         else:
             path_str = f"M {points[0][0]:.3f} {points[0][1]:.3f}" + "".join(
                 f" L {p[0]:.3f} {p[1]:.3f}" for p in points[1:]
             )
 
-        # cache resolved OUTWARD directions for get_directions call
         self._resolved_start_dir_vec = start_dir_out
         self._resolved_end_dir_vec = end_dir_out
-        return path_str, []  # orthogonal paths don't have explicit bezier control points
+        return path_str, []
 
     def evaluate_at(
         self,
@@ -317,7 +300,6 @@ class OrthogonalCurve(CurveDefinition):
         pts = self._cached_path_points
         if len(pts) < 2:
             return super().evaluate_at(t, start, end, control_points)
-        # Compute cumulative arc lengths
         seg_lens = []
         for i in range(1, len(pts)):
             dx = pts[i][0] - pts[i - 1][0]
@@ -345,13 +327,8 @@ class OrthogonalCurve(CurveDefinition):
         end: tuple[float, float],
         control_points: list[tuple[float, float]],
     ) -> tuple[tuple[float, float], tuple[float, float]]:
-        """get normalized outward direction vectors using cached resolved directions."""
-        # retrieve the outward directions calculated during get_path
         if self._resolved_start_dir_vec and self._resolved_end_dir_vec:
             return self._resolved_start_dir_vec, self._resolved_end_dir_vec
-        else:
-            # fallback calculation if cache wasn't populated
-            # this recalculates the outward vectors based on current curve settings
-            start_dir_out = self._resolve_direction_vector(self.start_direction, start, end, True)
-            end_dir_out = self._resolve_direction_vector(self.end_direction, start, end, False)
-            return start_dir_out, end_dir_out
+        start_dir_out = self._resolve_direction_vector(self.start_direction, start, end, True)
+        end_dir_out = self._resolve_direction_vector(self.end_direction, start, end, False)
+        return start_dir_out, end_dir_out

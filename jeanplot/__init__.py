@@ -1,4 +1,3 @@
-# Core
 from jeanplot.core.component import Component, AnchorComponent, Overlay
 from jeanplot.core.container import Container
 from jeanplot.core.models import (
@@ -29,7 +28,6 @@ from jeanplot.render import (
     render_to_string as render_to_string,
 )
 
-# Testing utilities
 from jeanplot.testing import (
     MockRenderer as MockRenderer,
     render_to_svg as render_to_svg,
@@ -40,7 +38,6 @@ from jeanplot.testing import (
     svg_hash as svg_hash,
 )
 
-# Gene visualization
 from jeanplot.gene.elements import (
     GeneticPart,
     Promoter,
@@ -102,7 +99,6 @@ DEFAULT_TYPES = [
     InteractionData,
 ]
 
-# --- Explicit model rebuilds after all types are defined ---
 SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)
 Text.model_rebuild(force=True)

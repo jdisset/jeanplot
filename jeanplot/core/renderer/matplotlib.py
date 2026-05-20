@@ -1,7 +1,3 @@
-# File: jeanplot/matplotlib_renderer.py
-# -*- coding: utf-8 -*-
-"""matplotlib rendering backend for jeanplot."""
-
 from __future__ import annotations
 
 import numpy as np
@@ -59,7 +55,7 @@ def _apply_opacity(color: str | tuple | None, opacity: float) -> str | tuple | N
 
 
 def _get_point_scale_factor(axis: Axes) -> float:
-    # average points per data unit for the current view
+    """average points per data unit for the current view."""
     fig = axis.get_figure()
     if not fig:
         return 1.0
@@ -84,7 +80,7 @@ def _get_point_scale_factor(axis: Axes) -> float:
 
 
 def _linewidth_in_points(data_unit_value: float, axis: Axes) -> float:
-    # convert a data-unit dimension (like border width) to points using average axis scale
+    """convert a data-unit dimension to points using average axis scale."""
     if data_unit_value <= 0:
         return 0.0
     axis_scale_factor = _get_point_scale_factor(axis)
@@ -94,9 +90,7 @@ def _linewidth_in_points(data_unit_value: float, axis: Axes) -> float:
 def _calc_linewidth(
     linewidth_data: float, width_mode: str, matrix: np.ndarray, context: "Axes", has_edge: bool
 ) -> tuple[float, float, bool]:
-    """Calculate linewidth in points and tracking info.
-    Returns: (lw_points, scaled_width_for_tracking, is_data_width)
-    """
+    """returns (lw_points, scaled_width_for_tracking, is_data_width)."""
     if not has_edge or linewidth_data <= 0:
         return 0.0, 0.0, False
     if width_mode == "data":
@@ -107,7 +101,6 @@ def _calc_linewidth(
 
 @contextmanager
 def _no_autoscale(ax: Axes):
-    # temporarily disable autoscaling for adding patches/artists
     autoscale_state = ax.get_autoscale_on()
     ax.set_autoscale_on(False)
     try:
@@ -119,7 +112,7 @@ def _no_autoscale(ax: Axes):
 def _get_points_per_unit_vector(
     ax: Axes, matrix: np.ndarray, vector: tuple[float, float] = (0, 1)
 ) -> float:
-    # points per data unit along a specific vector at component's transformed location
+    """points per data unit along a vector at the component's transformed location."""
     fig = ax.get_figure()
     if not fig:
         return 1.0
@@ -143,7 +136,6 @@ def _get_points_per_unit_vector(
 
 
 def _get_rotation_from_matrix(matrix: np.ndarray) -> float:
-    # rotation angle in degrees from a 3x3 affine matrix (rotation of x-axis)
     return math.degrees(math.atan2(matrix[1, 0], matrix[0, 0]))
 
 
@@ -153,24 +145,22 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
     def __init__(self, debug: bool = False, force_native_text: bool = False):
         super().__init__()
         self._data_width_patches: list[tuple[mpatches.Patch, float]] = []
-        # Track text artists for font size refresh: (text_artist, data_font_size, world_matrix)
+        # (text_artist, data_font_size, world_matrix) for font size refresh
         self._data_font_texts: list[tuple] = []
         self._context: Axes | None = None
         self._draw_event_cid: int | None = None
-        # points per data unit at identity transform (for font_size_mode="points")
         self._points_per_data_unit: float = 1.0
         self.force_native_text: bool = force_native_text
         self._pending_connection_clips: list = []
 
     def _disconnect_draw_event(self):
-        # disconnect the draw event callback if it exists
         if self._draw_event_cid is not None and self._context is not None:
             fig = self._context.get_figure()
             if fig and fig.canvas:
                 try:
                     fig.canvas.mpl_disconnect(self._draw_event_cid)
                 except Exception:
-                    pass  # ignore errors on disconnect
+                    pass
         self._draw_event_cid = None
 
     def create_context(
@@ -181,7 +171,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         ax: Axes | None = None,
         **kwargs,
     ) -> Axes:
-        # create or reuse matplotlib axes context
         self._disconnect_draw_event()
         self._data_width_patches = []
         self._data_font_texts = []
@@ -194,18 +183,15 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             self._context = ax
 
         if fig and fig.canvas:
-            # connect callback to update data-unit linewidths and font sizes on draw/zoom
+            # update data-unit linewidths and font sizes on draw/zoom
             self._draw_event_cid = fig.canvas.mpl_connect("draw_event", self._refresh_data_units)
         else:
             self._log_debug("warning: could not connect draw event (no figure/canvas)")
 
-        # Calculate points per data unit using identity transform.
-        # This is used for font_size_mode="points" conversions.
         self._points_per_data_unit = _get_points_per_unit_vector(self._context, np.eye(3))
         return self._context
 
     def _refresh_data_units(self, event=None):
-        """Combined refresh for all data-unit elements (linewidths and text font sizes)."""
         self.refresh_linewidths(event)
         self.refresh_text_font_sizes(event)
 
@@ -233,10 +219,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 except Exception as e:
                     self._log_debug(f"error updating patch lw {id(patch)}: {e}")
 
-        self._data_width_patches = valid_patches  # update list with only valid ones
+        self._data_width_patches = valid_patches
 
     def refresh_text_font_sizes(self, event=None):
-        """Update text font sizes to maintain data-unit proportions after axis changes."""
+        """update text font sizes to maintain data-unit proportions after axis changes."""
         if not self._context or not self._data_font_texts:
             return
 
@@ -264,7 +250,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         self._data_font_texts = valid_texts
 
     def track_patch(self, patch: mpatches.Patch, scaled_width_data: float):
-        # store patch and its calculated *matrix-scaled* data width for dynamic updates
         self._data_width_patches.append((patch, scaled_width_data))
 
     def render_path(
@@ -277,12 +262,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         component_id: str | None = None,
         opacity: float = 1.0,
     ):
-        # render a single path definition
         comp_id_str = component_id or "unknown"
         try:
             mpl_path = parse_path(path_data.d)
             final_matrix = matrix
-            # apply rudimentary path transform string if present
             if path_data.transform:
                 m = re.search(r"matrix\((.+)\)", path_data.transform)
                 if m:
@@ -295,7 +278,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
 
             transform = mtransforms.Affine2D(matrix=final_matrix) + context.transData
             remap = color_remap or {}
-            # apply color remapping and normalization
             fill_color_out = remap.get(path_data.fill, path_data.fill) if path_data.fill else None
             stroke_color_out = (
                 remap.get(path_data.stroke, path_data.stroke) if path_data.stroke else None
@@ -313,14 +295,13 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 and path_data.stroke_width > 0
             )
 
-            # calculate initial linewidth in points
             if is_data_width:
                 matrix_scale = get_matrix_avg_scale(final_matrix)
                 scaled_width_data = path_data.stroke_width * matrix_scale
-                scaled_width_data_for_tracking = scaled_width_data  # store for refresh
+                scaled_width_data_for_tracking = scaled_width_data
                 initial_lw_points = _linewidth_in_points(scaled_width_data, context)
             elif final_edgecolor != "none" and path_data.stroke_width > 0:
-                initial_lw_points = path_data.stroke_width  # point mode
+                initial_lw_points = path_data.stroke_width
 
             linestyle = get_mpl_linestyle(path_data)
             with _no_autoscale(context):
@@ -345,7 +326,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             self._log_debug(f"error rendering path '{path_preview}' for '{comp_id_str}': {e}")
 
     def _create_rounded_rect_path(self, x, y, w, h, radius):
-        # helper to generate MPL path for rounded rectangle
         if radius < EPSILON:
             verts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
             codes = [
@@ -359,47 +339,46 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             r = min(radius, min(w, h) / 2.0)
             v, c = [], []
             v.append((x + r, y + h))
-            c.append(MplPath.MOVETO)  # start top-left curve end
+            c.append(MplPath.MOVETO)
             v.append((x + w - r, y + h))
             c.append(MplPath.LINETO)
-            _, cp1, cp2, p = arc_to_bezier(x + w - r, y + h - r, r, 90, 0)  # top-right arc
+            _, cp1, cp2, p = arc_to_bezier(x + w - r, y + h - r, r, 90, 0)
             v.extend([cp1, cp2, p])
             c.extend([MplPath.CURVE4] * 3)
             v.append((x + w, y + r))
             c.append(MplPath.LINETO)
-            _, cp1, cp2, p = arc_to_bezier(x + w - r, y + r, r, 0, -90)  # bottom-right arc
+            _, cp1, cp2, p = arc_to_bezier(x + w - r, y + r, r, 0, -90)
             v.extend([cp1, cp2, p])
             c.extend([MplPath.CURVE4] * 3)
             v.append((x + r, y))
             c.append(MplPath.LINETO)
-            _, cp1, cp2, p = arc_to_bezier(x + r, y + r, r, -90, -180)  # bottom-left arc
+            _, cp1, cp2, p = arc_to_bezier(x + r, y + r, r, -90, -180)
             v.extend([cp1, cp2, p])
             c.extend([MplPath.CURVE4] * 3)
             v.append((x, y + h - r))
             c.append(MplPath.LINETO)
-            _, cp1, cp2, p = arc_to_bezier(x + r, y + h - r, r, -180, -270)  # top-left arc
+            _, cp1, cp2, p = arc_to_bezier(x + r, y + h - r, r, -180, -270)
             v.extend([cp1, cp2, p])
             c.extend([MplPath.CURVE4] * 3)
             c.append(MplPath.CLOSEPOLY)
-            v.append(v[0])  # close path
+            v.append(v[0])
             verts, codes = v, c
         return MplPath(verts, codes)
 
     def render_rectangle(
         self, context: Axes, bounds: Size, style: BoxStyle, matrix: np.ndarray, component=None
     ):
-        # render rectangle shape with style (background, border, shadow)
         w, h = bounds.width, bounds.height
         if w <= 0 or h <= 0:
             return
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
 
-        # render shadow (multi-layer approach for soft blur)
+        # multi-layer shadow for soft blur
         if style.shadow and style.shadow.blur_radius > 0:
             shadow = style.shadow
             scale_factor = _get_point_scale_factor(context)
             points_per_unit = max(scale_factor, 1.0)
-            # heuristic number of layers based on blur and resolution request
+            # heuristic layer count based on blur and resolution
             num_layers = min(
                 100, max(4, int((shadow.blur_radius * points_per_unit**0.75) * shadow.resolution))
             )
@@ -409,23 +388,23 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 base_color_rgb, base_alpha = (0, 0, 0), 0.5
             accumulated_alpha, min_render_alpha = 0.0, 1.0 / 256.0
 
-            for i in range(num_layers - 1, -1, -1):  # render from outside in
+            for i in range(num_layers - 1, -1, -1):  # outside in
                 layer_frac = (i / (num_layers - 1)) if num_layers > 1 else 1.0
                 alpha_frac = ((num_layers - 1 - i) / (num_layers - 1)) if num_layers > 1 else 0.0
-                # distribute total alpha across layers, more intensity towards center
+                # distribute alpha across layers, more intense toward center
                 target_intensity = (
                     base_alpha * (1 - alpha_frac**1.5) / num_layers
                     if num_layers > 0
                     else base_alpha
                 )
                 accumulated_alpha += target_intensity
-                # quantize alpha to avoid excessive layers for faint shadows
+                # quantize to avoid excessive layers for faint shadows
                 patch_alpha = max(
                     0, min(1.0, round(accumulated_alpha / min_render_alpha) * min_render_alpha)
                 )
                 if patch_alpha <= min_render_alpha / 2.0:
                     continue
-                accumulated_alpha = max(0, accumulated_alpha - patch_alpha)  # deduct rendered alpha
+                accumulated_alpha = max(0, accumulated_alpha - patch_alpha)
 
                 spread = shadow.spread + shadow.blur_radius * (1 - layer_frac)
                 sw, sh = w + 2 * spread, h + 2 * spread
@@ -445,11 +424,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                             lw=0,
                             transform=transform,
                             clip_on=False,
-                            # zorder=10 if not component else component.z_index,
                         )
                     )
 
-        # render main rectangle fill and border
         opacity = getattr(component, "opacity", 1.0) if component else 1.0
         facecolor = _apply_opacity(style.background_color, opacity) or "none"
         edgecolor = _apply_opacity(style.border_color, opacity) or "none"
@@ -484,7 +461,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         matrix: np.ndarray,
         component=None,
     ):
-        """Render a polygon path with the given style (border only, no fill)."""
+        """render a polygon outline (border only, no fill)."""
         if len(path) < 3:
             return
 
@@ -507,7 +484,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         matrix: np.ndarray,
         component=None,
     ):
-        """Render multiple line segments (edges) with the given style."""
+        """render multiple line segments (edges)."""
         if not edges:
             return
 
@@ -549,7 +526,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 self.track_patch(patch, scaled_w)
 
     def render_svg(self, context: Axes, svg_element: SVGElement, matrix: np.ndarray):
-        # render svg content within the component's bounds
         comp_id = svg_element.id or "unknown_svg"
         if not svg_element._parsed_svg_content:
             svg_element._parse_and_validate_svg()
@@ -565,7 +541,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 self.render_debug(context, svg_element, matrix)
             return
 
-        # calculate transform from svg viewbox to component local coords
         vb_x, vb_y, vb_w, vb_h = svg_data.viewBox or (0, 0, svg_data.width, svg_data.height)
         vb_w, vb_h = max(vb_w, EPSILON), max(vb_h, EPSILON)
         comp_w, comp_h = svg_element._dimensions.width, svg_element._dimensions.height
@@ -575,13 +550,12 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             return
 
         scale_x, scale_y = comp_w / vb_w, comp_h / vb_h
-        # includes y-flip for svg to matplotlib coordinate conversion
+        # y-flip converts svg coords to matplotlib
         svg_internal_matrix = np.array(
             [[scale_x, 0, -scale_x * vb_x], [0, -scale_y, scale_y * vb_y + comp_h], [0, 0, 1]]
         )
-        final_matrix = matrix @ svg_internal_matrix  # world = parent_world * local_svg
+        final_matrix = matrix @ svg_internal_matrix
 
-        # render paths using combined transform
         opacity = getattr(svg_element, "opacity", 1.0)
         for path_data in svg_data.paths:
             self.render_path(
@@ -605,7 +579,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         angle_deg: float,
         world_matrix: np.ndarray,
     ) -> None:
-        """Render a ConnectionLabel at the given world position with rotation."""
+        """render a ConnectionLabel at the given world position with rotation."""
         import matplotlib.patheffects as mpe
 
         data_fontsize = label.font_size
@@ -647,14 +621,12 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             )
         label._text_artist = text_artist
 
-        # Track for font size refresh (data-unit sizing)
         self._data_font_texts.append((text_artist, data_fontsize, world_matrix.copy()))
 
         if label.clip_connection:
             self._pending_connection_clips.append(label)
 
     def render_component(self, context: Axes, component: Component, adjust_lims: bool = True):
-        # main entry point to render a component tree
         if self._context != context:
             self._log_debug("context changed, updating and reconnecting event")
             self._disconnect_draw_event()
@@ -670,19 +642,18 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if adjust_lims and component.parent is None:
             self._adjust_limits(context, component)
 
-        # force a synchronous draw to stabilize transforms before rendering
-        # NOTE: draw_idle() is async and doesn't wait, causing transform inconsistencies
+        # synchronous draw to stabilize transforms before rendering;
+        # draw_idle() is async and causes transform inconsistencies
         if context.figure and context.figure.canvas:
             context.figure.canvas.draw()
 
         for cb in self.pre_render_callbacks:
             cb(context)
-        self._data_width_patches = []  # clear tracked patches for this render pass
-        self._data_font_texts = []  # clear tracked texts for this render pass
-        self._pending_connection_clips = []  # clear pending clips for this render pass
+        self._data_width_patches = []
+        self._data_font_texts = []
+        self._pending_connection_clips = []
         root_world_matrix = component.compute_world_matrix()
-        component.render(self, context, root_world_matrix)  # recursively render
-        # Auto-finalize connection label clips after tree render
+        component.render(self, context, root_world_matrix)
         if self._pending_connection_clips:
             from jeanplot.core.connection_label import ConnectionLabel
 
@@ -690,10 +661,9 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             self._pending_connection_clips = []
         for cb in self.post_render_callbacks:
             cb(context)
-        self._refresh_data_units()  # initial update for linewidths and text sizes
+        self._refresh_data_units()
 
     def _adjust_limits(self, context: Axes, root: Component, padding: float = 0.1):
-        # set axis limits to encompass rendered content with padding
         from jeanplot.core.connector import Connection
 
         bounds = get_recursive_world_bounds(root, exclude_types=(Connection,))
@@ -701,7 +671,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             min_x, min_y, max_x, max_y = bounds
             width = max(max_x - min_x, 1.0)
             height = max(max_y - min_y, 1.0)
-            # increase padding slightly for better visual framing
             pad_x = max(width * padding * 1.5, 10.0)
             pad_y = max(height * padding * 1.5, 10.0)
             context.set_xlim(min_x - pad_x, max_x + pad_x)
@@ -711,7 +680,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             )
         else:
             context.set_xlim(0, 100)
-            context.set_ylim(0, 100)  # default if no bounds found
+            context.set_ylim(0, 100)
             self._log_debug("no valid bounds found, setting default limits (0,100).")
         context.set_aspect("equal", adjustable="box")
 
@@ -728,7 +697,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         return Size(width=metrics.width_points, height=metrics.height_points)
 
     def get_font_size_in_points(self, font_size) -> float:
-        # convert font size from data units to points
         assert self._context is not None, "context is None"
         ppu_y = _get_points_per_unit_vector(self._context, np.eye(3), vector=(0, 1))
         if ppu_y <= EPSILON:
@@ -737,7 +705,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         return font_size * ppu_y
 
     def render_text(self, context: Axes, text_component: Text, matrix: np.ndarray):
-        # render using native ax.text, calculating point size based on target data height
         comp_id = text_component.id or "unknown_text"
         if (
             not text_component.effective_text
@@ -756,12 +723,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             self._log_debug(f"skipping render text '{comp_id}': zero target height")
             return
 
-        # Calculate font size in points based on font_size_mode
         if text_component.font_size_mode == "points":
-            # font_size is directly in typographic points - use as-is for consistent visual size
             required_point_size = text_component.font_size
         else:
-            # font_size_mode == "data": scale with transformation matrix (original behavior)
+            # "data" mode: scale font size with the world transform
             ppu_y = _get_points_per_unit_vector(context, matrix, vector=(0, 1))
             if ppu_y <= EPSILON:
                 self._log_debug(f"zero points per unit vector for {comp_id}, using fallback")
@@ -769,7 +734,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             else:
                 required_point_size = target_data_height * ppu_y
 
-        # get world coordinates of component corners/centers for anchor calculation
         local_corners = np.array(
             [
                 [0, 0, 1],
@@ -784,7 +748,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             ]
         ).T
         world_corners = (matrix @ local_corners).T
-        # Local coordinates use y increasing upward, so y=0 is bottom and y=height is top.
+        # local coords have y increasing upward (y=0 is bottom, y=height is top)
         world_bottom_left = world_corners[0, :2]
         world_top_left = world_corners[2, :2]
         world_top_right = world_corners[3, :2]
@@ -794,11 +758,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         world_middle_right = world_corners[7, :2]
         world_center_center = world_corners[8, :2]
 
-        # map component alignment settings to mpl ha/va and select anchor point
         align = text_component.align
         va = text_component.vertical_align
-        anchor_x, anchor_y = world_top_left[0], world_top_left[1]  # default: top-left
-        mpl_ha, mpl_va = "left", "top"  # default: mpl left, top
+        anchor_x, anchor_y = world_top_left[0], world_top_left[1]
+        mpl_ha, mpl_va = "left", "top"
 
         if align == "left":
             mpl_ha = "left"
@@ -810,7 +773,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if va == "top":
             mpl_va = "top"
         elif va == "middle":
-            mpl_va = "center"  # use 'center' for va=middle
+            # mpl uses 'center' for vertical middle
+            mpl_va = "center"
         elif va == "bottom":
             mpl_va = "bottom"
         elif va == "baseline":
@@ -866,24 +830,20 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                         )
                     ]
                 )
-            # Track text for font size refresh if using data-unit sizing
             if text_component.font_size_mode == "data":
                 self._data_font_texts.append((text_artist, target_data_height, matrix.copy()))
 
     def _render_text_as_paths(self, context: Axes, text_comp: Text, matrix: np.ndarray):
-        """renders text using converted matplotlib paths."""
+        """render text as matplotlib paths."""
         comp_id = text_comp.id or "unknown_text_path"
         if not text_comp.effective_text or not text_comp.show or not text_comp._text_metrics_cache:
             self._log_debug(f"_render_text_as_paths skipped for {comp_id}: missing info")
             return
 
-        # calculate the required point size based on font_size_mode
         if text_comp.font_size_mode == "points":
-            # font_size is directly in typographic points - use as-is
             required_point_size = max(0.1, text_comp.font_size)
             ppu_y = _get_points_per_unit_vector(context, matrix, vector=(0, 1))
         else:
-            # font_size_mode == "data": scale with transformation matrix
             target_data_height = text_comp.font_size
             ppu_y = _get_points_per_unit_vector(context, matrix, vector=(0, 1))
             if ppu_y <= EPSILON:
@@ -893,7 +853,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 return
             required_point_size = max(0.1, target_data_height * ppu_y)
 
-        # generate the TextPath using the *required* point size
         if (
             text_comp._render_path_cache is None
             or text_comp._render_path_cache[0] != required_point_size
@@ -913,28 +872,20 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if mpl_render_path.vertices.shape[0] == 0:
             return
 
-        # calculate alignment offset based on path bounds and component dims
         path_xmin, path_ymin = np.min(mpl_render_path.vertices, axis=0)
         path_xmax, path_ymax = np.max(mpl_render_path.vertices, axis=0)
         path_w_pts = path_xmax - path_xmin
         path_h_pts = path_ymax - path_ymin
 
-        # convert component data dims to points at this location
         ppu_x = _get_points_per_unit_vector(context, matrix, vector=(1, 0))
-
-        # create transform: translate path -> apply component world matrix
-        # create translation matrix in *points*
         point_scale_x = ppu_x if ppu_x > EPSILON else 1.0
         point_scale_y = ppu_y if ppu_y > EPSILON else 1.0
 
-        # --- let's try simpler path patch transform ---
-        # calculate origin shift needed in component local space
         comp_w = text_comp._dimensions.width
         comp_h = text_comp._dimensions.height
         align = text_comp.align
         va = text_comp.vertical_align
 
-        # estimate path size in data units (approx)
         path_w_data = path_w_pts / point_scale_x if point_scale_x > EPSILON else 0
         path_h_data = path_h_pts / point_scale_y if point_scale_y > EPSILON else 0
 
@@ -943,15 +894,14 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             local_dx = (comp_w - path_w_data) / 2.0
         elif align == "right":
             local_dx = comp_w - path_w_data
-        # Path TextPath starts near baseline-left (roughly ymin=0 in local data units).
+        # TextPath starts near baseline-left (roughly ymin=0 in local data units)
         if va == "top":
             local_dy = comp_h - path_h_data
         elif va == "middle":
-            local_dy = (comp_h - path_h_data) / 2.0  # center path bbox in comp bbox
+            local_dy = (comp_h - path_h_data) / 2.0
         elif va == "bottom":
             local_dy = 0.0
 
-        # apply offset to path origin before world transform
         offset_mat = np.array([[1, 0, local_dx], [0, 1, local_dy], [0, 0, 1]])
         path_world_matrix = matrix @ offset_mat
         path_transform = mtransforms.Affine2D(matrix=path_world_matrix) + context.transData
@@ -962,7 +912,7 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 facecolor=text_comp.color,
                 edgecolor="none",
                 linewidth=0,
-                transform=path_transform,  # use transform including calculated offset
+                transform=path_transform,
             )
             if text_comp.halo and text_comp.halo.width > 0:
                 import matplotlib.patheffects as mpe
@@ -978,7 +928,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             context.add_patch(patch)
 
     def render_debug(self, context: Axes, component: Component, matrix: np.ndarray):
-        # draw red dashed bounding box and origin marker
         if (
             not hasattr(component, "_dimensions")
             or component._dimensions.width <= 0
@@ -989,16 +938,15 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         transform = mtransforms.Affine2D(matrix=matrix) + context.transData
         lw = 0.5
         with _no_autoscale(context):
-            # bounding box
             context.add_patch(
                 mpatches.Rectangle(
                     (0, 0), w, h, fill=False, ec="red", ls="--", lw=lw, transform=transform
                 )
             )
-            # origin crosshair (display coords)
+            # origin crosshair drawn in display coords
             origin_world = (matrix @ [0, 0, 1])[:2]
             origin_disp = context.transData.transform(origin_world)
-            sz = 3  # marker size in pixels
+            sz = 3
             context.add_line(
                 plt.Line2D(
                     [origin_disp[0] - sz, origin_disp[0] + sz],
@@ -1023,8 +971,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             )
 
     def render_to_output(self, context: Axes, output=None, **kwargs):
-        # save the rendered figure
-        self._refresh_data_units()  # ensure linewidths and text sizes are correct before final save
+        # refresh so data-unit linewidths and font sizes are final before save
+        self._refresh_data_units()
         if not hasattr(context, "figure"):
             raise ValueError("matplotlib context (Axes) must belong to a figure")
         opts = {"bbox_inches": "tight", "pad_inches": 0.1, **kwargs}

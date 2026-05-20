@@ -29,7 +29,6 @@ def read_from_pkg(path: str, pkg: str | None = "jeanplot"):
     except FileNotFoundError:
         pass
 
-    # it failed
     resources = [resource.name for resource in files(fpkg).iterdir() if not resource.is_file()]
     resources_str = "\n  - ".join(resources)
     msg = f"""File not found in package {fpkg}: {fpath}.
@@ -41,7 +40,7 @@ def read_from_pkg(path: str, pkg: str | None = "jeanplot"):
 
 
 def load_file(path: str | Path):
-    """reads a file that can be in a package or in the filesystem. if in a package it'll start with pkg:"""
+    """read a file from filesystem, or from a package if path starts with 'pkg:'."""
     if isinstance(path, Path):
         path = path.as_posix()
     if path.startswith("pkg:"):
@@ -52,7 +51,7 @@ def load_file(path: str | Path):
 
 
 def load_file_if_exists(path: str | Path):
-    """reads a file that can be in a package or in the filesystem. if in a package it'll start with pkg:"""
+    """like load_file but returns None if not found."""
     try:
         return load_file(path)
     except FileNotFoundError:

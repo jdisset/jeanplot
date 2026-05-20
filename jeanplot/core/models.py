@@ -1,31 +1,24 @@
-# File: jeanplot/models.py
-# -*- coding: utf-8 -*-
-"""Core data models for geometry, styling, and layout."""
-
 from typing import Literal, TypeVar, Annotated
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 import numpy as np
 import logging
 
-# use absolute imports
 
 logger = logging.getLogger(__name__)
 
 
 def normalize_color(color: str | tuple | None) -> str | None:
-    # handles tuple colors too now
     if not color or (isinstance(color, str) and color.lower() == "none"):
         return None
     try:
-        from matplotlib.colors import to_hex  # local import ok here
+        from matplotlib.colors import to_hex
 
         return to_hex(color, keep_alpha=True)
-    except (ValueError, TypeError, AttributeError):  # added attributeerror
+    except (ValueError, TypeError, AttributeError):
         logger.warning(f"could not normalize color '{color}', returning None.")
         return None
 
 
-# types
 LayoutDirection = Literal["row", "column"]
 AlignType = Literal["start", "center", "end", "stretch"]
 DistributeType = Literal["start", "center", "end", "space-between", "space-around", "space-evenly"]
@@ -105,6 +98,7 @@ class Transform(BaseModel):
     skew_x: float = 0.0  # degrees
     skew_y: float = 0.0  # degrees
     rotation_center: tuple[float, float] = (0.5, 0.5)
+
 
     def to_matrix(self, dimensions: Size) -> np.ndarray:
         s_mat = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
@@ -211,7 +205,7 @@ class Shadow(BaseModel):
 
 
 class TextHalo(BaseModel):
-    """Stroke/outline effect around text (character-level halo)."""
+    """stroke/outline effect around text (character-level halo)."""
 
     color: NormalizedColor = "#ffffffee"
     width: float = 2.0  # stroke width in points
@@ -237,7 +231,7 @@ class LayoutConstraints(BaseModel):
 
 
 class TextMetrics(BaseModel):
-    """stores measured text metrics at a reference size."""
+    """measured text metrics at a reference size."""
 
     ref_font_size: float = 10.0
     width_points: float = 0.0

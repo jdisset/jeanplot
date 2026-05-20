@@ -1,5 +1,3 @@
-"""SVG data models and utilities for parsing and creating SVG elements."""
-
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator, PrivateAttr, ConfigDict
 import numpy as np
@@ -8,7 +6,6 @@ from lxml import etree
 from pathlib import Path
 import logging
 
-# use absolute imports
 from jeanplot.core.utils import load_file
 from jeanplot.core.path_utils import normalize_vector
 from jeanplot.core.component import Component
@@ -16,17 +13,13 @@ from jeanplot.core.models import Size, LineWidthMode, normalize_color
 
 logger = logging.getLogger(__name__)
 
-# types
 LineStyle = Literal["solid", "dashed", "dotted", "custom"]
 
 
-# --- svg data models ---
-
-
 class SVGPathData(BaseModel):
-    """represents a single svg path with styling attributes."""
+    """single svg path with styling attributes."""
 
-    model_config = ConfigDict(frozen=True)  # paths should be immutable after parsing
+    model_config = ConfigDict(frozen=True)
 
     d: str
     fill: str | None = None
@@ -39,7 +32,7 @@ class SVGPathData(BaseModel):
 
 
 class SVGContent(BaseModel):
-    """structured representation of parsed or generated svg data."""
+    """parsed or generated svg data."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -50,22 +43,14 @@ class SVGContent(BaseModel):
 
 
 class SVGTextContent(BaseModel):
-    """svg content specialized for text, storing paths and measured size."""
+    """svg content specialized for text: glyph paths + measured size."""
 
-    # stores matplotlib path objects and related info from renderer
-    # structure: list of dicts, one per character/glyph path needed for rendering
     glyph_paths: tuple[dict[str, Any], ...] = Field(default_factory=tuple)
-    # stores the calculated natural size based on glyph bounding boxes
     measured_width: float = 0
     measured_height: float = 0
 
 
-# --- line end caps ---
-
-
 class LineEndArrow(BaseModel):
-    """arrow end cap definition."""
-
     stroke_color: str = "#000000"
     stroke_width: float = 1.0
     fill_color: str | None = None
@@ -99,11 +84,8 @@ class LineEndFlat(BaseModel):
 LineEndType = LineEndArrow | LineEndCircle | LineEndFlat
 
 
-# --- svg creation helpers ---
-
-
 def make_svg_line(width: float, thickness: float, color: str | None) -> SVGContent:
-    """creates svgcontent for a simple horizontal line."""
+    """svgcontent for a simple horizontal line."""
     norm_color = normalize_color(color)
     if width <= 0 or thickness <= 0 or norm_color is None:
         return SVGContent(width=0, height=0, paths=())
@@ -112,7 +94,7 @@ def make_svg_line(width: float, thickness: float, color: str | None) -> SVGConte
         d=path_d,
         stroke=norm_color,
         stroke_width=thickness,
-        fill=None,  # explicitly none for lines
+        fill=None,
     )
     return SVGContent(width=width, height=thickness, paths=(path_data,))
 
@@ -120,7 +102,7 @@ def make_svg_line(width: float, thickness: float, color: str | None) -> SVGConte
 def arc_to_bezier(
     center_x: float, center_y: float, radius: float, start_angle_deg: float, end_angle_deg: float
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]:
-    """converts a 90-degree circular arc to a cubic bezier curve."""
+    """convert a 90-degree circular arc to a cubic bezier curve."""
     start_rad = np.radians(start_angle_deg)
     end_rad = np.radians(end_angle_deg)
     kappa = 0.5522847498
@@ -134,13 +116,10 @@ def arc_to_bezier(
     return (p0_x, p0_y), (p1_x, p1_y), (p2_x, p2_y), (p3_x, p3_y)
 
 
-# --- cap creation helpers ---
-
-
 def create_arrow_cap(
     point: tuple[float, float], direction: tuple[float, float], arrow: LineEndArrow
 ) -> SVGPathData:
-    """creates svgpathdata for an arrow cap."""
+    """svgpathdata for an arrow cap."""
     dx, dy = normalize_vector(direction)
     perp_x, perp_y = -dy, dx
     angle_rad = np.radians(arrow.angle / 2.0)
@@ -169,7 +148,7 @@ def create_arrow_cap(
 def create_circle_cap(
     point: tuple[float, float], _: tuple[float, float], circle: LineEndCircle
 ) -> SVGPathData:
-    """creates svgpathdata for a circle cap."""
+    """svgpathdata for a circle cap."""
     r = circle.radius
     path = f"M {point[0] - r:.3f} {point[1]:.3f} A {r:.3f} {r:.3f} 0 1 1 {point[0] + r:.3f} {point[1]:.3f} A {r:.3f} {r:.3f} 0 1 1 {point[0] - r:.3f} {point[1]:.3f} Z"
     return SVGPathData(
@@ -186,7 +165,7 @@ def create_circle_cap(
 def create_flat_cap(
     point: tuple[float, float], direction: tuple[float, float], flat: LineEndFlat
 ) -> SVGPathData:
-    """creates svgpathdata for a flat ('t') cap."""
+    """svgpathdata for a flat ('t') cap."""
     dx, dy = normalize_vector(direction, (0, 1))
     perp_x, perp_y = -dy, dx
     half_len = flat.length / 2.0
@@ -204,11 +183,8 @@ def create_flat_cap(
     )
 
 
-# --- svg parsing ---
-
-
 def _parse_svg_dimension(dim_str: str, ppi: float) -> float:
-    """parse svg dimension string (e.g., "100px", "50")"""
+    """parse svg dimension string (e.g., "100px", "50")."""
     if not isinstance(dim_str, str):
         return 0.0
     match = re.match(r"^\s*([\d\.]+)\s*([a-zA-Z%]*)", dim_str)
@@ -236,10 +212,9 @@ def get_svg_data(source: str | Path | bytes, ppi: float = 72.0) -> SVGContent:
     if isinstance(source, bytes):
         content_bytes = source
     elif isinstance(source, str):
-        # check if it's likely svg content vs a path
         if source.strip().startswith("<svg"):
             content_bytes = source.encode("utf-8")
-        else:  # assume it's a path
+        else:
             try:
                 loaded_content = load_file(source)
                 if isinstance(loaded_content, str):
@@ -358,9 +333,6 @@ def get_svg_data(source: str | Path | bytes, ppi: float = 72.0) -> SVGContent:
         return SVGContent(paths=())
 
 
-# --- svg component ---
-
-
 class SVGElement(Component):
     svg_content: str | Path | bytes | SVGContent | None = None
     color_remap: dict[str, str | None] = Field(default_factory=dict)
@@ -379,16 +351,12 @@ class SVGElement(Component):
             norm_val = normalize_color(val_out)
             if norm_key:
                 normalized_map[norm_key] = norm_val
-            else:
-                # logger.warning(f"invalid input color '{key_in}' in color_remap, skipping.") # too verbose
-                pass
         return normalized_map
 
     @model_validator(mode="after")
     def _parse_and_validate_svg(self):
         """load and parse svg data if not already done."""
         if isinstance(self.svg_content, SVGContent):
-            # ensure colors are normalized if passed directly
             if not getattr(self.svg_content, "_colors_normalized", False):
                 paths = tuple(
                     p.model_copy(
@@ -411,16 +379,13 @@ class SVGElement(Component):
                 logger.warning(f"failed to parse svg source for {self.id}")
                 self._parsed_svg_content = SVGContent(paths=())
         elif self._parsed_svg_content is None:
-            # default to empty if nothing provided and not parsed yet
             self._parsed_svg_content = SVGContent(paths=())
 
-        # set dimensions based on parsed svg if not already set (or zero)
         if self._parsed_svg_content and (
             self._dimensions.width <= 0 or self._dimensions.height <= 0
         ):
             w = max(0.0, self._parsed_svg_content.width)
             h = max(0.0, self._parsed_svg_content.height)
-            # only update if current dimensions are zero/negative
             if self._dimensions.width <= 0:
                 self._dimensions.width = w
             if self._dimensions.height <= 0:
@@ -428,13 +393,12 @@ class SVGElement(Component):
         return self
 
     def _measure_natural(self, renderer=None) -> Size:
-        """return base svg dimensions, adjusted by scale transform."""
-        # ensure svg is parsed first
+        """base svg dimensions adjusted by scale transform."""
         if not self._parsed_svg_content:
             self._parse_and_validate_svg()
 
         if not self._parsed_svg_content:
-            return Size()  # return zero if parsing failed
+            return Size()
 
         base_width = self._parsed_svg_content.width
         base_height = self._parsed_svg_content.height
@@ -444,11 +408,9 @@ class SVGElement(Component):
         return Size(width=nat_w, height=nat_h)
 
     def render(self, renderer, context, matrix: np.ndarray):
-        """render svg using the provided renderer."""
         if not self.show:
             return
 
-        # ensure svg is parsed before rendering
         if not self._parsed_svg_content:
             self._parse_and_validate_svg()
 

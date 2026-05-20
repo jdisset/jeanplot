@@ -1,7 +1,3 @@
-# File: jeanplot/core/connection_label.py
-# -*- coding: utf-8 -*-
-"""ConnectionLabel: text positioned along a Connection's rendered curve."""
-
 from __future__ import annotations
 
 import math
@@ -42,14 +38,13 @@ class ConnectionLabel(Text):
     _text_artist: Any | None = PrivateAttr(default=None)
 
     def _resolve_connection_ref(self) -> Connection | None:
-        """Walk ancestor tree to find Connection with matching ID."""
+        """walk ancestor tree to find Connection with matching id."""
         if self._resolved_connection is not None:
             return self._resolved_connection
         target_id = self.connection
         if not target_id:
             return None
 
-        # Walk up to root, then search for ID
         root = self
         while root.parent is not None:
             root = root.parent
@@ -62,7 +57,6 @@ class ConnectionLabel(Text):
 
     @staticmethod
     def _search_tree_for_id(node: Any, target_id: str) -> Any | None:
-        """DFS search for component with given id."""
         if getattr(node, "id", None) == target_id:
             return node
         for child in getattr(node, "children", []):
@@ -97,7 +91,7 @@ class ConnectionLabel(Text):
         wx, wy = float(world_pt[0]), float(world_pt[1])
         self._render_world_pos = (wx, wy)
 
-        # Compute tangent angle via chord sampling for stability
+        # chord sampling gives a more stable tangent than direct evaluation
         angle_deg = 0.0
         angle_rad = 0.0
         if self.align_to_edge:
@@ -125,12 +119,7 @@ class ConnectionLabel(Text):
         labels: list[ConnectionLabel],
         context: Any,
     ) -> None:
-        """Build compound clip paths for connections that have clip_connection labels.
-
-        Groups labels by their resolved Connection, finds the connection's
-        PathPatch artists by GID, measures each label's text bbox, and
-        builds compound clip paths (outer axes rect CW + rotated rect holes CCW).
-        """
+        """build compound clip paths cutting holes for each label under its connection."""
         import matplotlib.patches as mpatches
         from matplotlib.path import Path as MplPath
 
@@ -143,7 +132,6 @@ class ConnectionLabel(Text):
         x0, x1 = context.get_xlim()
         y0, y1 = context.get_ylim()
 
-        # Group by connection ID
         from collections import defaultdict
 
         groups: dict[str, list[ConnectionLabel]] = defaultdict(list)
@@ -157,7 +145,7 @@ class ConnectionLabel(Text):
             if not conn_patches:
                 continue
 
-            # Compound clip: outer axes rect (CW) minus rotated text bbox holes (CCW)
+            # outer axes rect (CW) minus rotated text bbox holes (CCW)
             verts: list[tuple[float, float]] = [
                 (x0, y0),
                 (x1, y0),
@@ -185,7 +173,7 @@ class ConnectionLabel(Text):
                 bbox_data = inv_transform.transform_bbox(bbox_disp)
                 bw, bh = bbox_data.width, bbox_data.height
 
-                # Back-compute unrotated text width/height from axis-aligned bbox
+                # back-compute unrotated text width/height from axis-aligned bbox
                 ca, sa = abs(math.cos(angle_rad)), abs(math.sin(angle_rad))
                 det = ca * ca - sa * sa
                 if abs(det) > 1e-4:

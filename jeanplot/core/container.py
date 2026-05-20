@@ -1,13 +1,8 @@
-# File: jeanplot/container.py
-# -*- coding: utf-8 -*-
-"""Container component that manages and lays out child components."""
-
 from pydantic import Field, PrivateAttr
 from typing import Any, Sequence
 import numpy as np
 import logging
 
-# use absolute imports
 from jeanplot.core.component import Component, AnchorComponent
 from jeanplot.core.models import Size, LayoutConstraints
 from jeanplot.core.renderer import BaseRenderer
@@ -25,7 +20,6 @@ class Container(Component):
     _overlay_children_cache: list[Component] = PrivateAttr(default_factory=list)
 
     def add_child(self, child: Component):
-        """add child component and set parent link."""
         is_already_present = any(child is c for c in self.children)
         if not is_already_present:
             self.children.append(child)
@@ -42,6 +36,7 @@ class Container(Component):
     def _prepare_children(self, for_render: bool = False):
         """categorize children and ensure parent links."""
         layout_children, overlay_children = [], []
+
         layout_ids, overlay_ids = set(), set()
 
         all_children_map = {id(c): c for c in self.children if c}
@@ -75,7 +70,7 @@ class Container(Component):
         return layout_children, overlay_children
 
     def _measure_natural(self, renderer: BaseRenderer | None) -> Size:
-        """calculates natural size based on layout children."""
+        """natural size based on layout children."""
         self._prepare_children(for_render=False)
 
         all_measurable_children = self._layout_children_cache + self._overlay_children_cache
@@ -85,7 +80,7 @@ class Container(Component):
 
         natural_width, natural_height = 0.0, 0.0
         layout_children = self._layout_children_cache
-        insets = self.safe_style.content_inset()  # t, r, b, l
+        insets = self.safe_style.content_inset()
 
         if not layout_children:
             natural_width, natural_height = insets[1] + insets[3], insets[0] + insets[2]
@@ -94,7 +89,7 @@ class Container(Component):
             main_axis_size, cross_axis_size = 0.0, 0.0
             for i, child in enumerate(layout_children):
                 child_dims = child._dimensions
-                margins = child.safe_style.margin  # t, r, b, l
+                margins = child.safe_style.margin
                 if is_row:
                     main_axis_size += child_dims.width + margins[3] + margins[1]
                     cross_axis_size = max(
@@ -124,14 +119,12 @@ class Container(Component):
         content_w, content_h = self.safe_style.content_box(self._dimensions)
         content_x, content_y = self.safe_style.padding[3], self.safe_style.padding[0]
 
-        # Position layout children if any exist
         if layout_children:
             self._calculate_and_apply_stretch(content_w, content_h, layout_children)
             self._position_layout_children(
                 content_x, content_y, content_w, content_h, layout_children
             )
 
-        # Trigger layout pass for all child containers (both layout and overlay)
         all_children = layout_children + overlay_children
         for child in all_children:
             if isinstance(child, Container):
@@ -140,7 +133,6 @@ class Container(Component):
     def _layout_overlay_containers(
         self, overlay_children: list[Component], renderer: BaseRenderer | None
     ):
-        """triggers layout pass for overlay children that are containers."""
         for child in overlay_children:
             if isinstance(child, Container):
                 child._layout_children(renderer)
@@ -148,7 +140,6 @@ class Container(Component):
     def _calculate_and_apply_stretch(
         self, content_w: float, content_h: float, layout_children: list[Component]
     ) -> list[Component]:
-        """calculates and applies stretch to children."""
         if self.layout.align_items != "stretch" or not layout_children:
             return []
         stretched_children = []
@@ -164,9 +155,7 @@ class Container(Component):
             target_cross_size = max(0, available_cross - margins_cross)
             min_cross, max_cross = getattr(min_dims, cross_axis), getattr(max_dims, cross_axis)
 
-            final_cross_size = getattr(
-                current_dims, cross_axis, 0.0
-            )  # handle potential missing attr
+            final_cross_size = getattr(current_dims, cross_axis, 0.0)
 
             if min_cross <= target_cross_size <= max_cross:
                 final_cross_size = target_cross_size
@@ -176,7 +165,7 @@ class Container(Component):
                 final_cross_size = max_cross
 
             min_main, max_main = getattr(min_dims, main_axis), getattr(max_dims, main_axis)
-            current_main = getattr(current_dims, main_axis, 0.0)  # handle potential missing attr
+            current_main = getattr(current_dims, main_axis, 0.0)
             final_main_size = min(max(min_main, current_main), max_main)
 
             needs_update = False
@@ -194,7 +183,7 @@ class Container(Component):
     def _position_layout_children(
         self, content_x, content_y, content_w, content_h, layout_children
     ):
-        """calculates and sets _layout_origin_in_parent for layout children."""
+        """sets _layout_origin_in_parent for layout children."""
         num_children = len(layout_children)
         if num_children == 0:
             return
@@ -249,7 +238,7 @@ class Container(Component):
             cross_margins_total = (
                 child_margins[cross_margin_start_idx] + child_margins[cross_margin_end_idx]
             )
-            cross_size = getattr(child_dims, cross_size_attr, 0.0)  # handle missing attr
+            cross_size = getattr(child_dims, cross_size_attr, 0.0)
             align = self.layout.align_items
 
             if align in ("center", "middle"):
@@ -271,14 +260,12 @@ class Container(Component):
 
             current_pos_main = (
                 main_pos + getattr(child_dims, size_attr, 0.0) + child_margins[margin_end_idx]
-            )  # handle missing attr
+            )
 
     def measure_and_layout(self, renderer: BaseRenderer | None = None) -> Size:
-        """coordinates measurement/layout, ensuring Size return."""
         comp_id_str = self.id or self.__class__.__name__
         try:
-            # apply style to self *first* before measuring children
-            # self._apply_style() in Component now does this
+            # apply style to self before measuring children
             Component._apply_style(self)
             self._resolve_attachment()
             self._natural_dimensions = self._measure_natural(renderer)
@@ -311,7 +298,7 @@ class Container(Component):
         self._render_children(renderer, context, matrix)
 
     def _render_children(self, renderer: BaseRenderer, context: Any, matrix: np.ndarray):
-        """Render visible children and anchors in z-order."""
+        """render visible children and anchors in z-order."""
         all_children_map = {id(c): c for c in self.children if c}
         for a in self.anchor_points:
             if a:
@@ -322,7 +309,6 @@ class Container(Component):
 
         if visible_children:
             for child in visible_children:
-                # check if child has compute_world_matrix method before calling
                 if hasattr(child, "compute_world_matrix") and callable(child.compute_world_matrix):
                     child_world_matrix = child.compute_world_matrix(parent_world_matrix=matrix)
                     child.render(renderer, context, child_world_matrix)

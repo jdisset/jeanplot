@@ -1,13 +1,8 @@
-# File: jeanplot/text.py
-# -*- coding: utf-8 -*-
-"""Text component definition."""
-
 from __future__ import annotations
 from typing import Literal, Any
 import numpy as np
 from pydantic import BaseModel, PrivateAttr, Field
 
-# use absolute imports
 from jeanplot.core.component import Component
 from jeanplot.core.models import Size, TextMetrics, TextHalo
 from jeanplot.core.debug import get_logger
@@ -16,33 +11,24 @@ logger = get_logger(__name__)
 
 
 class TextSegment(BaseModel):
-    """A styled segment within a Text element, rendered as a tspan in SVG."""
+    """styled segment within a Text element, rendered as a tspan in svg."""
 
     text: str
     font_weight: Literal["normal", "bold"] | None = None
     font_style: Literal["normal", "italic"] | None = None
     color: str | None = None
-    font_size: float | None = None  # override, in same units as parent
+    font_size: float | None = None
 
 
 class Text(Component):
     """text component rendered using native matplotlib text."""
 
     text: str = ""
-    segments: list[TextSegment] | None = None  # styled segments (overrides text for rendering)
+    segments: list[TextSegment] | None = None  # overrides text when set
     font_name: str | None = None
-    # font_size meaning depends on font_size_mode:
-    # - "points": font_size is in typographic points (consistent visual size)
-    # - "data": font_size is in local data units (scales with container transforms)
     font_size: float = 12.0
-    # font_size_mode controls how font_size is interpreted:
-    # - "points": font_size is directly in typographic points (72 points = 1 inch)
-    #             This gives consistent visual size regardless of axis limits or
-    #             container transforms. Use this when you want text to have a fixed
-    #             visual appearance.
-    # - "data": font_size is in the component's local data units. The rendered
-    #           size scales with the component's world transform and axis limits.
-    #           Use this when you want text to scale proportionally with its container.
+    # "points": typographic points (consistent visual size).
+    # "data": local data units; scales with container transforms.
     font_size_mode: Literal["points", "data"] = "data"
     font_weight: Literal["normal", "bold"] = "normal"
     font_style: Literal["normal", "italic"] = "normal"
@@ -52,32 +38,26 @@ class Text(Component):
     line_spacing: float = 0.2  # factor of base line height
     halo: TextHalo | None = None
 
-    # renderers' native text rendering methods are used by default
-    # we switch to path rendering if render_as_path is set to True
-    # or if there are complex transforms (skew)
+    # native renderer text is used by default; switches to paths if forced or under skew
     render_as_path: Literal["auto"] | bool = "auto"
 
     _text_metrics_cache: TextMetrics | None = PrivateAttr(default=None)
     _render_path_cache: Any | None = PrivateAttr(default=None)
 
-    # text components generally don't need a background/border by default
-    # explicitly set style to None, jstyle can override if needed
+    # text doesn't get bg/border by default; jstyle can override
     style: Any = Field(default=None, validate_default=False)
 
     @property
     def effective_text(self) -> str:
-        """Concatenated text from segments if present, otherwise self.text."""
         if self.segments:
             return "".join(s.text for s in self.segments)
         return self.text
 
     def _measure_natural(self, renderer) -> Size:
-        """
-        calculates natural data-unit size from renderer-provided point metrics.
+        """natural data-unit size from renderer-provided point metrics.
 
-        The renderer stores text metrics at a reference point size
-        (TextMetrics.ref_font_size). We scale those metrics linearly to the
-        requested font size and convert to data units when needed.
+        The renderer stores metrics at TextMetrics.ref_font_size; we scale
+        linearly to the requested font size and convert to data units when needed.
         """
         if not self.effective_text or not renderer or not hasattr(renderer, "measure_text"):
             self._text_metrics_cache = None
@@ -116,36 +96,24 @@ class Text(Component):
         return natural_size
 
     def has_effective_skew(self, world_matrix: np.ndarray) -> bool:
-        """
-        detects skew by checking if the transformed axes are non-orthogonal.
-        """
+        """skew check: transformed basis axes non-orthogonal."""
         EPSILON = 1e-6
-
-        # extract the 2x2 transformation part (rotation, scale, skew)
         m2x2 = world_matrix[:2, :2]
-
-        # get transformed basis vectors (columns of the 2x2 matrix)
-        col1 = m2x2[:, 0]  # transformed x-axis
-        col2 = m2x2[:, 1]  # transformed y-axis
+        col1 = m2x2[:, 0]
+        col2 = m2x2[:, 1]
 
         len1_sq = np.dot(col1, col1)
         len2_sq = np.dot(col2, col2)
 
-        # if either axis is scaled to zero length, treat as no skew
         if len1_sq < EPSILON or len2_sq < EPSILON:
             return False
 
         dot_product = np.dot(col1, col2)
-
-        # check if the normalized dot product (cosine of angle between axes) is significantly non-zero
         normalized_dot_sq = (dot_product * dot_product) / (len1_sq * len2_sq)
         skew_tolerance = 1e-3
-        has_skew = normalized_dot_sq > skew_tolerance
-
-        return has_skew
+        return normalized_dot_sq > skew_tolerance
 
     def render(self, renderer, context: Any, matrix: np.ndarray):
-        """render text using the appropriate method based on render_as_path."""
         if not self.show or not self.effective_text:
             return
 

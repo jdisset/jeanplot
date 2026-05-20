@@ -1,4 +1,3 @@
-# File: tests/test_layout.py
 import pytest
 import numpy as np
 import matplotlib.pyplot as plt

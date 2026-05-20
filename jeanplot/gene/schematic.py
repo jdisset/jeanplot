@@ -23,8 +23,6 @@ _EMPTY_SOURCE = _SourceSummary(None, None, None, None)
 
 
 class TranscriptionUnitRow(Container):
-    """Row of transcription units."""
-
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(direction="row", gap=20, align_items="center")
     )
@@ -71,7 +69,6 @@ class SourceAnnotation(Container):
 
 class GeneticSchematic(Container):
     """Grid-based genetic circuit schematic driven by CircuitData."""
-
     data: CircuitData
     grid_gap: tuple[float, float] = (40.0, 20.0)
     orientation: Literal["row", "column"] = "column"
@@ -99,7 +96,6 @@ class GeneticSchematic(Container):
             self._build_interactions()
 
     def _assign_grid_positions(self):
-        """Assign grid row/col to each TU based on source grouping."""
         source_tu_map: dict[str, list[str]] = {}
         for source in self.data.sources:
             source_tu_map[source.id] = source.tu_ids
@@ -120,7 +116,6 @@ class GeneticSchematic(Container):
             self._grid_coords[tu_id] = (row, col)
 
     def _build_tus(self):
-        """Create TranscriptionUnit components from data."""
         from jeanplot.gene.elements import TranscriptionUnit, GeneticPart
 
         source_by_tu: dict[str, str] = {}
@@ -154,7 +149,6 @@ class GeneticSchematic(Container):
             if not tus_in_row:
                 continue
 
-            # Check if this row's TUs belong to a source with marker/ratios
             first_tu_id = tus_in_row[0].id
             source_id = source_by_tu.get(first_tu_id)
             info = source_info.get(source_id, _EMPTY_SOURCE) if source_id else _EMPTY_SOURCE
@@ -202,5 +196,4 @@ class GeneticSchematic(Container):
 
     @classmethod
     def from_circuit(cls, circuit: CircuitData, **kwargs) -> GeneticSchematic:
-        """Factory method for creating schematic from circuit data."""
         return cls(data=circuit, **kwargs)

@@ -1,7 +1,3 @@
-# File: jeanplot/genetic_elements.py
-# -*- coding: utf-8 -*-
-"""Components representing biological genetic elements like TUs, Promoters, ERNs."""
-
 from __future__ import annotations
 from typing import Literal, ClassVar, TYPE_CHECKING
 from pydantic import Field, model_validator, PrivateAttr
@@ -80,14 +76,11 @@ class AutoLabelMixin:
 
 
 class TranscriptionUnit(Container):
-    """
-    represents a transcription unit, containing genetic parts.
-    renders a central line visually connecting the parts.
-    """
+    """Transcription unit with a central line connecting parts."""
 
     name: str | None = None
     label: Text | None = None
-    ratio_normalized: float | None = None  # min-ratio-normalized-to-one value
+    ratio_normalized: float | None = None  # smallest ratio normalized to 1
     disabled: bool = False
     line_thickness: float = 1.0
     line_color: str = "#333333"
@@ -121,7 +114,7 @@ class TranscriptionUnit(Container):
             if not any(c.id == self.label.id for c in self.children if c.id and self.label.id):
                 self.add_child(self.label)
 
-        # append normalized ratio as bold "(×X)" suffix via segments
+        # bold "(×X)" suffix from normalized ratio
         if self.ratio_normalized is not None and self._ratio_label is None:
             ratio_str = _format_ratio_multiplier(self.ratio_normalized)
             if self.label and self.label.segments is None:
@@ -129,7 +122,7 @@ class TranscriptionUnit(Container):
                     TextSegment(text=self.label.text),
                     TextSegment(text=f" {ratio_str}", font_weight="bold"),
                 ]
-                self._ratio_label = self.label  # mark as processed
+                self._ratio_label = self.label
             elif not self.label:
                 self._ratio_label = Text(
                     id=f"ratio_{self.id}",
@@ -143,7 +136,6 @@ class TranscriptionUnit(Container):
                 )
                 self.add_child(self._ratio_label)
 
-        # create the tu line element (initially zero width)
         if not self._tu_line:
             svg_line_content = make_svg_line(0, self.line_thickness, self.line_color)
             self._tu_line = SVGElement(
@@ -151,7 +143,7 @@ class TranscriptionUnit(Container):
                 svg_content=svg_line_content,
                 is_overlay=True,
                 parent=self,
-                z_index=-1,  # draw line behind parts
+                z_index=-1,  # behind parts
                 line_width_mode="data",
             )
             self.add_child(self._tu_line)
@@ -160,15 +152,13 @@ class TranscriptionUnit(Container):
     def _layout_children(self, renderer=None):
         super()._layout_children(renderer)
 
-        # update tu line width and position after children are laid out
         if self._tu_line and self.children:
             layout_children = self._layout_children_cache
             line_width = 0
             min_x = 0
             if layout_children:
-                # filter out non-component Nones if any exist
                 valid_children = [child for child in layout_children if child is not None]
-                if valid_children:  # ensure there are children to calculate bounds from
+                if valid_children:
                     child_origins_x = [
                         child._layout_origin_in_parent[0] for child in valid_children
                     ]
@@ -183,22 +173,20 @@ class TranscriptionUnit(Container):
 
             svg_line_content = make_svg_line(line_width, self.line_thickness, self.line_color)
             self._tu_line.svg_content = svg_line_content
-            self._tu_line._parse_and_validate_svg()  # re-parse updated svg
+            self._tu_line._parse_and_validate_svg()
 
-            # use calculated content box height for centering
             content_w, content_h = self.style.content_box(self._dimensions)
             line_y = self.style.padding[0] + (content_h - self.line_thickness) / 2.0
             self._tu_line.offset = Offset(absolute=(min_x, line_y))
 
 
 def _format_ratio_multiplier(val: float) -> str:
-    """Format a normalized ratio as '(×X)' with integer or 1-decimal display."""
     num = f"{int(round(val))}" if abs(val - round(val)) < 0.01 else f"{val:.1f}"
     return f"(\u00d7{num})"
 
 
 class Source(Container):
-    """represents a source of genetic material (e.g., plasmid, cotransfection mix)."""
+    """Source of genetic material (plasmid, cotransfection mix, etc.)."""
 
     source_type: Literal["plasmid", "cotx", "mix", "linear"] | None = "cotx"
     marker: str | None = None
@@ -216,10 +204,9 @@ class Source(Container):
 
     _tag_container: Container | None = PrivateAttr(default=None)
 
-    # note: this setup is primarily for the proxy used by SourceAnnotation
+    # primarily for the proxy used by SourceAnnotation
     @model_validator(mode="after")
     def setup_source_tag(self):
-        # remove previous tag if exists
         if self._tag_container and self._tag_container in self.children:
             self.children.remove(self._tag_container)
             self._tag_container = None
@@ -233,7 +220,7 @@ class Source(Container):
                     "mix": AGGREGATION_LOGO_PATH,
                 }.get(self.source_type)
 
-            # Build effective label: "marker (×ratio)" with bold ratio
+            # "marker (×ratio)" with bold ratio
             effective_label = self.tag_label
             label_segments: list[TextSegment] | None = None
             if effective_label is None and self.marker:
@@ -258,7 +245,6 @@ class Source(Container):
                 tag_elements.append(tag_text)
 
             if tag_elements:
-                # use correct container id format if self.id is set
                 tag_id = f"{self.id}_tag" if self.id else "source_tag_proxy"
                 self._tag_container = Container(
                     id=tag_id,
@@ -267,18 +253,13 @@ class Source(Container):
                     children=tag_elements,
                     parent=self,
                 )
-                # important: apply styles to the proxy tag container here
-                # so it gets its default layout etc., before it's potentially copied
+                # apply styles now so defaults exist before SourceAnnotation extracts it
                 jstyle.apply(self._tag_container)
-                # don't add to self.children here, SourceAnnotation will extract it
         return self
 
 
 class GeneticPart(Container):
-    """
-    Base class for genetic parts using composition. It's a Container that holds
-    an SVGElement for its shape, an optional Text label, and anchors.
-    """
+    """Container holding an SVG shape, optional label, and anchors."""
 
     part_type: str = "unknown_part"
     part_name: str | None = None
@@ -294,10 +275,6 @@ class GeneticPart(Container):
     _svg_shape: SVGElement | None = PrivateAttr(default=None)
 
     def model_post_init(self, *args, **kwargs):
-        """
-        Creates the internal SVGElement shape, adds it as a child,
-        and adds the label (if any) and anchors as overlay children.
-        """
         super().model_post_init(*args, **kwargs)
 
         svg_content_data = self._load_svg_content()
@@ -322,7 +299,6 @@ class GeneticPart(Container):
                     self.add_child(anchor)
 
     def _load_svg_content(self) -> SVGContent | None:
-        """Loads SVG data based on part_type and part_name."""
         svg_to_load = None
         if self.part_name:
             svg_path_specific = (
@@ -357,7 +333,6 @@ class GeneticPart(Container):
 
     @classmethod
     def from_data(cls, data: PartData) -> GeneticPart:
-        """Create part from PartData."""
         role_map = {
             "promoter": Promoter,
             "terminator": Terminator,
@@ -374,7 +349,7 @@ class ERN(GeneticPart, AutoLabelMixin):
     part_type: str = "ERN"
     _auto_label: ClassVar[bool] = True
     _label_prefix: ClassVar[str] = "ern_"
-    _label_font_size: ClassVar[float] = 5.0  # SVG height is 18
+    _label_font_size: ClassVar[float] = 5.0
     anchor_points: list[AnchorComponent] = Field(
         default_factory=lambda: make_vertical_anchors("", "ern")
     )
@@ -384,7 +359,7 @@ class FluoMarker(GeneticPart, AutoLabelMixin):
     part_type: str = "fluo_marker"
     _auto_label: ClassVar[bool] = True
     _label_prefix: ClassVar[str] = "fluo_"
-    _label_font_size: ClassVar[float] = 5.0  # SVG height is 19
+    _label_font_size: ClassVar[float] = 5.0
 
 
 class Promoter(GeneticPart):

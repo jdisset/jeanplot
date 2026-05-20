@@ -1,5 +1,3 @@
-"""High-level rendering API for jeanplot scenes."""
-
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -54,7 +52,6 @@ def render(
 
 
 def render_to_string(component: Component, *, width: float = 800, height: float = 600) -> str:
-    """Render directly to an SVG string."""
     renderer = SVGRenderer()
     root = renderer.create_context(width=width, height=height)
     renderer.render_component(root, component)

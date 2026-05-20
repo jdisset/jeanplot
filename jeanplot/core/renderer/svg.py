@@ -1,5 +1,3 @@
-"""SVG rendering backend for jeanplot."""
-
 from __future__ import annotations
 
 from typing import BinaryIO, TextIO
@@ -324,7 +322,6 @@ class SVGRenderer(DebugMixin, BaseRenderer):
         )
 
         if text_component.segments:
-            # styled segments: each gets its own tspan with optional overrides
             for seg in text_component.segments:
                 tspan = etree.SubElement(text_elem, "tspan")
                 tspan.text = seg.text

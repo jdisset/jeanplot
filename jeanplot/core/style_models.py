@@ -1,5 +1,3 @@
-"""Typed models used by the style engine."""
-
 from __future__ import annotations
 
 from typing import Any, NamedTuple
@@ -21,8 +19,6 @@ class StyleRule(BaseModel):
 
 
 class PropertyApplication(NamedTuple):
-    """Data used to decide the winning value for a property."""
-
     specificity: Specificity
     is_context: bool
     mro_level: int

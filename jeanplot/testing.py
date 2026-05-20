@@ -1,5 +1,3 @@
-"""Testing utilities for jeanplot."""
-
 from __future__ import annotations
 
 import re
@@ -15,7 +13,6 @@ from jeanplot.core.text import Text
 
 class MockRenderer(BaseRenderer):
     """Renderer that returns cached metrics without matplotlib dependency."""
-
     RENDERER_NAME = "mock"
 
     _text_metrics: dict[str, tuple[float, float]] = {}
@@ -65,7 +62,6 @@ class MockRenderer(BaseRenderer):
 
 
 def render_to_svg(component: Component) -> str:
-    """Render component to SVG string for testing."""
     from jeanplot.core.renderer.svg import SVGRenderer
 
     renderer = SVGRenderer()
@@ -73,18 +69,15 @@ def render_to_svg(component: Component) -> str:
 
 
 def parse_svg(svg_string: str) -> etree._Element:
-    """Parse SVG string to element tree."""
     return etree.fromstring(svg_string.encode())
 
 
 def get_element_by_id(svg: etree._Element, element_id: str) -> etree._Element | None:
-    """Find element by ID in SVG tree."""
     results = svg.xpath(f"//*[@id='{element_id}']")
     return results[0] if results else None
 
 
 def get_element_transform(element: etree._Element) -> np.ndarray | None:
-    """Extract transform matrix from element."""
     transform_str = element.get("transform")
     if not transform_str:
         return np.eye(3)
@@ -105,7 +98,6 @@ def get_element_transform(element: etree._Element) -> np.ndarray | None:
 
 
 def get_element_bounds(svg: etree._Element, element_id: str) -> tuple[float, float, float, float]:
-    """Extract bounding box of element by ID."""
     elem = get_element_by_id(svg, element_id)
     if elem is None:
         raise ValueError(f"element '{element_id}' not found")
@@ -136,13 +128,11 @@ def get_element_bounds(svg: etree._Element, element_id: str) -> tuple[float, flo
 
 
 def get_element_position(svg: etree._Element, element_id: str) -> tuple[float, float]:
-    """Get top-left position of element."""
     bounds = get_element_bounds(svg, element_id)
     return (bounds[0], bounds[1])
 
 
 def assert_element_position(svg: str, element_id: str, x: float, y: float, tol: float = 0.1):
-    """Assert element is at expected position."""
     root = parse_svg(svg)
     bounds = get_element_bounds(root, element_id)
     assert abs(bounds[0] - x) < tol, f"{element_id} x={bounds[0]:.2f}, expected {x:.2f}"
@@ -150,7 +140,6 @@ def assert_element_position(svg: str, element_id: str, x: float, y: float, tol: 
 
 
 def assert_element_size(svg: str, element_id: str, width: float, height: float, tol: float = 0.1):
-    """Assert element has expected dimensions."""
     root = parse_svg(svg)
     bounds = get_element_bounds(root, element_id)
     actual_w = bounds[2] - bounds[0]
@@ -162,7 +151,7 @@ def assert_element_size(svg: str, element_id: str, width: float, height: float, 
 
 
 def assert_elements_connected(svg: str, start_id: str, end_id: str) -> bool:
-    """Check if a path exists connecting two elements (by ID pattern)."""
+    """Check if a path exists connecting two elements."""
     root = parse_svg(svg)
     paths = root.xpath("//*[local-name()='path']")
 
@@ -205,7 +194,7 @@ def assert_elements_connected(svg: str, start_id: str, end_id: str) -> bool:
 
 
 def normalize_svg(svg: str) -> str:
-    """Normalize SVG for comparison by removing timestamps and IDs."""
+    """Strip IDs and collapse whitespace for SVG comparison."""
     svg = re.sub(r'id="[^"]*"', "", svg)
     svg = re.sub(r"\s+", " ", svg)
     svg = re.sub(r">\s+<", "><", svg)
@@ -213,6 +202,6 @@ def normalize_svg(svg: str) -> str:
 
 
 def svg_hash(svg: str) -> str:
-    """Generate hash of normalized SVG for visual regression testing."""
+    """Hash of normalized SVG for visual regression."""
     normalized = normalize_svg(svg)
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]

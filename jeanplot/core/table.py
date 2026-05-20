@@ -40,49 +40,42 @@ class ColumnStyle(BaseModel):
 
 
 class TableCell(Container):
-    """Represents a single cell within a TableRow."""
+    """single cell within a TableRow."""
 
     style: CellStyle = Field(default_factory=CellStyle)
     colspan: int = 1
-    # rowspan: int = 1 # deferred for simplicity
 
-    # internal attributes set by Table/TableRow
     _row_index: int = PrivateAttr(default=0)
     _col_index: int = PrivateAttr(default=0)
     _is_header: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def apply_styles(self):
-        # override parent apply_styles to ensure TableCell's style is CellStyle
+        # override parent apply_styles so style stays CellStyle
         jstyle.apply(self)
-        # ensure style is CellStyle after jstyle application
         if not isinstance(self.style, CellStyle):
-            # if jstyle replaced it with a BoxStyle, convert it back
-            # preserving original cellstyle fields if they existed
+            # jstyle may have replaced with a BoxStyle; coerce back
             current_style_dict = self.style.model_dump()
             self.style = CellStyle(**current_style_dict)
         return self
 
     def measure_and_layout(self, renderer=None) -> Size:
-        target_width = -1.0  # Flag for no specific width target initially
+        target_width = -1.0
         if self.style.align_items:
             self.layout.align_items = self.style.align_items
         if self.style.justify_content:
             self.layout.justify_content = self.style.justify_content
 
-        # apply width constraints from parent row before measuring
         if self.parent and hasattr(self.parent, "_calculated_column_widths"):
             col_widths = self.parent._calculated_column_widths
-            # Check if _col_index is valid
             if self._col_index < len(col_widths):
-                # Check if colspan is valid
                 effective_colspan = min(self.colspan, len(col_widths) - self._col_index)
                 if effective_colspan > 0:
                     target_width = sum(
                         col_widths[c]
                         for c in range(self._col_index, self._col_index + effective_colspan)
                     )
-                    # also account for gaps between spanned columns if border is separate
+                    # add inter-column gaps if borders are separate
                     if (
                         effective_colspan > 1
                         and hasattr(self.parent.parent, "border_collapse")
@@ -91,52 +84,41 @@ class TableCell(Container):
                     ):
                         target_width += self.parent.parent.border_spacing * (effective_colspan - 1)
 
-                    # apply as min/max dimensions to constrain measurement
                     self.min_dimensions.width = target_width
                     self.max_dimensions.width = target_width
 
-        # apply cell style dimension constraints AFTER column width target
+        # cell style dims applied AFTER column target so they win
         if self.style.min_width is not None:
             self.min_dimensions.width = max(self.min_dimensions.width, self.style.min_width)
         if self.style.max_width is not None:
             self.max_dimensions.width = min(self.max_dimensions.width, self.style.max_width)
-        # If style constraints conflict with target_width, let style win but might break table alignment
         if target_width >= 0 and self.min_dimensions.width > self.max_dimensions.width:
             self._log_debug(
                 f"Warning: Cell style min/max width conflicts for cell {self._row_index},{self._col_index}. Using style constraints."
             )
-            target_width = -1.0  # Remove target width constraint if style overrides
+            target_width = -1.0
 
         if self.style.min_height is not None:
             self.min_dimensions.height = max(self.min_dimensions.height, self.style.min_height)
         if self.style.max_height is not None:
             self.max_dimensions.height = min(self.max_dimensions.height, self.style.max_height)
 
-        # proceed with standard measurement and layout
-        # The super() call will measure children naturally, then attempt to layout within constraints
         super().measure_and_layout(renderer)
 
-        # --- Enforce final width ---
-        # Ensure final dimensions strictly respect the calculated width constraint if it was set
-        # And if style constraints didn't conflict
+        # enforce final width if column constraint was applied
         if target_width >= 0 and self.min_dimensions.width == self.max_dimensions.width:
-            # Check if size differs significantly before forcing
             if abs(self._dimensions.width - target_width) > 1e-6:
                 self._dimensions.width = target_width
-
-        # Also enforce max_width if it's less than current width
         elif (
             self.max_dimensions.width < float("inf")
             and self._dimensions.width > self.max_dimensions.width
         ):
             self._dimensions.width = self.max_dimensions.width
-        # --- End of width enforcement ---
 
-        return self._dimensions  # Return the potentially adjusted dimensions
+        return self._dimensions
 
     def render(self, renderer, context, matrix: np.ndarray):
-        """Render the cell background/border, then content."""
-        # custom border rendering based on cell style flags
+        """render cell background/border then content."""
         effective_style = self.style
         draw_top = effective_style.border_top is not False
         draw_right = effective_style.border_right is not False
@@ -146,12 +128,10 @@ class TableCell(Container):
         if effective_style.background_color or (
             effective_style.border_color and effective_style.border_width > 0
         ):
-            # create a temporary style for rendering the background/border box
             render_style = effective_style.model_copy()
 
             if not (draw_top and draw_right and draw_bottom and draw_left):
-                # if any side is hidden, we can't use the simple rectangle border
-                # we'll draw the background only, and draw borders manually
+                # any side hidden: draw bg then individual border edges
                 bg_style = render_style.model_copy()
                 bg_style.border_width = 0
                 bg_style.border_color = None
@@ -160,7 +140,6 @@ class TableCell(Container):
                         context, self._dimensions, bg_style, matrix, component=self
                     )
 
-                # Draw only the enabled border edges.
                 if render_style.border_color and render_style.border_width > 0:
                     border_path = self._build_border_edges_path(
                         draw_top=draw_top,
@@ -184,7 +163,6 @@ class TableCell(Container):
                             line_width_mode=render_style.border_width_mode,
                         )
             else:
-                # all borders visible, render normally
                 renderer.render_rectangle(
                     context, self._dimensions, render_style, matrix, component=self
                 )
@@ -216,36 +194,34 @@ class TableCell(Container):
 
 
 class TableRow(Container):
-    """Represents a single row within a Table."""
+    """single row within a Table."""
 
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
             direction="row",
-            align_items="stretch",  # stretch cells vertically by default
+            align_items="stretch",
             justify_content="start",
-            gap=0,  # gap usually handled by cell padding/margin or table border spacing
+            gap=0,
         )
     )
-    # internal attributes set by Table
     _row_index: int = PrivateAttr(default=0)
     _is_header: bool = PrivateAttr(default=False)
     _calculated_column_widths: list[float] = PrivateAttr(default_factory=list)
 
 
 class Table(Container):
-    """Container that arranges data into rows and columns."""
+    """container that arranges data into rows and columns."""
 
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
             direction="column",
-            align_items="stretch",  # stretch rows horizontally
+            align_items="stretch",
             justify_content="start",
-            gap=0,  # vertical gap handled by cell padding/margin or border spacing
+            gap=0,
         )
     )
     style: BoxStyle = Field(
         default_factory=lambda: BoxStyle(
-            # default table style often includes an outer border
             border_color="#333333",
             border_width=0.5,
         )
@@ -262,9 +238,10 @@ class Table(Container):
 
     @model_validator(mode="after")
     def build_table(self):
-        self.children.clear()  # clear in place to avoid assignment-validation recursion
+        # clear in place to avoid assignment-validation recursion
+        self.children.clear()
         if not self.data:
-            self._num_columns = 0  # Explicitly set for empty data case
+            self._num_columns = 0
             return self
 
         max_effective_cols = 0
@@ -272,10 +249,8 @@ class Table(Container):
             current_effective_cols = 0
             for cell_content in row_data:
                 colspan = 1
-                # check if it's a TableCell instance and get its colspan
                 if isinstance(cell_content, TableCell):
                     colspan = cell_content.colspan
-                # or check if it's a dict that might represent a TableCell (less robust)
                 elif isinstance(cell_content, dict) and "colspan" in cell_content:
                     colspan = cell_content.get("colspan", 1)
 
@@ -283,7 +258,6 @@ class Table(Container):
             max_effective_cols = max(max_effective_cols, current_effective_cols)
         self._num_columns = max_effective_cols
 
-        # ensure column_styles has enough entries
         if len(self.column_styles) < self._num_columns:
             self.column_styles.extend(
                 [ColumnStyle() for _ in range(self._num_columns - len(self.column_styles))]
@@ -301,10 +275,9 @@ class Table(Container):
                 table_row.style_class.append("row-last")
             table_row.style_class.append("row-even" if r % 2 == 0 else "row-odd")
 
-            col_offset = 0  # track column index considering colspan
+            col_offset = 0
             for c_nominal, cell_content in enumerate(row_data):
                 c_actual = col_offset
-                # ensure we don't process beyond the calculated number of columns
                 if c_actual >= self._num_columns:
                     self._log_debug(
                         f"Warning: Cell data in row {r} exceeds calculated column count ({self._num_columns}) due to colspan. Ignoring extra cell."
@@ -318,7 +291,6 @@ class Table(Container):
                     cell = TableCell(children=[cell_content])
                     cell.colspan = min(cell.colspan, self._num_columns - c_actual)
                 else:
-                    # default: wrap content in a Text component
                     cell = TableCell(children=[Text(text=str(cell_content))])
                     cell.colspan = min(cell.colspan, self._num_columns - c_actual)
 
@@ -360,15 +332,12 @@ class Table(Container):
 
                 col_offset += cell.colspan
 
-            # handle row padding/border spacing for 'separate' mode
             if self.border_collapse == "separate" and self.border_spacing > 0:
                 table_row.layout.gap = self.border_spacing
-                # add padding to the row itself to create vertical spacing
                 table_row.style.padding = (self.border_spacing / 2, 0, self.border_spacing / 2, 0)
 
-            self.add_child(table_row)  # add completed row to table
+            self.add_child(table_row)
 
-        # apply table-level border spacing padding if separate
         if self.border_collapse == "separate" and self.border_spacing > 0:
             pad_t, pad_r, pad_b, pad_l = self.style.padding
             self.style.padding = (
@@ -382,10 +351,10 @@ class Table(Container):
         return self
 
     def _merge_styles(self, base: dict, overlay: dict) -> dict:
-        """Merges two style dictionaries (overlay takes precedence). Handles None."""
+        """merge two style dicts; overlay wins for non-None values."""
         merged = base.copy()
         for key, value in overlay.items():
-            if value is not None:  # only override if overlay value is explicitly set
+            if value is not None:
                 if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                     merged[key] = self._merge_styles(merged[key], value)
                 else:
@@ -393,11 +362,11 @@ class Table(Container):
         return merged
 
     def measure_and_layout(self, renderer=None) -> Size:
-        """Overrides container layout to handle column widths."""
-        if not self.children:  # no rows
+        """overrides container layout to compute column widths."""
+        if not self.children:
             return super().measure_and_layout(renderer)
 
-        # measure natural cell sizes
+        # first pass: measure natural cell sizes with constraints relaxed
         original_min_max = {}
         for r, row in enumerate(self.children):
             if isinstance(row, TableRow):
@@ -408,7 +377,6 @@ class Table(Container):
                             cell.min_dimensions.model_copy(),
                             cell.max_dimensions.model_copy(),
                         )
-                        # allow natural measurement
                         cell.min_dimensions.width = 0
                         cell.max_dimensions.width = float("inf")
 
@@ -421,7 +389,6 @@ class Table(Container):
                     if isinstance(cell, TableCell):
                         natural_widths[(r, c)] = cell._dimensions.width
 
-        # restore original min/max constraints
         for r, row in enumerate(self.children):
             if isinstance(row, TableRow):
                 for c, cell in enumerate(row.children):
@@ -434,19 +401,16 @@ class Table(Container):
         table_content_width = self.style.content_box(self._dimensions)[0]
         calculated_widths = self._calculate_column_widths(table_content_width, natural_widths)
 
-        # apply calculated widths and re-layout
         for row in self.children:
             if isinstance(row, TableRow):
-                row._calculated_column_widths = calculated_widths  # pass widths to row/cells
+                row._calculated_column_widths = calculated_widths
 
-        final_size = super().measure_and_layout(renderer)
-
-        return final_size
+        return super().measure_and_layout(renderer)
 
     def _calculate_column_widths(
         self, available_width: float, natural_widths: dict[tuple[int, int], float]
     ) -> list[float]:
-        """Determine the final width for each column."""
+        """final width for each column."""
         num_cols = self._num_columns
         col_styles = self.column_styles
         widths = [0.0] * num_cols
@@ -456,7 +420,7 @@ class Table(Container):
         fixed_width = 0.0
         auto_natural_max = [0.0] * num_cols
 
-        # --- Pass 1: Identify types and fixed/natural sizes ---
+        # pass 1: classify columns and compute natural widths for auto cols
         for c in range(num_cols):
             style_width = col_styles[c].width
             if isinstance(style_width, (int, float)):
@@ -467,10 +431,9 @@ class Table(Container):
                     percent_values[c] = float(style_width[:-1]) / 100.0
                     is_percent[c] = True
                 except ValueError:
-                    is_auto[c] = True  # treat invalid percentage as auto
-            else:  # 'auto' or invalid
+                    is_auto[c] = True
+            else:
                 is_auto[c] = True
-                # find max natural width for this auto column (considering colspan)
                 max_natural = 0.0
                 for r in range(len(self.data)):
                     cell_col_idx = 0
@@ -482,9 +445,8 @@ class Table(Container):
                     for cell_idx_in_row, cell_comp in enumerate(row_children):
                         colspan = cell_comp.colspan
 
-                        # is this cell part of the current column 'c'?
                         if cell_col_idx <= c < cell_col_idx + colspan:
-                            # if cell spans multiple auto columns, distribute natural width
+                            # spread natural width across auto cols spanned
                             num_auto_spanned = sum(
                                 1 for i in range(colspan) if is_auto[cell_col_idx + i]
                             )
@@ -494,34 +456,32 @@ class Table(Container):
                                 max_natural = max(max_natural, width_per_auto_col)
                         cell_col_idx += colspan
                 auto_natural_max[c] = max_natural
-                widths[c] = auto_natural_max[c]  # start with natural max
+                widths[c] = auto_natural_max[c]
 
-        # --- Pass 2: Calculate percentage widths ---
+        # pass 2: percentage widths over remaining space
         remaining_width = (
             available_width - fixed_width - sum(widths[c] for c in range(num_cols) if is_auto[c])
         )
         total_percent = sum(percent_values[c] for c in range(num_cols) if is_percent[c])
 
         if total_percent > 0 and remaining_width > 0:
-            # calculate based on proportion of remaining space
             unit_width = remaining_width / total_percent
             for c in range(num_cols):
                 if is_percent[c]:
                     widths[c] = percent_values[c] * unit_width
-        elif total_percent > 0:  # not enough space, distribute available proportionally
-            # re-calculate total fixed + auto
+        elif total_percent > 0:
             current_total = fixed_width + sum(widths[c] for c in range(num_cols) if is_auto[c])
             if available_width > current_total:
                 unit_width = (available_width - current_total) / total_percent
                 for c in range(num_cols):
                     if is_percent[c]:
                         widths[c] = percent_values[c] * unit_width
-            else:  # no space left for percentages
+            else:
                 for c in range(num_cols):
                     if is_percent[c]:
-                        widths[c] = 0  # or some minimum?
+                        widths[c] = 0
 
-        # --- Pass 3: Distribute remaining space for 'auto' columns (if any) ---
+        # pass 3: distribute remaining space among auto columns
         current_total_width = sum(widths)
         extra_space = available_width - current_total_width
         num_auto_cols = sum(1 for c in range(num_cols) if is_auto[c])
@@ -534,7 +494,6 @@ class Table(Container):
                         proportion = auto_natural_max[c] / total_natural_auto
                         widths[c] += extra_space * proportion
             else:
-                # distribute equally if natural sizes are zero
                 equal_share = extra_space / num_auto_cols
                 for c in range(num_cols):
                     if is_auto[c]:

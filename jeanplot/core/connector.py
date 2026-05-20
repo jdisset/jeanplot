@@ -1,6 +1,3 @@
-# File: jeanplot/connector.py
-"""Component for drawing connections (lines/curves) between other components."""
-
 from pydantic import Field, PrivateAttr
 import numpy as np
 import copy
@@ -26,9 +23,7 @@ class Connection(Overlay):
 
     start_component: str | Component
     end_component: str | Component
-    # offset from the resolved start component's origin (used if auto_route=False or no anchor found)
     start_offset: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
-    # offset from the resolved end component's origin (used if auto_route=False or no anchor found)
     end_offset: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
 
     color: NormalizedColor = "#000000"
@@ -40,15 +35,11 @@ class Connection(Overlay):
     dash_offset: float = 0.0
     start_cap: LineEndType | None = None
     end_cap: LineEndType | None = None
-    # enable automatic selection of best anchor points if available
     auto_route: bool = True
 
-    # --- Internal State ---
-    # resolved component references (original targets before anchor selection)
     _resolved_start_component_orig: Component | None = PrivateAttr(default=None)
     _resolved_end_component_orig: Component | None = PrivateAttr(default=None)
 
-    # state calculated during render phase
     _render_start_target: Component | None = PrivateAttr(default=None)
     _render_end_target: Component | None = PrivateAttr(default=None)
     _render_start_offset: Offset | None = PrivateAttr(default=None)
@@ -58,18 +49,11 @@ class Connection(Overlay):
     _render_local_control_points: list[tuple[float, float]] = PrivateAttr(default_factory=list)
     _render_active_curve: CurveDefinition | None = PrivateAttr(default=None)
 
-    # --- Methods ---
-
     def _get_active_curve(self) -> CurveDefinition:
-        """
-        returns a copy of the currently styled curve instance to use for calculations.
-        this ensures calculations start with the parameters set by jstyle.
-        """
-        # always return a fresh copy of the current curve_type state
+        # deepcopy so calculations don't mutate the styled curve_type
         return copy.deepcopy(self.curve_type)
 
     def _resolve_references_orig(self):
-        """resolve string paths for original start/end_component."""
         resolved_start = self._resolved_start_component_orig
         resolved_end = self._resolved_end_component_orig
 
@@ -87,7 +71,6 @@ class Connection(Overlay):
         self._resolved_end_component_orig = resolved_end
 
     def _resolve_single_ref(self, path: str, which: str) -> Component | None:
-        """helper to resolve a single string reference."""
         if not self.parent:
             self._log_debug(f"cannot resolve {which} path '{path}' without parent.")
             return None
@@ -105,38 +88,24 @@ class Connection(Overlay):
             return None
 
     def _get_component_center_world(self, component: Component) -> tuple[float, float] | None:
-        """gets the world coordinates of the component's center."""
         if not component:
             return None
-        # use a standard center offset for calculation
         center_offset = Offset(reference_relative=(0.5, 0.5))
         return self._get_offset_world_position(component, center_offset)
 
     def _update_curve_params_from_anchor(
         self, anchor: Component, is_start: bool, curve_instance: CurveDefinition
     ):
-        """
-        updates the GIVEN curve instance's parameters based on anchor properties.
-        modifies the curve_instance in place.
-        uses the anchor's outward direction.
-        """
+        """mutate curve_instance in place to match anchor's outward direction."""
         if not isinstance(anchor, AnchorComponent) or anchor.direction is None:
             return
 
         prefix = "start" if is_start else "end"
-        # anchor.direction is always the outward direction from the anchor
         anchor_dir_outward = anchor.direction
         anchor_len = anchor.min_segment
 
-        #     f"updating curve from anchor '{anchor.id}': OUTWARD_dir={anchor_dir_outward}, len={anchor_len} for side '{prefix}'"
-        # )
-
         if isinstance(curve_instance, OrthogonalCurve):
-            # get the orthogonal direction name matching the anchor's outward vector
             ortho_dir_name = OrthogonalCurve.get_direction_from_vector(anchor_dir_outward)
-            #     f"  converted anchor OUTWARD vector {anchor_dir_outward} to ortho direction '{ortho_dir_name}'"
-            # )
-            # Set the curve's direction for this end to match the anchor's outward direction
             if getattr(curve_instance, f"{prefix}_direction") != ortho_dir_name:
                 setattr(curve_instance, f"{prefix}_direction", ortho_dir_name)
 
@@ -144,7 +113,6 @@ class Connection(Overlay):
                 setattr(curve_instance, f"{prefix}_length", anchor_len)
 
         elif isinstance(curve_instance, SimpleBezierCurve):
-            # Bezier control vector should point OUTWARD from the anchor
             vector = (anchor_dir_outward[0] * anchor_len, anchor_dir_outward[1] * anchor_len)
             if getattr(curve_instance, f"{prefix}_mode") != "vector":
                 setattr(curve_instance, f"{prefix}_mode", "vector")
@@ -154,11 +122,10 @@ class Connection(Overlay):
     def _get_offset_world_position(
         self, component: Component, offset: Offset
     ) -> tuple[float, float] | None:
-        """gets the world position corresponding to an offset on a component."""
         if component is None:
             return None
         try:
-            # Use current dimensions which should be final during render phase
+            # dimensions should be final during render phase
             comp_dims = component._dimensions
             if comp_dims is None or comp_dims.width < 0 or comp_dims.height < 0:
                 self._log_debug(f"warning: invalid dimensions {comp_dims} for {component.id}")
@@ -179,13 +146,8 @@ class Connection(Overlay):
             return None
 
     def _resolve_connection_endpoints_late(self) -> bool:
-        """
-        resolves final start/end components (considering anchors) and offsets.
-        this MUST be called after the layout pass, e.g., during render.
-        updates internal _render_* attributes.
-        returns true if successful, false otherwise.
-        """
-        self._resolve_references_orig()  # ensure original components are resolved
+        """resolve final start/end components/offsets after layout. updates _render_* attrs."""
+        self._resolve_references_orig()
         start_comp_orig = self._resolved_start_component_orig
         end_comp_orig = self._resolved_end_component_orig
 
@@ -193,28 +155,24 @@ class Connection(Overlay):
             self._log_debug("cannot resolve endpoints: missing original components.")
             return False
 
-        # Default targets and offsets are the original components and configured offsets
         start_target = start_comp_orig
         end_target = end_comp_orig
         start_offset = self.start_offset
         end_offset = self.end_offset
 
         if self.auto_route:
-            # find the pair of anchors (one on start, one on end) with min distance
-            # between their effective points (origin + dir*len)
             best_pair = find_best_anchor_pair(start_comp_orig, end_comp_orig)
             if best_pair:
                 start_target, end_target = best_pair
-                start_offset = Offset()  # anchor position is inherent
-                end_offset = Offset()  # anchor position is inherent
+                # anchor position is inherent; clear offsets
+                start_offset = Offset()
+                end_offset = Offset()
 
-        # store final targets and offsets used for rendering
         self._render_start_target = start_target
         self._render_end_target = end_target
         self._render_start_offset = start_offset
         self._render_end_offset = end_offset
 
-        # calculate world points based on FINAL targets/offsets
         world_start = self._get_offset_world_position(start_target, start_offset)
         world_end = self._get_offset_world_position(end_target, end_offset)
 
@@ -224,7 +182,6 @@ class Connection(Overlay):
             )
             return False
 
-        # get curve instance and update based on chosen anchors (if they are anchors)
         active_curve = self._get_active_curve()
         self._update_curve_params_from_anchor(
             start_target, is_start=True, curve_instance=active_curve
@@ -232,9 +189,8 @@ class Connection(Overlay):
         self._update_curve_params_from_anchor(
             end_target, is_start=False, curve_instance=active_curve
         )
-        self._render_active_curve = active_curve  # store the final curve instance
+        self._render_active_curve = active_curve
 
-        # transform world points to connection's local space
         try:
             conn_world_matrix = self.compute_world_matrix()
             conn_inv_world = np.linalg.inv(conn_world_matrix)
@@ -250,7 +206,6 @@ class Connection(Overlay):
         self._render_local_start = (local_start_h[0], local_start_h[1])
         self._render_local_end = (local_end_h[0], local_end_h[1])
 
-        # calculate control points using the final active curve and local points
         try:
             _, control_points = active_curve.get_path(
                 self._render_local_start, self._render_local_end
@@ -263,28 +218,23 @@ class Connection(Overlay):
         return True
 
     def measure_and_layout(self, renderer=None):
-        """
-        connections are overlays. measure calculates rough bounds for debug/events.
-        actual path calculation is deferred to render time.
-        """
+        """rough placeholder bounds; actual path is calculated at render time."""
         self._apply_style()
         self._resolve_references_orig()
 
-        # calculate very basic bounds based on original components for placeholder size
         start_comp = self._resolved_start_component_orig
         end_comp = self._resolved_end_component_orig
 
         if not start_comp or not end_comp:
             self._log_debug("measure skipped: missing resolved components.")
-            self._dimensions = Size(1, 1)  # minimal size
+            self._dimensions = Size(1, 1)
             return self._dimensions
 
-        # Get approx world bounds - positions might be slightly off pre-render
-        # Use centers as reference points for bounds estimation
+        # positions may be slightly off pre-render; use centers for bound estimate
         start_pos = self._get_component_center_world(start_comp) or (0, 0)
         end_pos = self._get_component_center_world(end_comp) or (0, 0)
 
-        buffer = max(self.line_width * 5, 10)  # increased buffer
+        buffer = max(self.line_width * 5, 10)
         min_x = min(start_pos[0], end_pos[0]) - buffer
         min_y = min(start_pos[1], end_pos[1]) - buffer
         max_x = max(start_pos[0], end_pos[0]) + buffer
@@ -293,17 +243,14 @@ class Connection(Overlay):
         width = max(1.0, max_x - min_x)
         height = max(1.0, max_y - min_y)
         self._dimensions = Size(width=width, height=height)
-        # set absolute offset *relative to root*
         self.offset = Offset(absolute=(min_x, min_y))
 
         return self._dimensions
 
     def render(self, renderer, context, matrix: np.ndarray):
-        """render the connection curve and caps."""
         if not self.show:
             return
 
-        # --- Resolve endpoints and calculate path LATE ---
         if not self._resolve_connection_endpoints_late():
             self._log_debug("render skipped: could not resolve endpoints.")
             if self.debug:
@@ -321,7 +268,6 @@ class Connection(Overlay):
                 renderer.render_debug(context, self, matrix)
             return
 
-        # --- Generate Path ---
         path_str, _ = active_curve.get_path(local_start, local_end, local_cp)
 
         path_data = SVGPathData(
@@ -341,7 +287,6 @@ class Connection(Overlay):
             opacity=self.opacity,
         )
 
-        # --- Render Caps ---
         if self.start_cap or self.end_cap:
             start_dir, end_dir = active_curve.get_directions(local_start, local_end, local_cp)
 
@@ -411,15 +356,10 @@ class Connection(Overlay):
     def _get_world_connection_points(
         self,
     ) -> tuple[tuple[float, float], tuple[float, float], CurveDefinition] | None:
-        """
-        Get world-space start and end points of the connection.
-        Returns (start_point, end_point, active_curve) in world coordinates or None if not calculated.
-        """
-        # First ensure endpoints are resolved
+        """(start, end, active_curve) in world coords, or None if not calculated."""
         if not self._resolve_connection_endpoints_late():
             return None
 
-        # Get the world positions from the render targets
         if self._render_start_target and self._render_end_target:
             world_start = self._get_offset_world_position(
                 self._render_start_target, self._render_start_offset

@@ -1,5 +1,3 @@
-"""Selector parsing and matching for jeanplot styles."""
-
 from __future__ import annotations
 
 import inspect
@@ -11,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class Specificity(NamedTuple):
-    """Represents selector specificity (higher values are more specific)."""
+    """Selector specificity; higher values win."""
 
     id_count: int = 0
     attr_class_count: int = 0
@@ -19,8 +17,6 @@ class Specificity(NamedTuple):
 
 
 class Selector:
-    """Parses and evaluates style selectors."""
-
     _ATTRIBUTE_SELECTOR_RE: ClassVar = re.compile(r"\[([^\]]+)\]")
     _CONDITION_RE: ClassVar = re.compile(
         r"^\s*([^=~!<>*^$!]+)\s*(=[/~]?|!=|<=?|>=?|\*=|\^=|\$=)?\s*(.*)\s*$"
