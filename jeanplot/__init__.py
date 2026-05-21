@@ -69,6 +69,7 @@ from jeanplot.color import (
     register_palettes,
     closest_name as closest_name,
 )
+from jeanplot.panels import PlotPanel, Colorbar, Figure
 
 DEFAULT_TYPES = [
     Component,
@@ -118,6 +119,9 @@ DEFAULT_TYPES = [
     PlotData,
     LazyPlotData,
     DataDimensions,
+    PlotPanel,
+    Colorbar,
+    Figure,
 ]
 
 register_palettes(load_palettes("pkg:jeanplot:resources/colors/bio_palettes.yaml"))
@@ -139,6 +143,7 @@ def load_default_theme(force: bool = False):
     global _DEFAULT_THEME_CACHE
     if _DEFAULT_THEME_CACHE is None or force:
         import dracon as dr
+
         cfg = dr.load(
             "pkg:jeanplot:resources/themes/default.yaml",
             enable_interpolation=True,

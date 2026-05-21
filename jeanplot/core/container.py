@@ -180,6 +180,34 @@ class Container(Component):
                 stretched_children.append(child)
         return stretched_children
 
+    def _distribute_flex_weights(
+        self,
+        content_w: float,
+        content_h: float,
+        layout_children: list,
+        is_row: bool,
+        size_attr: str,
+        margin_start_idx: int,
+        margin_end_idx: int,
+    ):
+        weights = self.layout.main_axis_weights
+        n = len(layout_children)
+        if not weights or len(weights) != n:
+            return
+        total = float(sum(weights))
+        if total <= 0:
+            return
+        available = content_w if is_row else content_h
+        total_gap = self.layout.gap * max(0, n - 1)
+        margins_total = sum(
+            child.safe_style.margin[margin_start_idx] + child.safe_style.margin[margin_end_idx]
+            for child in layout_children
+        )
+        flex_space = max(0.0, available - total_gap - margins_total)
+        for w, child in zip(weights, layout_children):
+            new_size = flex_space * (w / total)
+            setattr(child._dimensions, size_attr, new_size)
+
     def _position_layout_children(
         self, content_x, content_y, content_w, content_h, layout_children
     ):
@@ -192,6 +220,16 @@ class Container(Component):
         size_attr, cross_size_attr = ("width", "height") if is_row else ("height", "width")
         margin_start_idx, margin_end_idx = (3, 1) if is_row else (0, 2)
         cross_margin_start_idx, cross_margin_end_idx = (0, 2) if is_row else (3, 1)
+
+        self._distribute_flex_weights(
+            content_w,
+            content_h,
+            layout_children,
+            is_row,
+            size_attr,
+            margin_start_idx,
+            margin_end_idx,
+        )
 
         total_child_main_size_with_margins = sum(
             getattr(child._dimensions, size_attr, 0.0)
@@ -289,7 +327,11 @@ class Container(Component):
             return
 
         style = self.safe_style
-        if style.background_color or (style.border_color and style.border_width > 0) or style.shadow:
+        if (
+            style.background_color
+            or (style.border_color and style.border_width > 0)
+            or style.shadow
+        ):
             renderer.render_rectangle(context, self._dimensions, style, matrix, component=self)
 
         if self.debug:

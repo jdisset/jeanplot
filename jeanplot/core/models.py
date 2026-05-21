@@ -99,7 +99,6 @@ class Transform(BaseModel):
     skew_y: float = 0.0  # degrees
     rotation_center: tuple[float, float] = (0.5, 0.5)
 
-
     def to_matrix(self, dimensions: Size) -> np.ndarray:
         s_mat = np.array([[self.scale[0], 0, 0], [0, self.scale[1], 0], [0, 0, 1]])
         sx_rad, sy_rad = np.radians(self.skew_x), np.radians(self.skew_y)
@@ -222,6 +221,8 @@ class LayoutConstraints(BaseModel):
     justify_content: DistributeType = "start"
     gap: float = 0.0
     wrap: bool = False
+    main_axis_weights: list[float] | None = None
+    cross_axis_weights: list[float] | None = None
 
     def __repr__(self) -> str:
         return f"Layout(dir={self.direction}, align={self.align_items}, justify={self.justify_content}, gap={self.gap:.1f})"

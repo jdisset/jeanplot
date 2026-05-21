@@ -7,11 +7,17 @@ class PlotFunctionResult:
     Tuple-unpackable for backward compat: `a, b = plot_func(...)` still works.
     """
 
-    __slots__ = ("rendering", "metadata")
+    __slots__ = ("rendering", "metadata", "mappable")
 
-    def __init__(self, rendering: Any, metadata: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        rendering: Any,
+        metadata: dict[str, Any] | None = None,
+        mappable: Any | None = None,
+    ):
         self.rendering = rendering
         self.metadata = metadata or {}
+        self.mappable = mappable
 
     def __iter__(self):
         return iter(self.rendering)
