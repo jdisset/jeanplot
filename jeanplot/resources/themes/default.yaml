@@ -53,403 +53,401 @@
 !define theme: ${construct(&tvars)}
 
 
-GeneticPart:
-  SVGElement:
-    color_remap:
-      "${theme.input_main_marker_color}": "#aaaaaa"
-      "${theme.input_secondary_marker_color}": *border_color
-  Text:
-    color: *text_color
-    align: center
-    font_size: 6
-    offset: !Offset
-      reference_relative: [0.5, 0.5]
-      relative: [-0.5, -0.5]
-
-Promoter:
-  offset: !Offset
-    relative: [0, 0.5]
-    absolute: [-0.5, 0]
-
-Terminator:
-  offset: !Offset
-    relative: [0.5, 0.5]
-  style.margin: [0, 0, 0, -10]
-
-ERN:
-  layout.direction: row
-  Text:
-    align: center
-    vertical_align: middle
-    font_size: 9
-    z_index: 10
-    offset.absolute: [-8, 0]
-
-ERN5pRecog:
-  offset: !Offset
-    relative: [0, 0.4]
-    absolute: [0, 0.5]
-  style.margin: [0, 2, 0, -4]
-
-UorfGroup:
-  style.margin: [0, 0, 0, -4]
-  offset: !Offset
-    relative: [0, 0.1]
-  Text:
-    offset.absolute: [0, -8]
-
-
-!each(e) ${theme.marker_colors.items()}:
-  FluoMarker[part_name=~${e[0]}]:
+rules: !cascade:jstyle
+  GeneticPart:
     SVGElement:
       color_remap:
-        ${theme.input_main_marker_color}: ${e[1]['light']}
-        ${theme.input_secondary_marker_color}: ${e[1]['base']}
+        "${theme.input_main_marker_color}": "#aaaaaa"
+        "${theme.input_secondary_marker_color}": ${theme.border_color}
     Text:
-      color: ${e[1]['dark']}
-      offset.absolute: [-2, 0]
+      color: ${theme.text_color}
+      align: center
+      font_size: 6
+      offset: !Offset
+        reference_relative: [0.5, 0.5]
+        relative: [-0.5, -0.5]
+
+  Promoter:
+    offset: !Offset
+      relative: [0, 0.5]
+      absolute: [-0.5, 0]
+
+  Terminator:
+    offset: !Offset
+      relative: [0.5, 0.5]
+    style.margin: [0, 0, 0, -10]
+
+  ERN:
+    layout.direction: row
+    Text:
+      align: center
+      vertical_align: middle
+      font_size: 9
+      z_index: 10
+      offset.absolute: [-8, 0]
+
+  ERN5pRecog:
+    offset: !Offset
+      relative: [0, 0.4]
+      absolute: [0, 0.5]
+    style.margin: [0, 2, 0, -4]
+
+  UorfGroup:
+    style.margin: [0, 0, 0, -4]
+    offset: !Offset
+      relative: [0, 0.1]
+    Text:
+      offset.absolute: [0, -8]
 
 
-  SourceAnnotation[marker=~${e[0]}]:
-    style.border_color: ${e[1]['base']}
-    Container[style_class=source_tag]:
-      style.background_color: ${e[1]['light']}
-      style.border_color: ${e[1]['dark']}
+  !each(e) ${theme.marker_colors.items()}:
+    FluoMarker[part_name=~${e[0]}]:
       SVGElement:
         color_remap:
-           ${theme.input_main_marker_color}: ${e[1]['dark']}
+          ${theme.input_main_marker_color}: ${e[1]['light']}
+          ${theme.input_secondary_marker_color}: ${e[1]['base']}
       Text:
         color: ${e[1]['dark']}
-
-TranscriptionUnit:
-  line_thickness: 1
-  line_color: *border_color
-  layout.gap: 4
-  Text:
-    color: "#999"
-    font_size: 5
-    offset: !Offset
-      reference_relative: [0, 1.3]
-
-SourceAnnotation:
-  style.padding: [18, 18, 20, 18]
-  style.margin: [4, 4, 4, 4]
-  style.border_color: *border_color
-  style.border_width: 1
-  style.corner_radius: 5
-  style.border_style: custom
-  style.dash_sequence: [3, 4]
-
-Container[style_class=source_tag]:
-  style.background_color: "#dddddd"
-  style.border_color: *border_color
-  style.border_width: 0.5
-  style.corner_radius: 50
-  style.padding: [3, 5, 3, 2]
-  offset: !Offset
-    relative: [0, -0.5]
-    absolute: [10, 0]
-  layout.direction: row
-  layout.align_items: center
-  layout.justify_content: start
-  layout.gap: 3
-  SVGElement:
-    offset: !Offset { relative: [0, 0] }
-    style.margin: [0, 0, 0, 3]
-    color_remap:
-      ${theme.input_main_marker_color}: *border_color
-  Text:
-    color: *text_color
-    font_size: 6
-
-"[source_type=plasmid]":
-  Container[style_class=source_tag]:
-    SVGElement:
-      transform.scale: [0.7, 0.7]
-
-"[source_type=cotx]":
-  Container[style_class=source_tag]:
-    SVGElement:
-      transform.scale: [0.9, 0.9]
-
-GeneticSchematic:
-  grid_gap: [40, 20]
-  style.padding: [10, 10, 10, 10]
+        offset.absolute: [-2, 0]
 
 
-!each(e) ${theme.ern_colors.items()}:
-  "ERN[part_name=~${e[0]}]":
-    SVGElement:
-      color_remap:
-        ${theme.input_main_marker_color}: ${e[1]}
+    SourceAnnotation[marker=~${e[0]}]:
+      style.border_color: ${e[1]['base']}
+      Container[style_class=source_tag]:
+        style.background_color: ${e[1]['light']}
+        style.border_color: ${e[1]['dark']}
+        SVGElement:
+          color_remap:
+             ${theme.input_main_marker_color}: ${e[1]['dark']}
+        Text:
+          color: ${e[1]['dark']}
 
-
-!each(e) ${enumerate(theme.ern_colors.items())}:
-  ERN5pRecog[part_name=~${e[1][0]}_rec]:
-    SVGElement:
-      color_remap:
-        ${theme.input_main_marker_color}: ${e[1][1]}
-
-
-FluoNode:
-  style.border_color: "#00000030"
-  style.background_color: "#FFBB79"
-  style.shadow: !Shadow { color: "#FF8006", blur_radius: 15, resolution: 0.01, z_index: 1 }
-
-!each(e) ${theme.marker_colors.items() }:
-  FluoNode[style_class=~${e[0]}]:
-    style.background_color: ${e[1]['light']}
-    style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01, z_index: 1 }
+  TranscriptionUnit:
+    line_thickness: 1
+    line_color: ${theme.border_color}
+    layout.gap: 4
     Text:
+      color: "#999"
+      font_size: 5
+      offset: !Offset
+        reference_relative: [0, 1.3]
+
+  SourceAnnotation:
+    style.padding: [18, 18, 20, 18]
+    style.margin: [4, 4, 4, 4]
+    style.border_color: ${theme.border_color}
+    style.border_width: 1
+    style.corner_radius: 5
+    style.border_style: custom
+    style.dash_sequence: [3, 4]
+
+  Container[style_class=source_tag]:
+    style.background_color: "#dddddd"
+    style.border_color: ${theme.border_color}
+    style.border_width: 0.5
+    style.corner_radius: 50
+    style.padding: [3, 5, 3, 2]
+    offset: !Offset
+      relative: [0, -0.5]
+      absolute: [10, 0]
+    layout.direction: row
+    layout.align_items: center
+    layout.justify_content: start
+    layout.gap: 3
+    SVGElement:
+      offset: !Offset { relative: [0, 0] }
+      style.margin: [0, 0, 0, 3]
+      color_remap:
+        ${theme.input_main_marker_color}: ${theme.border_color}
+    Text:
+      color: ${theme.text_color}
+      font_size: 6
+
+  "[source_type=plasmid]":
+    Container[style_class=source_tag]:
+      SVGElement:
+        transform.scale: [0.7, 0.7]
+
+  "[source_type=cotx]":
+    Container[style_class=source_tag]:
+      SVGElement:
+        transform.scale: [0.9, 0.9]
+
+  GeneticSchematic:
+    grid_gap: [40, 20]
+    style.padding: [10, 10, 10, 10]
+
+
+  !each(e) ${theme.ern_colors.items()}:
+    "ERN[part_name=~${e[0]}]":
+      SVGElement:
+        color_remap:
+          ${theme.input_main_marker_color}: ${e[1]}
+
+
+  !each(e) ${enumerate(theme.ern_colors.items())}:
+    ERN5pRecog[part_name=~${e[1][0]}_rec]:
+      SVGElement:
+        color_remap:
+          ${theme.input_main_marker_color}: ${e[1][1]}
+
+
+  FluoNode:
+    style.border_color: "#00000030"
+    style.background_color: "#FFBB79"
+    style.shadow: !Shadow { color: "#FF8006", blur_radius: 15, resolution: 0.01, z_index: 1 }
+
+  !each(e) ${theme.marker_colors.items() }:
+    FluoNode[style_class=~${e[0]}]:
+      style.background_color: ${e[1]['light']}
+      style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01, z_index: 1 }
+      Text:
+        color: ${e[1]['dark']}
+        font_size: 8
+        vertical_align: middle
+        align: center
+
+    AggregationNode[style_class=~${e[0]}]:
+      style.background_color: ${e[1]['light']}
+      Text:
+        color: "#222"
+        font_size: 6
+        vertical_align: middle
+        align: center
+        offset: !Offset { relative: [0, 2] }
+
+    TUNode[style_class=~${e[0]}]:
+      style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01 }
+      Text:
+        color: ${e[1]['dark']}
+        font_size: 6
+        vertical_align: middle
+        align: center
+
+    Text[style_class=tu_label_marker][style_class=~${e[0]}]:
       color: ${e[1]['dark']}
+
+
+  ComputeNode:
+    min_dimensions: !Size { width: 18, height: 18 }
+    style.corner_radius: 1.0e+6
+    style.background_color: "#aaa"
+    style.border_color: ${theme.comp_connection_color}
+    style.border_width: 1
+    style.margin: [10, 10, 10, 10]
+    layout.align_items: center
+    layout.justify_content: center
+    Text:
+      font_size: 7
+      color: "#fff"
+      vertical_align: middle
+      align: center
+
+  TranscriptionNode:
+    style.background_color: "#555"
+
+  TranslationNode:
+    style.background_color: "#333"
+
+  InputNode:
+    style.background_color: "#222"
+    Text:
+      color: "#fff"
+
+  BiasNode:
+    style.background_color: "#bbb"
+    Text:
+      color: "#444"
+
+  ERNNode:
+    min_dimensions: !Size { width: 70, height: 70 }
+    max_dimensions: !Size { width: 70, height: 70 }
+    style.background_color: "#eee"
+    style.border_style: custom
+    style.dash_sequence: [5, 5]
+    style.border_width: 1
+    TranslationNode:
+      style.background_color: "#ee3350"
+      offset: !Offset { reference_relative: [0, 0.9], relative: [0, -1] }
+    TranscriptionNode:
+      offset: !Offset { reference_relative: [0, 0.1] }
+    Connection[style_class=tlconn]:
+      color: "#ee3350"
+      line_width: 1
+      start_offset: !Offset { relative: [1, 0.5] }
+      end_offset: !Offset { absolute: [15, 3] }
+      curve_type.start_direction: right
+      curve_type.end_direction: up
+      curve_type.start_length: 5
+      curve_type.end_length: 5
+      curve_type.corner_radius: 10
+      z_index: -1
+      end_cap.stroke_color: "#ee3350"
+      end_cap.stroke_width: 1
+      end_cap.length: 8
+    Connection[style_class=txconn]:
+      color: ${theme.comp_connection_color}
+      line_width: 1
+      z_index: -1
+      curve_type.start_mode: vector
+      curve_type.end_mode: vector
+      curve_type.start_vector: [15, 15]
+      curve_type.end_vector: [-40, 0]
+      start_offset: !Offset { relative: [0.9, 0.8] }
+    Text[style_class=ern_name]:
+      color: "#888"
       font_size: 8
       vertical_align: middle
       align: center
-
-  AggregationNode[style_class=~${e[0]}]:
-    style.background_color: ${e[1]['light']}
-    Text:
-      color: "#222"
-      font_size: 6
-      vertical_align: middle
-      align: center
-      offset: !Offset { relative: [0, 2] }
-
-  TUNode[style_class=~${e[0]}]:
-    style.shadow: !Shadow { color: "${e[1]['bright']}", blur_radius: 15, resolution: 0.01 }
-    Text:
-      color: ${e[1]['dark']}
-      font_size: 6
-      vertical_align: middle
-      align: center
-
-  Text[style_class=tu_label_marker][style_class=~${e[0]}]:
-    color: ${e[1]['dark']}
+      offset: !Offset { reference_relative: [0.5, 0.1], relative: [-0.5, 0] }
+      is_overlay: true
 
 
-ComputeNode:
-  min_dimensions: !Size { width: 18, height: 18 }
-  style.corner_radius: 1.0e+6
-  style.background_color: "#aaa"
-  style.border_color: ${theme.comp_connection_color}
-  style.border_width: 1
-  style.margin: [10, 10, 10, 10]
-  layout.align_items: center
-  layout.justify_content: center
-  Text:
-    font_size: 7
-    color: "#fff"
-    vertical_align: middle
-    align: center
-
-TranscriptionNode:
-  style.background_color: "#555"
-
-TranslationNode:
-  style.background_color: "#333"
-
-InputNode:
-  style.background_color: "#222"
-  Text:
-    color: "#fff"
-
-BiasNode:
-  style.background_color: "#bbb"
-  Text:
-    color: "#444"
-
-ERNNode:
-  min_dimensions: !Size { width: 70, height: 70 }
-  max_dimensions: !Size { width: 70, height: 70 }
-  style.background_color: "#eee"
-  style.border_style: custom
-  style.dash_sequence: [5, 5]
-  style.border_width: 1
-  TranslationNode:
-    style.background_color: "#ee3350"
-    offset: !Offset { reference_relative: [0, 0.9], relative: [0, -1] }
-  TranscriptionNode:
-    offset: !Offset { reference_relative: [0, 0.1] }
-  Connection[style_class=tlconn]:
-    color: "#ee3350"
-    line_width: 1
-    start_offset: !Offset { relative: [1, 0.5] }
-    end_offset: !Offset { absolute: [15, 3] }
-    curve_type.start_direction: right
-    curve_type.end_direction: up
-    curve_type.start_length: 5
-    curve_type.end_length: 5
-    curve_type.corner_radius: 10
-    z_index: -1
-    end_cap.stroke_color: "#ee3350"
-    end_cap.stroke_width: 1
-    end_cap.length: 8
-  Connection[style_class=txconn]:
-    color: ${theme.comp_connection_color}
-    line_width: 1
-    z_index: -1
-    curve_type.start_mode: vector
-    curve_type.end_mode: vector
-    curve_type.start_vector: [15, 15]
-    curve_type.end_vector: [-40, 0]
-    start_offset: !Offset { relative: [0.9, 0.8] }
-  Text[style_class=ern_name]:
-    color: "#888"
-    font_size: 8
-    vertical_align: middle
-    align: center
-    offset: !Offset { reference_relative: [0.5, 0.1], relative: [-0.5, 0] }
-    is_overlay: true
-
-
-InvNode:
-  style.background_color: "#eee"
-  style.border_color: "#111"
-  Text:
-    color: *text_color
-
-TUNode:
-  min_dimensions: !Size { width: 15, height: 4 }
-  max_dimensions: !Size { width: 15, height: 4 }
-  style.background_color: "#111"
-  style.border_width: 0
-  style.margin: [0, 0, 0, 0]
-  offset: !Offset {}
-  Text:
-    color: "#000000"
-    vertical_align: middle
-    align: right
-    is_overlay: true
-    offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
-  Container[style_class=tu_label_container]:
-    offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
-    Text[style_class=tu_label_prefix]:
-      color: "#000000"
-      font_size: 6
-      vertical_align: middle
-    Text[style_class=tu_label_suffix]:
-      color: "#000000"
-      font_size: 6
-      vertical_align: middle
-    Text[style_class=tu_label_marker]:
-      font_size: 6
-      vertical_align: middle
-
-
-AggregationNode[!collapsed]:
-  style.background_color: "#FFFFFFAA"
-  style.border_color: "#FFA068"
-  style.border_width: 1.5
-  style.padding: [12, 4, 12, 4]
-  layout: !LayoutConstraints { direction: column, justify_content: space-around, gap: 5 }
-  TUNode:
-    is_overlay: false
-
-
-AggregationNode[collapsed]:
-  min_dimensions: !Size { width: 15, height: 4 }
-  max_dimensions: !Size { width: 15, height: 4 }
-  style.border_width: 0
-  style.padding: [0, 0, 0, 0]
-  TUNode:
-    is_overlay: true
-    offset: !Offset { absolute: [0, 0] }
-
-AggregationNode[collapsed][bias_connected]:
-  TUNode:
-    style.background_color: "#999"
-
-Container[style_class=input_layer]:
-  style.padding: [0, 0, 0, 40]
-
-DeadEndNode:
-  style.background_color: "#00000000"
-  style.border_width: 0
-  style.padding: [0, 0, 0, 0]
-  Text:
-    color: "#000000"
-    font_size: 12
-    vertical_align: middle
-    align: center
-
-Connection[style_class=connection_ERN]:
-  line_width: 0.5
-  color: *ern_int_color
-  end_cap.stroke_color: *ern_int_color
-  end_cap.stroke_width: 0.5
-  end_cap.length: 8
-
-
-Table:
-  TableCell:
-    style.padding: [7, 10, 7, 10]
-    style.border_color: *border_color
-    style.border_width: 0.5
-    Text:
-      align: center
-      vertical_align: middle
-  TableCell[style_class=table-header-cell]:
+  InvNode:
     style.background_color: "#eee"
+    style.border_color: "#111"
     Text:
-      font_weight: bold
+      color: ${theme.text_color}
 
-!noconstruct _network_diagram_base: &nd_base
-  layout.gap: 25
-  layout.direction: row
-  layout.align_items: center
-  layout.justify_content: center
+  TUNode:
+    min_dimensions: !Size { width: 15, height: 4 }
+    max_dimensions: !Size { width: 15, height: 4 }
+    style.background_color: "#111"
+    style.border_width: 0
+    style.margin: [0, 0, 0, 0]
+    offset: !Offset {}
+    Text:
+      color: "#000000"
+      vertical_align: middle
+      align: right
+      is_overlay: true
+      offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
+    Container[style_class=tu_label_container]:
+      offset: !Offset { reference_relative: [0, 0], absolute: [-10, 0], relative: [-1, -0.3] }
+      Text[style_class=tu_label_prefix]:
+        color: "#000000"
+        font_size: 6
+        vertical_align: middle
+      Text[style_class=tu_label_suffix]:
+        color: "#000000"
+        font_size: 6
+        vertical_align: middle
+      Text[style_class=tu_label_marker]:
+        font_size: 6
+        vertical_align: middle
 
-  Connection[style_class=comp-connection]:
-    color: ${theme.comp_connection_color}
-    line_width: 1
-    start_offset: !Offset { reference_relative: [0.99, 0.5] }
-    end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
-    curve_type: !SimpleBezierCurve
-      start_mode: vector
-      end_mode: vector
-      start_vector: [20, 0]
-      end_vector: [-15, 0]
-    end_cap: !LineEndCircle
-      fill_color: ${theme.comp_connection_color}
-      stroke_width: 0
-      radius: 1.5
-      z-index: 10
 
-  Connection[style_class=dst-deadend]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
+  AggregationNode[!collapsed]:
+    style.background_color: "#FFFFFFAA"
+    style.border_color: "#FFA068"
+    style.border_width: 1.5
+    style.padding: [12, 4, 12, 4]
+    layout: !LayoutConstraints { direction: column, justify_content: space-around, gap: 5 }
+    TUNode:
+      is_overlay: false
 
-  Connection[style_class=dst-source]:
-    end_offset: !Offset { reference_relative: [0.5, 0.5] }
-    curve_type: !StraightCurve {}
 
-  Container[style_class=layer]:
-    layout.gap: 10
-    layout.direction: column
-    layout.align_items: center
-    layout.justify_content: center
+  AggregationNode[collapsed]:
+    min_dimensions: !Size { width: 15, height: 4 }
+    max_dimensions: !Size { width: 15, height: 4 }
+    style.border_width: 0
+    style.padding: [0, 0, 0, 0]
+    TUNode:
+      is_overlay: true
+      offset: !Offset { absolute: [0, 0] }
+
+  AggregationNode[collapsed][bias_connected]:
+    TUNode:
+      style.background_color: "#999"
 
   Container[style_class=input_layer]:
-    layout.gap: 15
+    style.padding: [0, 0, 0, 40]
 
-  Container[style_class=auto_layer]:
+  DeadEndNode:
+    style.background_color: "#00000000"
+    style.border_width: 0
     style.padding: [0, 0, 0, 0]
+    Text:
+      color: "#000000"
+      font_size: 12
+      vertical_align: middle
+      align: center
 
-  Container[style_class=output_layer]:
-    style.padding: [0, 0, 0, 20]
+  Connection[style_class=connection_ERN]:
+    line_width: 0.5
+    color: ${theme.ern_interaction_color}
+    end_cap.stroke_color: ${theme.ern_interaction_color}
+    end_cap.stroke_width: 0.5
+    end_cap.length: 8
 
-  Container[style_class=main_layer]:
-    layout.direction: column
+
+  Table:
+    TableCell:
+      style.padding: [7, 10, 7, 10]
+      style.border_color: ${theme.border_color}
+      style.border_width: 0.5
+      Text:
+        align: center
+        vertical_align: middle
+    TableCell[style_class=table-header-cell]:
+      style.background_color: "#eee"
+      Text:
+        font_weight: bold
+
+  NetworkDiagram:
+    layout.gap: 25
+    layout.direction: row
     layout.align_items: center
     layout.justify_content: center
-    style.margin: [0, 0, 0, 0]
-    layout.gap: 20
 
-  Text[style_class=layer_title]:
-    color: "#777"
-    font_size: 7
+    Connection[style_class=comp-connection]:
+      color: ${theme.comp_connection_color}
+      line_width: 1
+      start_offset: !Offset { reference_relative: [0.99, 0.5] }
+      end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
+      curve_type: !SimpleBezierCurve
+        start_mode: vector
+        end_mode: vector
+        start_vector: [20, 0]
+        end_vector: [-15, 0]
+      end_cap: !LineEndCircle
+        fill_color: ${theme.comp_connection_color}
+        stroke_width: 0
+        radius: 1.5
+        z-index: 10
 
-NetworkDiagram:
-  <<: *nd_base
+    Connection[style_class=dst-deadend]:
+      end_offset: !Offset { reference_relative: [0.5, 0.5] }
 
-"[style_class=disabled]":
-  opacity: 0.3
+    Connection[style_class=dst-source]:
+      end_offset: !Offset { reference_relative: [0.5, 0.5] }
+      curve_type: !StraightCurve {}
+
+    Container[style_class=layer]:
+      layout.gap: 10
+      layout.direction: column
+      layout.align_items: center
+      layout.justify_content: center
+
+    Container[style_class=input_layer]:
+      layout.gap: 15
+
+    Container[style_class=auto_layer]:
+      style.padding: [0, 0, 0, 0]
+
+    Container[style_class=output_layer]:
+      style.padding: [0, 0, 0, 20]
+
+    Container[style_class=main_layer]:
+      layout.direction: column
+      layout.align_items: center
+      layout.justify_content: center
+      style.margin: [0, 0, 0, 0]
+      layout.gap: 20
+
+    Text[style_class=layer_title]:
+      color: "#777"
+      font_size: 7
+
+  "[style_class=disabled]":
+    opacity: 0.3

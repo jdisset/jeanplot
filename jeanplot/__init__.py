@@ -116,13 +116,13 @@ def load_default_theme(force: bool = False):
     global _DEFAULT_THEME_CACHE
     if _DEFAULT_THEME_CACHE is None or force:
         import dracon as dr
-        theme = dr.load(
+        cfg = dr.load(
             "pkg:jeanplot:resources/themes/default.yaml",
             enable_interpolation=True,
             raw_dict=True,
             context=make_context_from_types(DEFAULT_TYPES),
         )
-        dr.resolve_all_lazy(theme)
-        _DEFAULT_THEME_CACHE = theme
+        dr.resolve_all_lazy(cfg, except_for={"component"})
+        _DEFAULT_THEME_CACHE = cfg["rules"]
     jstyle.clear()
     jstyle.update(_DEFAULT_THEME_CACHE)

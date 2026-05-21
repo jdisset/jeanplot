@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import inspect
 import logging
 import re
@@ -16,7 +14,9 @@ class Specificity(NamedTuple):
     type_count: int = 0
 
 
-class Selector:
+class _SimpleSelector:
+    """One segment of a (possibly compound) selector: type + attribute conditions."""
+
     _ATTRIBUTE_SELECTOR_RE: ClassVar = re.compile(r"\[([^\]]+)\]")
     _CONDITION_RE: ClassVar = re.compile(
         r"^\s*([^=~!<>*^$!]+)\s*(=[/~]?|!=|<=?|>=?|\*=|\^=|\$=)?\s*(.*)\s*$"
@@ -24,30 +24,19 @@ class Selector:
     _REGEX_RE: ClassVar = re.compile(r"^(.*)/([ism]*)$")
     _PRESENCE_RE: ClassVar = re.compile(r"^\s*(!)?([\w.-]+)\s*$")
 
-    raw_selector: str
-    type_selector: str | None = None
-    attributes: list[tuple[str, str | None, str | None]]
-    specificity: Specificity
-
-    def __init__(self, selector_str: str):
-        self.raw_selector = selector_str.strip()
-        self.attributes = []
+    def __init__(self, segment: str):
+        self.raw = segment.strip()
+        self.type_selector: str | None = None
+        self.attributes: list[tuple[str, str | None, str | None]] = []
         self._parse()
         self.specificity = self._calculate_specificity()
-        logger.debug(
-            "parsed selector: '%s' -> type='%s', attrs=%s, spec=%s",
-            self.raw_selector,
-            self.type_selector,
-            self.attributes,
-            self.specificity,
-        )
 
     def _parse(self):
-        selector = self.raw_selector
+        selector = self.raw
         matches = list(self._ATTRIBUTE_SELECTOR_RE.finditer(selector))
 
         if not matches:
-            if selector != "*":
+            if selector and selector != "*":
                 self.type_selector = selector
             return
 
@@ -71,7 +60,7 @@ class Selector:
             else:
                 logger.warning(
                     "ignoring attribute content after non-adjacent bracket in selector: '%s'",
-                    self.raw_selector,
+                    self.raw,
                 )
                 break
 
@@ -101,11 +90,7 @@ class Selector:
                 self.attributes.append((name.strip(), op or "=", val.strip()))
                 continue
 
-            logger.warning(
-                "could not parse attribute condition: '%s' in '%s'",
-                cond,
-                self.raw_selector,
-            )
+            logger.warning("could not parse attribute condition: '%s' in '%s'", cond, self.raw)
 
     def _calculate_specificity(self) -> Specificity:
         ids = sum(1 for name, _, _ in self.attributes if name == "id")
@@ -202,12 +187,11 @@ class Selector:
         try:
             return bool(re.search(pattern, str(actual_value), re_flags))
         except re.error as exc:
-            logger.warning("regex error in selector '%s': %s", self.raw_selector, exc)
+            logger.warning("regex error in selector '%s': %s", self.raw, exc)
             return False
 
     def _value_matches(self, actual_value: Any, pattern_value: str | None, operator: str) -> bool:
         if pattern_value is None:
-            logger.warning("pattern_value is None for operator '%s'", operator)
             return False
 
         pattern_is_none_keyword = pattern_value.lower() == "none"
@@ -229,7 +213,6 @@ class Selector:
                 and str(actual_value).lower() == pattern_value.lower()
             )
 
-        logger.warning("unexpected operator '%s' in _value_matches", operator)
         return False
 
     def _numeric_compare(self, actual_value: Any, pattern_value: str | None, operator: str) -> bool:
@@ -252,7 +235,79 @@ class Selector:
             for i, cls in enumerate(inspect.getmro(component.__class__)):
                 if cls.__name__ == self.type_selector:
                     return i
-        return float("inf")
+        return 1 << 30
+
+
+def _split_descendant(selector_str: str) -> list[str]:
+    """Split a compound selector on whitespace, but only outside `[...]` brackets."""
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in selector_str:
+        if ch == "[":
+            depth += 1
+            buf.append(ch)
+        elif ch == "]":
+            depth -= 1
+            buf.append(ch)
+        elif ch.isspace() and depth == 0:
+            if buf:
+                parts.append("".join(buf))
+                buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+class Selector:
+    """Compound CSS-like selector. Whitespace separates descendant segments;
+    the rightmost segment matches the component itself, earlier segments match
+    ancestors (in order, not necessarily adjacent)."""
+
+    raw_selector: str
+    segments: list[_SimpleSelector]
+    specificity: Specificity
+
+    def __init__(self, selector_str: str):
+        self.raw_selector = selector_str.strip()
+        parts = _split_descendant(self.raw_selector)
+        if not parts:
+            parts = ["*"]
+        self.segments = [_SimpleSelector(p) for p in parts]
+        self.specificity = self._combine_specificity()
+
+    def _combine_specificity(self) -> Specificity:
+        ids = sum(s.specificity.id_count for s in self.segments)
+        attrs = sum(s.specificity.attr_class_count for s in self.segments)
+        types = sum(s.specificity.type_count for s in self.segments)
+        return Specificity(ids, attrs, types)
+
+    def matches(self, component: Any) -> bool:
+        if not self.segments[-1].matches(component):
+            return False
+        if len(self.segments) == 1:
+            return True
+
+        ancestors_needed = list(reversed(self.segments[:-1]))
+        parent = getattr(component, "parent", None)
+        for needed in ancestors_needed:
+            while parent is not None and not needed.matches(parent):
+                parent = getattr(parent, "parent", None)
+            if parent is None:
+                return False
+            parent = getattr(parent, "parent", None)
+        return True
+
+    def get_mro_level(self, component: Any) -> int:
+        return self.segments[-1].get_mro_level(component)
 
     def __repr__(self):
         return f"<Selector('{self.raw_selector}', spec={self.specificity})>"
+
+    def __hash__(self):
+        return hash(self.raw_selector)
+
+    def __eq__(self, other):
+        return isinstance(other, Selector) and self.raw_selector == other.raw_selector

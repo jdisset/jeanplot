@@ -1,6 +1,5 @@
 """Shared fixtures for jeanplot tests."""
 import pytest
-import copy
 import matplotlib.pyplot as plt
 
 from jeanplot import (
@@ -17,13 +16,10 @@ from jeanplot.gene.data import TUData, PartData, CircuitData, InteractionData, S
 @pytest.fixture(autouse=True)
 def reset_jstyle():
     """Resets jstyle before/after each test."""
-    original_rules = copy.deepcopy(jstyle.styles)
-    original_raw = copy.deepcopy(jstyle._raw_styles)
-    jstyle.styles = []
-    jstyle._raw_styles = {}
+    original = jstyle._cascade
+    jstyle._cascade = None
     yield
-    jstyle.styles = original_rules
-    jstyle._raw_styles = original_raw
+    jstyle._cascade = original
 
 
 @pytest.fixture(autouse=True)

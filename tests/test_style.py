@@ -1,6 +1,5 @@
 import pytest
 from typing import Optional, List
-import copy
 from pydantic import Field
 
 from jeanplot import Component, Container, Text, jstyle, BoxStyle, LayoutConstraints
@@ -11,15 +10,10 @@ from jeanplot import Component, Container, Text, jstyle, BoxStyle, LayoutConstra
 @pytest.fixture(autouse=True)
 def reset_jstyle():
     """resets jstyle styles before each test"""
-    # Store the state of the global jstyle instance's internal list
-    original_rules = copy.deepcopy(jstyle.styles)
-    original_raw = copy.deepcopy(jstyle._raw_styles)
-    jstyle.styles = []  # Clear parsed rules
-    jstyle._raw_styles = {}  # Clear raw dictionary
+    original = jstyle._cascade
+    jstyle._cascade = None
     yield
-    # Restore the state
-    jstyle.styles = original_rules
-    jstyle._raw_styles = original_raw
+    jstyle._cascade = original
 
 
 # --- Helper Components ---
