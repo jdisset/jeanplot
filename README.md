@@ -36,6 +36,12 @@ This README is written for beginners first, then gradually becomes a full API re
 - [25. Troubleshooting](#25-troubleshooting)
 - [26. Best Practices](#26-best-practices)
 - [27. FAQ](#27-faq)
+- [28. Plot Panels and Figures](#28-plot-panels-and-figures)
+- [29. API: Plot Data and Foundations](#29-api-plot-data-and-foundations)
+- [30. Plot Themes and the `plots.yaml` cascade](#30-plot-themes-and-the-plotsyaml-cascade)
+- [31. Compose Helpers and Autofig Templates](#31-compose-helpers-and-autofig-templates)
+- [32. `jeanplot-plot` CLI](#32-jeanplot-plot-cli)
+- [33. Migration from biocomp-plot](#33-migration-from-biocomp-plot)
 ---
 ## 1. Who This Guide Is For
 Use this guide if you are:
@@ -267,15 +273,19 @@ jstyle.update({
 })
 ```
 ### 9.3 `update` semantics
-`jstyle.update(style_dict)` deep-merges into existing rule map.
-So:
-- multiple updates accumulate,
-- nested dictionaries merge recursively,
-- later values override same keys.
-When you want clean state:
+`jstyle.update(value)` **replaces** the active cascade.
+Two input forms are accepted:
+- a nested style dict (flattened and wrapped internally),
+- a `CallableSymbol` from a `!cascade:jstyle` YAML document.
+To clear:
 ```python
 jstyle.clear()
 ```
+Under the hood the engine is a thin layer over dracon's
+`!cascade:jstyle` select-mode dialect. Selector matching, specificity
+ordering, and multi-rule merging are delegated to dracon. The same
+selector grammar (id, class, type, descendant, nested) applies in both
+forms.
 ### 9.4 `apply` vs `apply_one`
 - `apply(component)`: style component + descendants recursively.
 - `apply_one(component)`: style one component only.
@@ -1076,4 +1086,147 @@ Not full DOM query. Use your object references and path-based helpers.
 `Text.font_size_mode` defaults to `"data"`.
 ### How do I fully reset styles?
 `jstyle.clear()`.
+---
+## 28. Plot Panels and Figures
+Jeanplot ships a scientific-plotting layer built on the same Component
+machinery as the scene graph. A **plot panel** is a Component that
+claims a matplotlib axes from its laid-out bbox and draws into it. A
+**Figure** is a Container whose tree contains panels; the renderer
+walks the tree, allocates sub-axes per leaf panel, and styles
+everything via `jstyle`.
+### 28.1 Mental model
+- `PlotPanel(Container)` — base class. Subclasses implement
+  `draw(ax)`; an optional `render_txt() -> str | None` enables
+  terminal-friendly ASCII output.
+- `Figure(Container)` — 5-field Container with `theme`, `size`,
+  `dpi`, `panels`, `metadata`. No custom render method; the renderer
+  walks `children`.
+- `Colorbar`, identity lines, slice chords — uniform overlay
+  children with `is_overlay=True`. Same layout/style machinery.
+- One drawing method per panel (`draw(ax)`); SVG/PNG export reuses
+  the matplotlib path.
+### 28.2 Concrete panels
+Module `jeanplot.panels`:
+- `SmoothPanel1D`, `SmoothPanel2D`, `SmoothPanel3D` — KNN-smoothed
+  surfaces. 3D is a Container holding a cube view + slice grid.
+- `MVPPanel` — measured-vs-predicted scatter.
+- `DensityPanel` — kernel density estimate.
+- `ScatterPanel` — plain scatter.
+- `ViolinPanel`, `ParticlePanel`, `StackedPolyPanel`.
+- `AsciiHeatmapPanel` — terminal output.
+- `AutoPanel` — dim-dispatch wrapper.
+Each subclass declares its kwargs as typed Pydantic fields (no
+`**kwargs` opacity) and is registered in `DEFAULT_TYPES` so dracon
+`!SmoothPanel2D { ... }` tags resolve.
+### 28.3 Minimal example
+```python
+import numpy as np
+from jeanplot import Figure, SmoothPanel2D, PlotData, render
+x = np.random.randn(500)
+y = np.random.randn(500)
+z = np.exp(-(x**2 + y**2))
+data = PlotData(X=np.column_stack([x, y]), Y=z[:, None],
+                column_names=["x", "y"], output_names=["z"])
+fig = Figure(panels=[SmoothPanel2D(data=data)])
+render(fig, output="smooth.png")
+```
+### 28.4 AutoPanel dim-dispatch
+`AutoPanel(data=...)` selects `SmoothPanel1D` / `SmoothPanel2D` /
+`SmoothPanel3D` from `data.X.shape[1]`. The YAML form is the dracon
+Constructor Slots `!fn` template at
+`pkg:jeanplot:resources/templates/auto_panel.yaml`. The Python form is
+the `auto_panel(data, **kwargs)` helper in `jeanplot.panels`.
+---
+## 29. API: Plot Data and Foundations
+Module `jeanplot.data`:
+- `PlotData` — typed Pydantic model with `X`, `Y`, `column_names`,
+  `output_names`, `metadata`. `column_proteins` is a back-compat
+  alias for `column_names`.
+- `LazyPlotData` — same shape, arrays loaded on first access via
+  `model_validator(mode='after')`.
+- `PlotFunctionResult` — return shape for `draw(ax)` paths that
+  need to communicate `mappable` (colorbar source) upward.
+- `GridData` — gridded summary with base64 round-trip.
+- `Rescaler` — Protocol with `fwd(x)` / `inv(x)`. `IdentityRescaler`
+  is the default; biocomp's `DataRescaler` already satisfies it.
+Module `jeanplot.knn`:
+- KNN tree backends (usearch / pykdtree / scipy auto-selected).
+- Density estimators, Gaussian-weighted KNN with optional numba
+  acceleration, optional JAX kernels.
+Module `jeanplot.color`:
+- `load_palette(name)` / palette registration.
+- `closest_name(query)` for fuzzy color-name matching.
+- Bio palettes ship in `pkg:jeanplot:resources/colors/bio_palettes.yaml`.
+Module `jeanplot.stats`:
+- `rmse`, `mse`, `mae`, `r_squared`, `pearson_r` (numpy).
+---
+## 30. Plot Themes and the `plots.yaml` cascade
+Module-resource path: `pkg:jeanplot:resources/themes/plots.yaml`.
+This is the SSOT for every plot default. It's a `!cascade:jstyle`
+document — each rule key is a selector targeting a panel class or
+class+attribute, and the body sets typed properties:
+```yaml
+rules: !cascade:jstyle
+  SmoothPanel2D:
+    vlims: [0.0, 1.0]
+    cmap: viridis
+  SmoothPanel2D[style_class=overlay]:
+    alpha: 0.5
+  Colorbar:
+    tick_props:
+      labelsize: 8
+```
+Two presets layer on top:
+- `themes/paper.yaml` — paper-formatted preset.
+- `themes/rcparams.yaml` — matplotlib rcParams snapshot.
+Load via `load_plot_theme()` (in `jeanplot`); compose with the figure
+template via `Figure.theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules`
+inside a YAML job (selector form pulls just the cascade subtree).
+Top-level theme vars surface as `--name` CLI flags on `jeanplot-plot`
+via dracon's `!require` + mapping-body / `!set_default` pattern.
+---
+## 31. Compose Helpers and Autofig Templates
+Module `jeanplot.compose` carries small tree-construction helpers,
+all registered as dracon `!fn` templates so they're usable from YAML:
+- `panel_row(panels, **kwargs)` — Container with row direction.
+- `panel_grid(panels, ncols, **kwargs)` — grid layout.
+- `panels_from_datas(datas, kind=AutoPanel, **kwargs)`.
+- `build_figure_metadata(...)`.
+- `default_output_name(...)`.
+YAML examples and autofig figure templates live under
+`pkg:jeanplot:resources/figures/`:
+- `data.yaml` — data-only multi-panel figure.
+- `pred_combined.yaml` — measured-vs-predicted combined figure.
+- `combined.yaml` — combined data + prediction.
+- `templates.yaml` — higher-order figure templates (`ComparePair`,
+  `Triple`, ...) as `!fn` blocks. Adding a shape = one `!fn` entry.
+The compose helpers replace ~1000 LOC of `expand_panel_atomics` /
+`compose_atomics` / `subdivide` / `axnum` machinery — nested
+Containers express the same shapes.
+---
+## 32. `jeanplot-plot` CLI
+Entry point: `jeanplot-plot` (installed by `pip install -e .`).
+Backed by `PlotJob` in `jeanplot.cli` — a `@dracon_program`-shaped
+Pydantic Job that takes `figure: Figure` (typed object, not a path)
+and renders. Programs accept objects, not paths — `!include` does
+the wiring.
+```bash
+jeanplot-plot +path/to/figure.yaml --output-dir out/
+jeanplot-plot +mytheme --vlim-low -1 --vlim-high 1   # vocab-as-CLI
+```
+Run from Python via `PlotJob.invoke(...)` or
+`PlotJob.from_config(...).run()` — same shape as biocomp's program
+classes. The `from_config` form returns the constructed job for
+inspection before run.
+---
+## 33. Migration from biocomp-plot
+See `docs/migrating_from_biocomp.md` for the full cheatsheet. Key
+mappings:
+- `PlotConfig` → `Figure(Container)` attrs + jstyle rules.
+- `PlotTask` → a `PlotPanel(Container)` with overlay children.
+- `tasks/{auto,1D,2D,3D}.yaml` → `AutoPanel` + Constructor Slots.
+- `default_plotconf_v2.yaml` `callstack_params` → `themes/plots.yaml`.
+- `Overlay` protocol → child Components with `is_overlay=True`.
+Biocomp itself is untouched by the refactor: `biocomp-plot` keeps
+running every existing job. Migration is opt-in, per script.
 ---
