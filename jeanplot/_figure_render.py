@@ -85,6 +85,30 @@ def _stringify_metadata(md: dict | None) -> dict | None:
     return {str(k): v if isinstance(v, str) else repr(v) for k, v in md.items()}
 
 
+# Matplotlib's SVG writer rejects unknown metadata keys (Dublin-Core allowlist).
+# PDF / PNG are permissive. So we whitelist by-format and fold extras into the
+# Description tag for SVG.
+_SVG_ALLOWED_KEYS = frozenset({
+    "Coverage", "Date", "Description", "Format", "Identifier", "Language",
+    "Publisher", "Relation", "Rights", "Source", "Subject", "Title", "Type",
+    "Creator", "Contributor", "Keywords",
+})
+
+
+def _metadata_for(path: Path, md: dict | None) -> dict | None:
+    if not md:
+        return None
+    if path.suffix.lower() != ".svg":
+        return md
+    allowed = {k: v for k, v in md.items() if k in _SVG_ALLOWED_KEYS}
+    extras = {k: v for k, v in md.items() if k not in _SVG_ALLOWED_KEYS}
+    if extras:
+        prior = allowed.get("Description", "")
+        joined = "; ".join(f"{k}={v}" for k, v in extras.items())
+        allowed["Description"] = f"{prior}; {joined}" if prior else joined
+    return allowed or None
+
+
 def save_figure(fig: Figure, mfig: Any) -> Path | None:
     """Write the figure to disk per `fig.output_path` and `fig.extra_output_paths`."""
     out = fig.output_path
@@ -92,9 +116,9 @@ def save_figure(fig: Figure, mfig: Any) -> Path | None:
         return None
     md = _stringify_metadata(fig.metadata)
     out.parent.mkdir(parents=True, exist_ok=True)
-    mfig.savefig(out, dpi=fig.dpi, metadata=md)
+    mfig.savefig(out, dpi=fig.dpi, metadata=_metadata_for(out, md))
     for extra in fig.extra_output_paths:
         p = Path(extra)
         p.parent.mkdir(parents=True, exist_ok=True)
-        mfig.savefig(p, dpi=fig.dpi, metadata=md)
+        mfig.savefig(p, dpi=fig.dpi, metadata=_metadata_for(p, md))
     return out

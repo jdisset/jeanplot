@@ -9,9 +9,6 @@
 !set_default bad_color: "#ffffff"
 
 rules: !cascade:jstyle
-  PlotPanel:
-    rescaler: ${IdentityRescaler()}
-
   SmoothPanel1D:
     xlims: ${xlims}
     vlims: ${vlims}

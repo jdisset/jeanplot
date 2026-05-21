@@ -222,7 +222,7 @@ def gradient_field_2d(
     gx_q = field.gx[::step, ::step]
     gy_q = field.gy[::step, ::step]
     Xg, Yg = np.meshgrid(x_q, y_q)
-    q = ax.quiver(Xg, Yg, gx_q, gy_q, color=arrow_color, scale=1.0 / arrow_scale)
+    q = ax.quiver(Xg, Yg, gx_q, gy_q, color=arrow_color, scale=arrow_scale)
     ax.set_xlim(*xlims)
     ax.set_ylim(*ylims)
     return PlotFunctionResult(rendering=q, metadata={})

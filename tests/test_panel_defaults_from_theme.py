@@ -29,12 +29,23 @@ def test_plots_theme_applies_to_smooth_panel_2d():
         jeanplot.load_default_theme(force=True)
 
 
-def test_plots_theme_rescaler_default():
+def test_plots_theme_does_not_clobber_explicit_rescaler():
+    """The theme must not overwrite an explicit panel.rescaler.
+
+    Regression: a `PlotPanel: rescaler: ${IdentityRescaler()}` cascade rule
+    used to unconditionally override the per-instance rescaler, silently
+    breaking biocomp domain figures that pass a real rescaler in YAML.
+    The fallback now lives per-`draw()` (no rescaler -> IdentityRescaler),
+    so the cascade leaves the field alone.
+    """
+    from jeanplot import IdentityRescaler
+
     load_plot_theme()
     try:
-        panel = SmoothPanel2D(plot_data=_data_2d())
+        explicit = IdentityRescaler()
+        panel = SmoothPanel2D(plot_data=_data_2d(), rescaler=explicit)
         jstyle.apply(panel)
-        assert panel.rescaler is not None
+        assert panel.rescaler is explicit
     finally:
         jstyle.clear()
         jeanplot.load_default_theme(force=True)
