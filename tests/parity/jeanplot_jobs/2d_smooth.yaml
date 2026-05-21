@@ -1,0 +1,23 @@
+<<(<): !include pkg:jeanplot:resources/themes/plots
+
+!require plot_data: "PlotData fixture (injected via context)"
+!set_default output_dir: "./"
+!set_default output_file: "2d_smooth.png"
+
+figure: !Figure
+  theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  output_dir: ${output_dir}
+  output_file: ${output_file}
+  layout: !LayoutConstraints
+    direction: row
+    gap: 8
+  children:
+    - !SmoothPanel2D
+      plot_data: ${plot_data}
+      title: "2D smooth"
+      draw_colorbar: false
+      knn_grid_params:
+        grid_resolution: 16
+        knn_stats_params:
+          k: 20
+          radius: 0.2

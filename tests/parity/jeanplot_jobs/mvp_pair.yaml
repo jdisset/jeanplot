@@ -1,0 +1,23 @@
+<<(<): !include pkg:jeanplot:resources/themes/plots
+
+!require measured: "measured array"
+!require predicted: "predicted array"
+!set_default output_dir: "./"
+!set_default output_file: "mvp_pair.png"
+
+figure: !Figure
+  theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  output_dir: ${output_dir}
+  output_file: ${output_file}
+  layout: !LayoutConstraints
+    direction: row
+    gap: 8
+  children:
+    - !MVPPanel
+      measured: ${measured}
+      predicted: ${predicted}
+      title: "Measured vs predicted"
+      show_density: false
+      show_trendline: false
+      show_stats: false
+      show_noise_floor: false
