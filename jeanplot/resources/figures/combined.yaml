@@ -1,0 +1,29 @@
+# Row of N panels auto-dispatched from a list of PlotDatas.
+
+<<(<): !include pkg:jeanplot:resources/templates/auto_panel
+<<(<): !include pkg:jeanplot:resources/themes/plots
+
+!require datas: "list[PlotData] — one panel per element"
+!set_default titles: null
+!set_default gap: 8.0
+!set_default file_prefix: ""
+!set_default file_suffix: "_combined.pdf"
+!set_default output_dir: "./"
+!set_default output_file: null
+
+figure: !Figure
+  theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  output_dir: ${output_dir}
+  output_file: !default_output_name
+    fallback: "combined"
+    prefix: ${file_prefix}
+    suffix: ${file_suffix}
+    override: ${output_file}
+  layout: !LayoutConstraints
+    direction: row
+    gap: ${gap}
+  children:
+    !each(d) ${list(enumerate(datas))}:
+      - !AutoPanel
+        plot_data: ${d[1]}
+        title: ${titles[d[0]] if titles is not None and d[0] < len(titles) else None}

@@ -1,0 +1,113 @@
+!set_default base_range: [0.0, 0.65]
+!set_default xlims: ${base_range}
+!set_default ylims: ${base_range}
+!set_default zlims: ${base_range}
+!set_default vlims: [null, null]
+!set_default vlim_quantiles: [0.02, 0.98]
+!set_default cmap: viridis
+!set_default colors_grey: "#000000"
+!set_default bad_color: "#ffffff"
+
+rules: !cascade:jstyle
+  PlotPanel:
+    rescaler: ${IdentityRescaler()}
+
+  SmoothPanel1D:
+    xlims: ${xlims}
+    vlims: ${vlims}
+    draw_xlabel: true
+    draw_ylabel: true
+    show_std: true
+    show_legend: true
+
+  SmoothPanel2D:
+    xlims: ${xlims}
+    ylims: ${ylims}
+    vlims: ${vlims}
+    vlim_quantiles: ${vlim_quantiles}
+    draw_xlabel: true
+    draw_ylabel: true
+    draw_colorbar: true
+    knn_grid_params:
+      grid_resolution: 250
+      is_density_plot: false
+      max_centroid_offset_frac: 1.0
+    heatmap_params:
+      bad_color: ${bad_color}
+      contours: 0
+    colorbar_params:
+      size: [0.06, 0.85]
+      position: [1.05, 0.075]
+      tick_props: { labelsize: 9, pad: 3, length: 4 }
+    Colorbar:
+      size: [0.06, 0.85]
+      position: [1.05, 0.075]
+      tick_props: { labelsize: 9, pad: 3, length: 4 }
+
+  SmoothGradMagnitudePanel2D:
+    xlims: ${xlims}
+    ylims: ${ylims}
+    vlims: [null, null]
+    heatmap_params:
+      bad_color: ${bad_color}
+      contours: 0
+    colorbar_params:
+      size: [0.06, 0.85]
+      position: [1.05, 0.075]
+      tick_props: { labelsize: 9, pad: 3, length: 4 }
+
+  GradientFieldPanel2D:
+    xlims: ${xlims}
+    ylims: ${ylims}
+
+  SmoothPanel3D:
+    xlims: ${xlims}
+    ylims: ${ylims}
+    zlims: ${zlims}
+    vlims: ${vlims}
+    zslices: [0.05, 0.25, 0.4, 0.55]
+    cube_frac_w: 0.57
+    projection_angle: 45.0
+    projection_diag_coef: 0.5
+    SmoothPanel2D:
+      draw_colorbar: false
+      heatmap_params:
+        bad_color: ${bad_color}
+    Colorbar:
+      position: [1.05, 0.4]
+      size: [0.045, 0.5]
+
+  CubeView:
+    edge_color: ${colors_grey}
+    edge_lw: 0.5
+
+  MVPPanel:
+    show_density: true
+    show_identity: true
+    show_stats: true
+    show_trendline: false
+    show_bias: false
+    show_calibration_rms: false
+    show_spread: false
+    show_noise_floor: false
+    noise_local: false
+    density_log: true
+    vlims: ${base_range}
+
+  DensityPanel1D:
+    bw_method: 0.01
+    show_quantiles: [0.01, 0.99]
+
+  GridHistogramPanel:
+    draw_colorbar: true
+
+  ViolinPanel:
+    grid_resolution: 32
+
+  Figure:
+    dpi: 300
+
+  Colorbar:
+    size: [0.06, 0.85]
+    position: [1.05, 0.075]
+    tick_props: { labelsize: 9, pad: 3, length: 4 }

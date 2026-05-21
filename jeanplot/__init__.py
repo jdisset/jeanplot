@@ -144,6 +144,7 @@ DEFAULT_TYPES = [
     PlotData,
     LazyPlotData,
     DataDimensions,
+    IdentityRescaler,
     PlotPanel,
     Colorbar,
     Figure,
@@ -181,6 +182,25 @@ def make_context_from_types(types):
     return {t.__name__: t for t in types}
 
 
+from jeanplot.compose import (  # noqa: E402  (depends on DEFAULT_TYPES being declared)
+    COMPOSE_HELPERS,
+    panel_row as panel_row,
+    panel_grid as panel_grid,
+    panels_from_datas as panels_from_datas,
+    build_figure_metadata as build_figure_metadata,
+    default_output_name as default_output_name,
+)
+
+
+def make_plot_context(extra_types: list | None = None, extra: dict | None = None) -> dict:
+    """Standard context for loading jeanplot YAML: types + compose helpers."""
+    ctx = make_context_from_types(DEFAULT_TYPES + (extra_types or []))
+    ctx.update(COMPOSE_HELPERS)
+    if extra:
+        ctx.update(extra)
+    return ctx
+
+
 _DEFAULT_THEME_CACHE = None
 
 
@@ -199,3 +219,25 @@ def load_default_theme(force: bool = False):
         _DEFAULT_THEME_CACHE = cfg["rules"]
     jstyle.clear()
     jstyle.update(_DEFAULT_THEME_CACHE)
+
+
+def load_plot_theme(*extras: str) -> None:
+    """Notebook/test escape hatch: layer plot theme files into the ambient jstyle.
+
+    Production code should set `Figure.theme` instead.
+    """
+    import dracon as dr
+
+    layers = [
+        "pkg:jeanplot:resources/themes/default.yaml",
+        "pkg:jeanplot:resources/themes/plots.yaml",
+        *extras,
+    ]
+    loader = dr.DraconLoader(
+        enable_interpolation=True,
+        context=make_plot_context(),
+    )
+    cfg = loader.stack(*layers).construct()
+    dr.resolve_all_lazy(cfg, except_for={"component"})
+    jstyle.clear()
+    jstyle.update(cfg["rules"])

@@ -1,0 +1,14 @@
+rules: !cascade:jstyle
+  SmoothPanel2D:
+    colorbar_params:
+      tick_props: { labelsize: 7, pad: 2, length: 3 }
+    Colorbar:
+      tick_props: { labelsize: 7, pad: 2, length: 3 }
+
+  MVPPanel:
+    show_density: true
+    show_stats: true
+    show_trendline: false
+
+  Figure:
+    dpi: 600

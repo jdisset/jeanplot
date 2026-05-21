@@ -1,0 +1,33 @@
+# Single-panel data figure (1D / 2D / 3D auto-dispatched).
+#
+# The first include pulls the AutoPanel template + propagates the theme vars
+# (xlims, vlims, ...) so the cascade's ${xlims} refs resolve at construct time.
+# The Figure's `theme:` is loaded via selector-include — it carries its own
+# cascade with no extra plumbing.
+
+<<(<): !include pkg:jeanplot:resources/templates/auto_panel
+<<(<): !include pkg:jeanplot:resources/themes/plots
+
+!require plot_data: "PlotData to render"
+!set_default title: null
+!set_default file_prefix: ""
+!set_default file_suffix: ".png"
+!set_default output_dir: "./"
+!set_default output_file: null
+
+figure: !Figure
+  theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  output_dir: ${output_dir}
+  output_file: !default_output_name
+    plot_data: ${plot_data}
+    fallback: "data"
+    prefix: ${file_prefix}
+    suffix: ${file_suffix}
+    override: ${output_file}
+  layout: !LayoutConstraints
+    direction: row
+    gap: 8
+  children:
+    - !AutoPanel
+      plot_data: ${plot_data}
+      title: ${title}

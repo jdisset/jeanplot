@@ -1,0 +1,22 @@
+# Constructor Slots pattern: dim-dispatch by `plot_data.dimensions.input`.
+# Companion to `jeanplot.panels.auto.auto_panel`. Used by figure templates
+# as `!AutoPanel { plot_data: ${D} }`.
+
+!define _PanelByDim:
+  1: SmoothPanel1D
+  2: SmoothPanel2D
+  3: SmoothPanel3D
+
+!define AutoPanel: !fn
+  !require plot_data: "PlotData to dispatch on"
+  !set_default force_dim: null
+  !set_default title: null
+  !set_default xtitle: null
+  !set_default ytitle: null
+  !define _name: ${_PanelByDim[force_dim if force_dim is not None else plot_data.dimensions.input]}
+  !fn :
+    !$(_name)
+      plot_data: ${plot_data}
+      title: ${title}
+      xtitle: ${xtitle}
+      ytitle: ${ytitle}
