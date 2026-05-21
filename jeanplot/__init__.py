@@ -52,6 +52,24 @@ from jeanplot.gene.elements import (
 from jeanplot.gene.schematic import GeneticSchematic, SourceAnnotation
 from jeanplot.gene.data import CircuitData, TUData, PartData, SourceData, InteractionData
 
+from jeanplot.data import (
+    PlotData,
+    LazyPlotData,
+    DataDimensions,
+    PlotFunctionResult as PlotFunctionResult,
+    Rescaler as Rescaler,
+    IdentityRescaler as IdentityRescaler,
+    GridData as GridData,
+    extract_grid_data as extract_grid_data,
+    grid_data_to_b64 as grid_data_to_b64,
+    grid_data_from_b64 as grid_data_from_b64,
+)
+from jeanplot.color import (
+    load_palettes,
+    register_palettes,
+    closest_name as closest_name,
+)
+
 DEFAULT_TYPES = [
     Component,
     AnchorComponent,
@@ -97,7 +115,12 @@ DEFAULT_TYPES = [
     PartData,
     SourceData,
     InteractionData,
+    PlotData,
+    LazyPlotData,
+    DataDimensions,
 ]
+
+register_palettes(load_palettes("pkg:jeanplot:resources/colors/bio_palettes.yaml"))
 
 SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)
