@@ -44,7 +44,5 @@ def debug_print(source_id: str, message: str, data=None):
 
 
 class DebugMixin:
-    id: str | None = None
-
     def _log_debug(self, message: str, data=None):
-        debug_print(self.id or self.__class__.__name__, message, data)
+        debug_print(getattr(self, "id", None) or self.__class__.__name__, message, data)
