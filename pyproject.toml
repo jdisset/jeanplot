@@ -21,8 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jeanplot = "jeanplot.cli:main"
-jeanplot-plot = "jeanplot.cli:PlotJob.cli"
+jeanplot = "jeanplot.cli:PlotJob.cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["jeanplot"]

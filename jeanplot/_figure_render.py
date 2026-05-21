@@ -79,15 +79,22 @@ def render_figure(fig: Figure) -> Any:
         return mfig
 
 
+def _stringify_metadata(md: dict | None) -> dict | None:
+    if not md:
+        return None
+    return {str(k): v if isinstance(v, str) else repr(v) for k, v in md.items()}
+
+
 def save_figure(fig: Figure, mfig: Any) -> Path | None:
     """Write the figure to disk per `fig.output_path` and `fig.extra_output_paths`."""
     out = fig.output_path
     if out is None:
         return None
+    md = _stringify_metadata(fig.metadata)
     out.parent.mkdir(parents=True, exist_ok=True)
-    mfig.savefig(out, dpi=fig.dpi, metadata=fig.metadata or None)
+    mfig.savefig(out, dpi=fig.dpi, metadata=md)
     for extra in fig.extra_output_paths:
         p = Path(extra)
         p.parent.mkdir(parents=True, exist_ok=True)
-        mfig.savefig(p, dpi=fig.dpi, metadata=fig.metadata or None)
+        mfig.savefig(p, dpi=fig.dpi, metadata=md)
     return out

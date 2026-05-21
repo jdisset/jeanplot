@@ -1,4 +1,4 @@
-"""jeanplot-plot CLI: render a Figure-typed YAML to an image file.
+"""jeanplot CLI: render a Figure-typed YAML to an image file.
 
 The program declares a typed `figure: Figure` field — the YAML composes via
 `!Figure`, so parent-scope `!set_default` / `!require` propagate and every
@@ -15,11 +15,11 @@ from jeanplot import DEFAULT_TYPES, load_default_theme
 from jeanplot.compose import COMPOSE_HELPERS
 from jeanplot.panels.figure import Figure
 
-__all__ = ["PlotJob", "main", "load_default_theme"]
+__all__ = ["PlotJob", "load_default_theme"]
 
 
 @dracon_program(
-    name="jeanplot-plot",
+    name="jeanplot",
     description="Render a jeanplot Figure YAML to PNG/PDF/SVG.",
     context_types=DEFAULT_TYPES,
     context=COMPOSE_HELPERS,
@@ -47,22 +47,6 @@ class PlotJob(BaseModel):
             self.figure.output_file = self.output_file
         self.figure.render(overwrite=self.overwrite)
         return self.figure
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Backwards-compatible shim for the legacy `jeanplot` entry point."""
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="jeanplot")
-    sub = parser.add_subparsers(dest="command")
-    sub.add_parser("theme-check", help="load the default theme and report status")
-    args = parser.parse_args(argv)
-    if args.command == "theme-check":
-        load_default_theme()
-        print("theme ok")
-        return 0
-    parser.print_help()
-    return 0
 
 
 if __name__ == "__main__":

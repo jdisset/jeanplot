@@ -196,11 +196,11 @@ The reusable figure templates live in `resources/figures/` — `data.yaml`, `pre
 
 ## The CLI
 
-`jeanplot-plot` is installed by `pip install -e .` and reads a Figure-typed YAML:
+`jeanplot` is installed by `pip install -e .` and reads a Figure-typed YAML:
 
 ```bash
-jeanplot-plot +path/to/figure.yaml --output-dir out/
-jeanplot-plot +mytheme --vlim-low -1 --vlim-high 1
+jeanplot +path/to/figure.yaml --output-dir out/
+jeanplot +mytheme --vlim-low -1 --vlim-high 1
 ```
 
 The flags that appear depend on the YAML you load — any `!set_default`/`!require` declared in the file or its includes surfaces as a CLI flag. This is a dracon thing, not a jeanplot thing, but it's why the CLI is small.
@@ -264,7 +264,7 @@ jeanplot/
 ├── compose.py    tree-construction helpers
 ├── render.py     top-level render() / render_to_string()
 ├── testing.py    test helpers (MockRenderer, svg_hash, ...)
-├── cli.py        jeanplot-plot entry point
+├── cli.py        jeanplot entry point
 └── tests/        ~460 tests, pytest
 docs/             this README is the main entry; STYLE_GUIDE, migration
 example/          hello_jeanplot.py
