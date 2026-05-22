@@ -60,6 +60,30 @@ def test_default_receipt(fig: Figure):
     assert "layout" in out and "draw" in out and "save" in out
 
 
+def test_long_path_emits_clickable_link_without_breaking(tmp_path: Path):
+    load_plot_theme()
+    rng = np.random.default_rng(0)
+    x = rng.uniform(0, 1, size=(50, 2)).astype(np.float32)
+    y = rng.uniform(0, 1, size=(50, 1)).astype(np.float32)
+    data = PlotData(xval=x, yval=y, input_names=["a", "b"], output_name="o")
+    deep = tmp_path / "a_very_long_intermediate_subdirectory" / "another_one"
+    deep.mkdir(parents=True)
+    fig = Figure(
+        SmoothPanel2D(plot_data=data),
+        output_dir=str(deep),
+        output_file="a_very_long_file_name_that_would_definitely_wrap.png",
+    )
+    sink = io.StringIO()
+    narrow = Console(file=sink, force_terminal=True, width=60, highlight=False)
+    fig.render(tui=RenderTUI(preview="off", console=narrow))
+    out = sink.getvalue()
+    assert out.count("\033]8;id=") == 1
+    assert out.count("\033]8;;\033\\") == 1
+    link_open = out.index("\033]8;id=")
+    link_close = out.index("\033]8;;\033\\")
+    assert "\n" not in out[link_open:link_close]
+
+
 def test_verbose_emits_tree_and_panel_breakdown(fig: Figure):
     console, sink = _string_console()
     tui = RenderTUI(verbose=True, preview="off", console=console)

@@ -392,10 +392,8 @@ def _fmt_bytes(n: int) -> str:
     return f"{n:.1f} TB"
 
 
-def _osc8(path: Path, label: str | None = None) -> str:
-    url = path.resolve().as_uri()
-    text = label or str(path)
-    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+def _path_markup(path: Path) -> str:
+    return f"[link={path.resolve().as_uri()}][cyan]{path}[/cyan][/link]"
 
 
 def _preview_protocol() -> str | None:
@@ -560,7 +558,11 @@ class RenderTUI:
         assert self.console is not None
         n_panels = len(self.timings.panels)
         w, h = (figure._dimensions.width, figure._dimensions.height)
-        head = f"rendered [bold]{type(figure).__name__}[/] · {n_panels} panels · {w:g}×{h:g} in"
+        head = (
+            f"[green]rendered[/] [bold]{type(figure).__name__}[/]"
+            f" [dim]·[/] {n_panels} panels"
+            f" [dim]·[/] {w:g}×{h:g} in"
+        )
         size = None
         if output_path is not None:
             try:
@@ -568,21 +570,20 @@ class RenderTUI:
             except OSError:
                 size = None
         if size is not None:
-            head += f" → {_fmt_bytes(size)}"
+            head += f" [dim]→[/] [bold]{_fmt_bytes(size)}[/]"
             self.console.print(head)
-            self.console.print(f"  {_osc8(output_path)}")
+            self.console.print(f"  {_path_markup(output_path)}", soft_wrap=True)
         else:
             self.console.print(head)
         t = self.timings
-        phases = [
-            f"layout {_fmt_dt(t.layout)}",
-            f"draw {_fmt_dt(t.draw)}",
-            f"save {_fmt_dt(t.save)}",
-        ]
-        self.console.print(f"  [dim]{' · '.join(phases)}[/]")
+        phases = " [dim]·[/] ".join(
+            f"[dim]{n}[/] {_fmt_dt(dt)}"
+            for n, dt in (("layout", t.layout), ("draw", t.draw), ("save", t.save))
+        )
+        self.console.print(f"  {phases}")
         if self.verbose and t.panels:
             for name, dt in t.panels:
-                self.console.print(f"    [dim]{name}  {_fmt_dt(dt)}[/]")
+                self.console.print(f"    [dim]{name}[/]  {_fmt_dt(dt)}")
         if self._should_preview():
             self._inline_preview()
 
