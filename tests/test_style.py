@@ -372,9 +372,9 @@ def test_partial_style_update():
     # Apply the update rules
     jstyle.apply(container3)
 
-    # Check that padding was updated correctly, preserving original values for None
-    assert container3.style.padding == (10, 5, 12, 5)  # Expect tuple after validation
-    assert container3.style.background_color == "green"
+    # Fill semantics: user-set keys on nested style win; theme keys fill missing ones.
+    assert container3.style.padding == (5, 5, 5, 5)
+    assert container3.style.background_color == "#0000ffff"  # normalized "blue"
 
 
 def test_multi_attribute_selector():

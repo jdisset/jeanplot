@@ -65,6 +65,10 @@ class Component(DebugMixin, BaseModel):
     _natural_dimensions: Size = PrivateAttr(default_factory=Size)
     _layout_origin_in_parent: tuple[float, float] = PrivateAttr(default=(0.0, 0.0))
     _resolved_attach_target: Component | None = PrivateAttr(default=None)
+    _user_set_fields: set[str] = PrivateAttr(default_factory=set)
+
+    def model_post_init(self, _context):
+        object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
 
     @model_validator(mode="after")
     def _validate_dimension_constraints(self):

@@ -4,7 +4,7 @@ import numpy as np
 import logging
 
 from jeanplot.core.component import Component, AnchorComponent
-from jeanplot.core.models import Size, LayoutConstraints
+from jeanplot.core.models import Size, LayoutConstraints, LayoutConstraintsField
 from jeanplot.core.renderer import BaseRenderer
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,16 @@ class Container(Component):
     """component that holds, lays out, and renders child components."""
 
     children: list[Component] = Field(default_factory=list)
-    layout: LayoutConstraints = Field(default_factory=LayoutConstraints)
+    layout: LayoutConstraintsField = Field(default_factory=LayoutConstraints)
+
+    def __init__(self, *args, **kwargs):
+        if args:
+            if "children" in kwargs:
+                raise TypeError(
+                    f"{type(self).__name__}: positional children and `children=` are mutually exclusive"
+                )
+            kwargs["children"] = list(args)
+        super().__init__(**kwargs)
 
     @model_validator(mode="before")
     @classmethod

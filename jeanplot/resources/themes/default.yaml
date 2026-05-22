@@ -53,7 +53,7 @@
 !define theme: ${construct(&tvars)}
 
 
-rules: !cascade:jstyle
+rules: !cascade:jstyle_fill
   GeneticPart:
     SVGElement:
       color_remap:
@@ -276,23 +276,26 @@ rules: !cascade:jstyle
       line_width: 1
       start_offset: !Offset { relative: [1, 0.5] }
       end_offset: !Offset { absolute: [15, 3] }
-      curve_type.start_direction: right
-      curve_type.end_direction: up
-      curve_type.start_length: 5
-      curve_type.end_length: 5
-      curve_type.corner_radius: 10
+      curve_type: !OrthogonalCurve
+        start_direction: right
+        end_direction: up
+        start_length: 5
+        end_length: 5
+        corner_radius: 10
       z_index: -1
-      end_cap.stroke_color: "#ee3350"
-      end_cap.stroke_width: 1
-      end_cap.length: 8
+      end_cap: !LineEndFlat
+        stroke_color: "#ee3350"
+        stroke_width: 1
+        length: 8
     Connection[style_class=txconn]:
       color: ${theme.comp_connection_color}
       line_width: 1
       z_index: -1
-      curve_type.start_mode: vector
-      curve_type.end_mode: vector
-      curve_type.start_vector: [15, 15]
-      curve_type.end_vector: [-40, 0]
+      curve_type: !SimpleBezierCurve
+        start_mode: vector
+        end_mode: vector
+        start_vector: [15, 15]
+        end_vector: [-40, 0]
       start_offset: !Offset { relative: [0.9, 0.8] }
     Text[style_class=ern_name]:
       color: "#888"
@@ -376,9 +379,10 @@ rules: !cascade:jstyle
   Connection[style_class=connection_ERN]:
     line_width: 0.5
     color: ${theme.ern_interaction_color}
-    end_cap.stroke_color: ${theme.ern_interaction_color}
-    end_cap.stroke_width: 0.5
-    end_cap.length: 8
+    end_cap: !LineEndArrow
+      stroke_color: ${theme.ern_interaction_color}
+      stroke_width: 0.5
+      length: 8
 
 
   Table:

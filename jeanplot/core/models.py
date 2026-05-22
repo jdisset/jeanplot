@@ -231,6 +231,37 @@ class LayoutConstraints(BaseModel):
         return self.__repr__()
 
 
+_LAYOUT_ALIASES = {"align": "align_items", "justify": "justify_content"}
+
+
+def _coerce_layout_value(s: str):
+    try:
+        return int(s) if s.lstrip("-").isdigit() else float(s)
+    except ValueError:
+        return s
+
+
+def parse_layout_string(v):
+    if not isinstance(v, str):
+        return v
+    parts = v.split()
+    if not parts:
+        return v
+    direction, *kvs = parts
+    if direction not in ("row", "column", "col"):
+        raise ValueError(f"layout: first token must be row|column|col, got {direction!r}")
+    kwargs: dict = {"direction": "column" if direction == "col" else direction}
+    for kv in kvs:
+        if "=" not in kv:
+            raise ValueError(f"layout: expected key=value, got {kv!r}")
+        k, _, val = kv.partition("=")
+        kwargs[_LAYOUT_ALIASES.get(k, k)] = _coerce_layout_value(val)
+    return kwargs
+
+
+LayoutConstraintsField = Annotated[LayoutConstraints, BeforeValidator(parse_layout_string)]
+
+
 class TextMetrics(BaseModel):
     """measured text metrics at a reference size."""
 

@@ -8,7 +8,10 @@
 !set_default colors_grey: "#000000"
 !set_default bad_color: "#ffffff"
 
-rules: !cascade:jstyle
+rules: !cascade:jstyle_fill
+  PlotPanel:
+    rescaler: ${IdentityRescaler()}
+
   SmoothPanel1D:
     xlims: ${xlims}
     vlims: ${vlims}

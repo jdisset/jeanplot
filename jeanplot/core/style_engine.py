@@ -23,6 +23,22 @@ _JSTYLE_STRATEGY = CascadeStrategy(
 )
 register_cascade_strategy(_JSTYLE_STRATEGY)
 
+_JSTYLE_FILL_STRATEGY = CascadeStrategy(
+    name="jstyle_fill",
+    input_params=("component",),
+    parse=parse_selector_key,
+    matches=lambda sel, component: sel.matches(component),
+    specificity=lambda sel: tuple(sel.specificity),
+)
+register_cascade_strategy(_JSTYLE_FILL_STRATEGY)
+
+
+def _strategy_is_fill(cascade: CallableSymbol | None) -> bool:
+    if cascade is None:
+        return False
+    strat = getattr(cascade, "_cascade_strategy", None)
+    return getattr(strat, "name", None) == "jstyle_fill"
+
 
 def _as_cascade(value: Any) -> CallableSymbol | None:
     """Coerce a value into a jstyle CallableSymbol with a flat rule_tree.
@@ -40,7 +56,7 @@ def _as_cascade(value: Any) -> CallableSymbol | None:
         return value
     if dict_like(value):
         flat = parse_jstyle_rule_tree(_resolve_lazies(value))
-        return CallableSymbol.from_match(flat, _JSTYLE_STRATEGY, name="jstyle")
+        return CallableSymbol.from_match(flat, _JSTYLE_FILL_STRATEGY, name="jstyle_fill")
     raise TypeError(f"unsupported jstyle value type: {type(value).__name__}")
 
 
@@ -83,8 +99,11 @@ class JStyle:
         if self._cascade is None or component is None:
             return component
         props = self._cascade.invoke(component=component)
+        clobber = not _strategy_is_fill(self._cascade)
         for path, value in props.items():
-            self._set_property(component, path, value)
+            if isinstance(value, BaseModel):
+                value = value.model_copy(deep=True)  # cascade rule is a spec, not a singleton
+            self._set_property(component, path, value, clobber=clobber)
         return component
 
     def apply(self, component: Any):
@@ -111,13 +130,17 @@ class JStyle:
 
     __call__ = context
 
-    def _set_property(self, component: Any, property_name: str, value: Any):
+    def _set_property(
+        self, component: Any, property_name: str, value: Any, *, clobber: bool = True
+    ):
         comp_id = getattr(component, "id", "N/A")
         comp_cls = component.__class__.__name__
 
         parts = property_name.split(".")
         target_obj = component
         attr_to_set = parts[-1]
+
+        fill_field_set_by_user = False
 
         try:
             for part in parts[:-1]:
@@ -147,8 +170,25 @@ class JStyle:
             current_val = getattr(target_obj, attr_to_set, None)
             final_value = value
 
-            if isinstance(current_val, BaseModel) and isinstance(value, dict):
-                final_value = self._update_pydantic_model(current_val, value, property_name)
+            if not clobber:
+                user_set = getattr(target_obj, "_user_set_fields", None)
+                if user_set and attr_to_set in user_set:
+                    if isinstance(current_val, dict) and isinstance(value, dict):
+                        fill_field_set_by_user = True
+                    elif isinstance(current_val, BaseModel) and isinstance(value, dict):
+                        pass  # fall through to per-key model merge under fill semantics
+                    else:
+                        return
+
+            if fill_field_set_by_user:
+                assert isinstance(value, dict) and isinstance(current_val, dict)
+                merged: dict[Any, Any] = dict(value)
+                merged.update(current_val)
+                final_value = merged
+            elif isinstance(current_val, BaseModel) and isinstance(value, dict):
+                final_value = self._update_pydantic_model(
+                    current_val, value, property_name, clobber=clobber
+                )
             elif (
                 current_val is None
                 and isinstance(value, dict)
@@ -227,9 +267,15 @@ class JStyle:
         current_model: BaseModel,
         update_dict: dict,
         prop_name: str,
+        *,
+        clobber: bool = True,
     ) -> BaseModel:
         current_dict = current_model.model_dump()
         merged_update_dict = {}
+
+        user_set_nested = (
+            getattr(current_model, "_user_set_fields", None) or current_model.model_fields_set
+        )
 
         model_fields = type(current_model).model_fields
         for key, update_val in update_dict.items():
@@ -240,6 +286,9 @@ class JStyle:
                     prop_name,
                     current_model.__class__.__name__,
                 )
+                continue
+
+            if not clobber and key in user_set_nested:
                 continue
 
             current_field_val = current_dict.get(key)
