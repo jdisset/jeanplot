@@ -139,5 +139,59 @@ class SmoothPanel3D(PlotPanel):
         return str(result)
 
 
+class CubeStackPanel(PlotPanel):
+    plot_data: PlotData
+    zslices: list = Field(default_factory=lambda: [[0.05, 0.25, 0.4, 0.55]])
+    xlims: tuple[float | None, float | None] = (0.0, 1.0)
+    ylims: tuple[float | None, float | None] = (None, None)
+    zlims: tuple[float | None, float | None] = (None, None)
+    vlims: tuple[float | None, float | None] = (None, None)
+    projection_angle: float = 45.0
+    projection_diag_coef: float = 0.5
+    draw_colorbar: bool | None = None
+    show_inner_spines: bool = True
+    show_slice_ticks: bool = True
+    show_front_face_ticks: bool = False
+    smooth_2d_params: dict | None = None
+    colorbar_params: dict | None = None
+    cube_edge_props: dict | None = None
+    xaxis_labelpad: int = 20
+    yaxis_labelpad: int = 24
+    zaxis_labelpad: int = 0
+    xtitle: str | None = None
+    ytitle: str | None = None
+    ztitle: str | None = None
+    vtitle: str | None = None
+
+    def draw(self, ax) -> PlotFunctionResult | None:
+        from jeanplot.plots.smooth_3d import smooth_3d
+
+        return smooth_3d(
+            X=self.plot_data.x,
+            Y=self.plot_data.y,
+            input_names=self.plot_data.input_names,
+            output_name=self.plot_data.output_name,
+            rescaler=self.rescaler,
+            ax=[ax],
+            zslices=self.zslices,
+            xlims=self.xlims, ylims=self.ylims, zlims=self.zlims, vlims=self.vlims,
+            draw_colorbar=self.draw_colorbar,
+            cube_edge_props=self.cube_edge_props,
+            projection_angle=self.projection_angle,
+            projection_diag_coef=self.projection_diag_coef,
+            colorbar_params=self.colorbar_params,
+            show_inner_spines=self.show_inner_spines,
+            show_slice_ticks=self.show_slice_ticks,
+            show_front_face_ticks=self.show_front_face_ticks,
+            smooth_2d_params=self.smooth_2d_params,
+            xtitle=self.xtitle, ytitle=self.ytitle, ztitle=self.ztitle,
+            title=self.title,
+            xaxis_labelpad=self.xaxis_labelpad,
+            yaxis_labelpad=self.yaxis_labelpad,
+            zaxis_labelpad=self.zaxis_labelpad,
+        )
+
+
 CubeView.model_rebuild(force=True)
 SmoothPanel3D.model_rebuild(force=True)
+CubeStackPanel.model_rebuild(force=True)
