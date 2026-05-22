@@ -1,8 +1,9 @@
 from typing import Any
-from pydantic import Field, PrivateAttr
+from pydantic import Field, PrivateAttr, model_validator
 import matplotlib.axes
 
 from jeanplot.core.container import Container
+from jeanplot.core.models import Size
 from jeanplot.data import PlotData, LazyPlotData, PlotFunctionResult
 
 
@@ -23,9 +24,32 @@ class PlotPanel(Container):
     vtitle: str | None = None
     is_drawable: bool = True
 
+    axes_size: Size = Field(default_factory=lambda: Size(width=2.5, height=2.0))
+    label_pad: float = 0.5
+    title_pad: float = 0.0
+    colorbar_pad: float = 0.0
+    legend_pad: float = 0.0
+
     _axes: matplotlib.axes.Axes | None = PrivateAttr(default=None)
     _mappable: Any | None = PrivateAttr(default=None)
     _last_metadata: dict = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _compute_min_dimensions(self):
+        if "min_dimensions" in self.model_fields_set:
+            return self
+        self._refresh_content_size()
+        return self
+
+    def _refresh_content_size(self) -> None:
+        if "min_dimensions" in self._user_set_fields:
+            return
+        title_room = 0.3 if self.title else 0.0
+        new_min = Size(
+            width=self.axes_size.width + self.label_pad + self.colorbar_pad + self.legend_pad,
+            height=self.axes_size.height + self.label_pad + title_room + self.title_pad,
+        )
+        object.__setattr__(self, "min_dimensions", new_min)
 
     def draw(self, ax: matplotlib.axes.Axes) -> PlotFunctionResult | None:
         if not self.is_drawable:

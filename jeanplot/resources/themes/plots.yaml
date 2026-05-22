@@ -19,6 +19,7 @@ rules: !cascade:jstyle_fill
     draw_ylabel: true
     show_std: true
     show_legend: true
+    legend_pad: 1.0
 
   SmoothPanel2D:
     xlims: ${xlims}
@@ -28,6 +29,7 @@ rules: !cascade:jstyle_fill
     draw_xlabel: true
     draw_ylabel: true
     draw_colorbar: true
+    colorbar_pad: 0.6
     knn_grid_params:
       grid_resolution: 250
       is_density_plot: false
@@ -48,6 +50,7 @@ rules: !cascade:jstyle_fill
     xlims: ${xlims}
     ylims: ${ylims}
     vlims: [null, null]
+    colorbar_pad: 0.6
     heatmap_params:
       bad_color: ${bad_color}
       contours: 0
