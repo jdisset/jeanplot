@@ -16,6 +16,7 @@ from jeanplot._tui import (
     _fmt_bytes,
     _fmt_dt,
     _preview_protocol,
+    _tmux_wrap,
     build_tree,
 )
 
@@ -135,7 +136,8 @@ def test_preview_protocol_detection(env, expected, monkeypatch):
     assert _preview_protocol() == expected
 
 
-def test_emit_iterm_encodes_payload():
+def test_emit_iterm_encodes_payload(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
     sink = io.StringIO()
     _emit_iterm(sink, b"hello")
     out = sink.getvalue()
@@ -144,7 +146,8 @@ def test_emit_iterm_encodes_payload():
     assert out.endswith("\a\n")
 
 
-def test_emit_kitty_encodes_payload():
+def test_emit_kitty_encodes_payload(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
     sink = io.StringIO()
     _emit_kitty(sink, b"x" * 10)
     out = sink.getvalue()
@@ -152,7 +155,8 @@ def test_emit_kitty_encodes_payload():
     assert out.endswith("\n")
 
 
-def test_emit_kitty_chunks_long_payload():
+def test_emit_kitty_chunks_long_payload(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
     sink = io.StringIO()
     _emit_kitty(sink, b"x" * 8000)
     out = sink.getvalue()
@@ -164,12 +168,44 @@ def test_emit_kitty_chunks_long_payload():
     assert frames[-1].startswith("m=0;") or frames[-1].startswith("m=1;")
 
 
-def test_preview_protocol_skipped_inside_tmux(monkeypatch):
+def test_preview_protocol_passes_through_tmux(monkeypatch):
     for k in ("TERM_PROGRAM", "TERM", "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("TMUX", "/tmp/tmux-1/default,1234,0")
     monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
-    assert _preview_protocol() is None
+    assert _preview_protocol() == "iterm"
+
+
+def test_tmux_wrap_outside_tmux_is_identity(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    assert _tmux_wrap("\033]1337;hello\a") == "\033]1337;hello\a"
+
+
+def test_tmux_wrap_doubles_escapes(monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/x,1,0")
+    out = _tmux_wrap("\033]1337;hi\a")
+    assert out.startswith("\033Ptmux;")
+    assert out.endswith("\033\\")
+    assert "\033\033]1337;hi\a" in out
+
+
+def test_emit_iterm_wraps_inside_tmux(monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/x,1,0")
+    sink = io.StringIO()
+    _emit_iterm(sink, b"hello")
+    out = sink.getvalue()
+    assert out.startswith("\033Ptmux;")
+    assert "aGVsbG8=" in out
+    assert out.rstrip("\n").endswith("\033\\")
+
+
+def test_emit_kitty_wraps_each_chunk_inside_tmux(monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/x,1,0")
+    sink = io.StringIO()
+    _emit_kitty(sink, b"x" * 8000)
+    out = sink.getvalue()
+    assert out.count("\033Ptmux;") >= 2
+    assert "\033\033_G" in out
 
 
 def test_phase_accepts_unknown_name():

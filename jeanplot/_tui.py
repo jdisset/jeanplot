@@ -97,8 +97,6 @@ def _osc8(path: Path, label: str | None = None) -> str:
 
 def _preview_protocol() -> str | None:
     env = os.environ
-    if "TMUX" in env:
-        return None
     if env.get("TERM_PROGRAM") == "iTerm.app":
         return "iterm"
     if env.get("TERM_PROGRAM") == "WezTerm":
@@ -110,6 +108,12 @@ def _preview_protocol() -> str | None:
     return None
 
 
+def _tmux_wrap(seq: str) -> str:
+    if "TMUX" not in os.environ:
+        return seq
+    return "\033Ptmux;" + seq.replace("\033", "\033\033") + "\033\\"
+
+
 def _png_bytes(mfig: Any, dpi: int = 96) -> bytes:
     buf = io.BytesIO()
     mfig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
@@ -118,7 +122,8 @@ def _png_bytes(mfig: Any, dpi: int = 96) -> bytes:
 
 def _emit_iterm(stream: Any, data: bytes) -> None:
     payload = base64.b64encode(data).decode()
-    stream.write(f"\033]1337;File=inline=1;preserveAspectRatio=1:{payload}\a\n")
+    seq = f"\033]1337;File=inline=1;preserveAspectRatio=1:{payload}\a"
+    stream.write(_tmux_wrap(seq) + "\n")
     stream.flush()
 
 
@@ -132,7 +137,7 @@ def _emit_kitty(stream: Any, data: bytes) -> None:
             ctrl = "a=T,f=100" + (",m=1" if more else "")
         else:
             ctrl = "m=1" if more else "m=0"
-        stream.write(f"\033_G{ctrl};{part}\033\\")
+        stream.write(_tmux_wrap(f"\033_G{ctrl};{part}\033\\"))
     stream.write("\n")
     stream.flush()
 
