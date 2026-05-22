@@ -3,10 +3,18 @@
 Reference for porting an existing biocomp / biocomp-tools plotting script to
 jeanplot. Organised as **before / after** pairs by what the script is doing.
 
-The constraint behind the refactor: biocomp keeps working unchanged. Port
-scripts one at a time, at your own pace. The `biocomp-plot` CLI, all
-`biocomp.plotting.*` modules, and every existing job YAML in
-`paper-jobs/` continue to work exactly as today. Migration is opt-in.
+The constraint behind the refactor: biocomp keeps rendering unchanged. Port
+scripts one at a time, at your own pace. The `biocomp-plot` CLI and every
+existing job YAML in `paper-jobs/` continue to work today.
+
+Under the hood, `biocomp.plotting.*` is now a thin shim that re-exports the
+canonical jeanplot symbols (drawing functions, KNN kernels, axis helpers,
+`PlotData`, `Rescaler`). The orchestration layer it sits on
+(`BiocompPlotFigure`, `PlotConfig`, `PartialFunction`, `@configurable`,
+`SimpleLayout` / `GridLayout` / `MultiRowGridLayout` / `MergeSpec` / `FigureSpec`,
+`BiocompFigureAdapter`) is **deprecated**: constructing any of them emits a
+`DeprecationWarning` pointing at the jeanplot replacement. Old jobs still
+render; new jobs should target jeanplot directly.
 
 ---
 
@@ -247,14 +255,31 @@ biocomp-plot +path/to/original.yaml ++output_dir=/tmp/biocomp-out
 
 ## What this migration does **not** change
 
-- biocomp's plotting modules (`biocomp.plotting.*`, `biocomp.plotutils`,
-  `biocomptools.toollib.plot`, `biocomptools.toollib.figuremakers.*`)
-  keep working. They're not deprecated.
-- Existing job YAML in `paper-jobs/` / `biocomp-jobs/` keeps working.
+- Network-aware panels stay in `biocomptools.jeanplot_panels` (CircuitPanel,
+  NetworkDiagramPanel, MVPNetworkPanel, BlurbPanel, smooth-voxel /
+  benchmark / quantile-coverage panels, biocomp-aware data holders).
+- `DataRescaler` keeps working as-is; it already satisfies jeanplot's
+  `Rescaler` protocol structurally.
+- Existing job YAMLs in `paper-jobs/` / `biocomp-jobs/` keep rendering;
+  the only difference is that any construction of the legacy
+  `Figure` / `PlotConfig` / `SimpleLayout` / etc. now emits a
+  `DeprecationWarning`.
 - `biocomp-plot` CLI keeps working.
-- `DataRescaler` keeps working.
-- Network-aware panels stay in biocomp-tools.
 
-This is a parallel-library migration, not a replacement. Port scripts on
-your schedule; mix biocomp and jeanplot freely in a single script if
-that's the simplest path.
+## What this migration **does** change
+
+- `biocomp.plotting.*` is no longer a fork. Every drawing function, KNN
+  kernel, axis helper, `PlotData`, `Rescaler` lives once in jeanplot;
+  `biocomp.plotting` re-exports those symbols. Bug fixes happen in one
+  place.
+- The orchestration legacy (`BiocompPlotFigure`, `PlotConfig`,
+  `PartialFunction`, `@configurable`, `SimpleLayout` / `GridLayout` /
+  `MultiRowGridLayout` / `MergeSpec` / `FigureSpec`, `BiocompFigureAdapter`)
+  is deprecated. It will be deleted once the remaining paper-jobs YAMLs
+  migrate to the jeanplot `Figure` skeleton.
+- The canonical paper figure is now a one-line skeleton include
+  (`pkg:jeanplot:resources/themes/paper`) plus the figure-specific shape.
+  See `paper-jobs/plot/fig1_matrix_gradient.yaml` for the reference port.
+
+Mix biocomp and jeanplot freely in a single script if that's the simplest
+path; the deprecation warning is the migration prompt, not a wall.

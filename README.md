@@ -57,7 +57,21 @@ Components have an `id`, optional `style_class` (list of strings, like CSS class
 - `justify_content`: same vocabulary.
 - `main_axis_weights` / `cross_axis_weights`: optional list of floats for flex-style distribution when there's leftover space. If you don't set them, children get their `min_dimensions` and the rest is padding.
 
-Nest containers to get grids. There's no grid primitive because you don't need one — `Container(direction=column, children=[Container(direction=row, ...), ...])` is a grid.
+You can write a `LayoutConstraints` long-form mapping or use the string DSL:
+
+```python
+Container(layout="row gap=8 align=center", children=[...])
+```
+
+```yaml
+layout: "row gap=1.0 align=stretch"
+```
+
+`align` aliases `align_items`, `justify` aliases `justify_content`, `col` aliases `column`. Mapping and string forms are interchangeable.
+
+Children can be passed positionally: `Container(panel1, panel2, ...)` is sugar for `Container(children=[panel1, panel2, ...])`. Works for `Figure` too, in Python and via the YAML `!Container [a, b]` bare-list shortcut.
+
+Nest containers to get grids. There's no grid primitive because you don't need one — `Container(layout="column", children=[Container(layout="row", ...), ...])` is a grid.
 
 Absolute positioning works too: pass `offset=Offset(absolute=(x, y))` on a child and the layout pass leaves it alone.
 
@@ -90,12 +104,12 @@ Selectors support:
 
 Specificity is the usual `(ids, classes, types)` tuple. More specific wins. Newer wins ties.
 
-`jstyle.update(value)` **replaces** the cascade — it doesn't accumulate. If you want clean state, `jstyle.clear()` works too but isn't usually needed because update already wipes. The reason it's "replace not merge": under the hood `jstyle` is a thin wrapper around dracon's `!cascade:jstyle` dialect, and the cascade is one object you swap. If you want layered themes, do the layering in YAML, not by calling `update` twice.
+`jstyle.update(value)` defaults to **fill** semantics — cascade values fill fields the user didn't set, explicit values on a component always win. Under the hood every `Component` snapshots `model_fields_set` at construction (`_user_set_fields`), and the cascade walks around those. To get the old clobber-everything behaviour, write the cascade as `!cascade:jstyle` (legacy) instead of `!cascade:jstyle_fill` (the default). `jstyle.clear()` exists if you want a true reset.
 
 YAML form looks like:
 
 ```yaml
-rules: !cascade:jstyle
+rules: !cascade:jstyle_fill
   Container[style_class=card]:
     style.background_color: "#ffffff"
     style.corner_radius: 8
@@ -103,7 +117,7 @@ rules: !cascade:jstyle
     font_size: 12
 ```
 
-Load with `load_default_theme()` (which reads `pkg:jeanplot:resources/themes/default.yaml`) or with `jstyle.update(your_cascade_symbol)`.
+Load with `load_default_theme()` (which reads `pkg:jeanplot:resources/themes/default.yaml`) or with `jstyle.update(your_cascade_symbol)`. Layer themes by including one cascade as the base of another — explicit fields keep winning at every level.
 
 ## Gene schematics
 
@@ -158,9 +172,23 @@ Panels you get out of the box (`jeanplot.panels`):
 - `Colorbar` — overlay child that reads `parent._mappable`. Drop it next to any panel that produces one.
 - `AutoPanel` — dispatches to the right Smooth* panel based on `data.X.shape[1]`.
 
-Each panel is a typed Pydantic model with the parameters you'd pass to the equivalent matplotlib call as fields. No `**kwargs`. The fields you don't set come from the theme.
+Each panel is a typed Pydantic model with the parameters you'd pass to the equivalent matplotlib call as fields. No `**kwargs`. The fields you don't set come from the theme (cascade-fill).
 
 The matplotlib drawing code itself lives in `jeanplot/plots/` as plain functions. Panels are thin shells that call those. If you want to draw without the panel system, just call the function.
+
+### `@panel_from` — function = panel
+
+For most panels you don't write the class by hand. Decorate the drawing function:
+
+```python
+from jeanplot.panels import panel_from
+
+@panel_from
+def my_plot(plot_data, *, ax, vlims=(0.0, 1.0), cmap="viridis"):
+    ax.imshow(plot_data.X, vmin=vlims[0], vmax=vlims[1], cmap=cmap)
+```
+
+The decorator introspects the signature and synthesises a `PlotPanel` subclass with `vlims` and `cmap` as Pydantic fields, registers it as the YAML tag `!my_plot`, and keeps the original function callable as a plain function (REPL-friendly). Panels also expose cascade-fillable `axes_size`, `colorbar_pad`, `legend_pad`, and a computed `min_dimensions` so the figure auto-sizes around its contents.
 
 ## Themes
 
@@ -247,7 +275,7 @@ There's a cheatsheet at `docs/migrating_from_biocomp.md` if you're porting an ex
 | `Overlay` protocol | child component with `is_overlay=True` |
 | `FigAx.subdivide` / `subax_spec` | nested `Container` |
 
-Biocomp itself is untouched by any of this. `biocomp-plot` keeps running every existing job. Port when you feel like it.
+Every drawing function, KNN kernel, axis helper, `PlotData`, and `Rescaler` lives in jeanplot exactly once. `biocomp.plotting.*` is now a shim layer that re-exports jeanplot symbols; the legacy `BiocompPlotFigure` / `PlotConfig` / `PartialFunction` / `@configurable` / `SimpleLayout` / `GridLayout` / `FigureSpec` machinery is marked deprecated (it still renders the un-migrated paper-jobs YAMLs, but emits `DeprecationWarning` at construction). Port when you feel like it; the deprecation flag tells you when something still uses the old path.
 
 ## Repo layout
 
