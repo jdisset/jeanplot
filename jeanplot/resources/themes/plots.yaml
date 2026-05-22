@@ -8,7 +8,7 @@
 !set_default colors_grey: "#000000"
 !set_default bad_color: "#ffffff"
 
-rules: !cascade:jstyle_fill
+_body:
   PlotPanel:
     rescaler: ${IdentityRescaler()}
 
@@ -114,3 +114,6 @@ rules: !cascade:jstyle_fill
     size: [0.06, 0.85]
     position: [1.05, 0.075]
     tick_props: { labelsize: 9, pad: 3, length: 4 }
+
+rules: !cascade:jstyle_fill
+  <<: ${&/_body}

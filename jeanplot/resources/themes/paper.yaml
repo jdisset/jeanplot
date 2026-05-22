@@ -1,14 +1,60 @@
-rules: !cascade:jstyle
-  SmoothPanel2D:
-    colorbar_params:
-      tick_props: { labelsize: 7, pad: 2, length: 3 }
-    Colorbar:
-      tick_props: { labelsize: 7, pad: 2, length: 3 }
+# Paper-ready theme. Builds on plots.yaml (via its `_body` extension hook) and
+# adds publication defaults: sizing, colorbar padding, near-flat vlim guard,
+# blue/red value/gradient colormaps. Cascade-fill: explicit per-panel values
+# still win.
+#
+# Use directly as a Figure.theme:
+#   theme: !include pkg:jeanplot:resources/themes/paper.yaml@rules
+#
+# Or extend via the `_body` hook from a downstream theme file:
+#   rules: !cascade:jstyle_fill
+#     <<: !include pkg:jeanplot:resources/themes/paper.yaml@_body
+#     <<{+<}:
+#       PlotPanel: { rescaler: ... }   # domain-specific overrides
 
-  MVPPanel:
-    show_density: true
-    show_stats: true
-    show_trendline: false
+!set_default vlim_min_floor: 0.0
+!set_default vlim_min_range: 0.1
+!set_default paper_axes_size: [2.5, 2.0]
+!set_default paper_cmap_value: bc_blues
+!set_default paper_cmap_grad: bc_reds
+
+# Paper-only deltas. The cascade below pulls plots.yaml's full body FIRST,
+# then layers these on top via the `!cascade:jstyle_fill` deep-merge.
+_body_paper_only:
+  PlotPanel:
+    axes_size: !Size { width: "${paper_axes_size[0]}", height: "${paper_axes_size[1]}" }
+
+  SmoothPanel2D:
+    vlim_min_floor: ${vlim_min_floor}
+    vlim_min_range: ${vlim_min_range}
+    colorbar_pad: 0.6
+    heatmap_params:
+      cmap: ${paper_cmap_value}
+
+  SmoothGradMagnitudePanel2D:
+    colorbar_pad: 0.6
+    heatmap_params:
+      cmap: ${paper_cmap_grad}
+
+  SmoothPanel1D:
+    legend_pad: 1.2
+
+  SmoothPanel3D:
+    SmoothPanel2D:
+      vlim_min_floor: ${vlim_min_floor}
+      vlim_min_range: ${vlim_min_range}
 
   Figure:
     dpi: 600
+    rc_context:
+      axes.labelpad: 1
+
+# Combined body: plots.yaml's full body PLUS the paper-only deltas. Exposed
+# for downstream themes that want to extend the paper theme.
+_body:
+  <<: !include pkg:jeanplot:resources/themes/plots.yaml@_body
+  <<{+<}: ${&/_body_paper_only}
+
+rules: !cascade:jstyle_fill
+  <<: !include pkg:jeanplot:resources/themes/plots.yaml@_body
+  <<{+<}: ${&/_body_paper_only}
