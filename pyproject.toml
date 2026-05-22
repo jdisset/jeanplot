@@ -17,6 +17,7 @@ dependencies = [
     "numpy",
 	"lxml",
     "pydantic>=2.0",
+    "rich",
     "svgpath2mpl",
 ]
 

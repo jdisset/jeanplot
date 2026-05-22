@@ -30,6 +30,7 @@ def render(
     overwrite: bool = True,
     renderer_kwargs: dict[str, Any] | None = None,
     context_kwargs: dict[str, Any] | None = None,
+    tui: Any = None,
 ):
     """Render a component tree through a selected backend.
 
@@ -48,8 +49,14 @@ def render(
             component.output_dir = str(p.parent) if p.parent != Path("") else "./"
         if not overwrite and component.output_path is not None and component.output_path.exists():
             return None
-        mfig = render_figure(component)
-        save_figure(component, mfig)
+        if tui is not None:
+            tui.show_tree(component)
+        mfig = render_figure(component, tui=tui)
+        if tui is not None:
+            tui.attach_mpl_figure(mfig)
+        save_figure(component, mfig, tui=tui)
+        if tui is not None:
+            tui.receipt(component, component.output_path)
         return mfig
 
     renderer = _build_renderer(backend, **(renderer_kwargs or {}))

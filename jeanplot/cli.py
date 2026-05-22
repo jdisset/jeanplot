@@ -6,12 +6,13 @@ flag the loaded YAML declares surfaces on the command line.
 """
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from dracon.commandline import Arg, dracon_program
 from pydantic import BaseModel, ConfigDict
 
 from jeanplot import DEFAULT_TYPES, load_default_theme
+from jeanplot._tui import RenderTUI
 from jeanplot.compose import COMPOSE_HELPERS
 from jeanplot.panels.figure import Figure
 
@@ -38,6 +39,21 @@ class PlotJob(BaseModel):
         Arg(help="Override the figure's output_file."),
     ] = None
 
+    verbose: Annotated[
+        bool,
+        Arg(short="v", help="Show component tree + per-panel timings."),
+    ] = False
+
+    quiet: Annotated[
+        bool,
+        Arg(short="q", help="Suppress all terminal output."),
+    ] = False
+
+    preview: Annotated[
+        Literal["auto", "on", "off"],
+        Arg(help="Inline image preview in graphics-capable terminals."),
+    ] = "auto"
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def run(self) -> Figure:
@@ -45,7 +61,8 @@ class PlotJob(BaseModel):
             self.figure.output_dir = str(self.output_dir)
         if self.output_file is not None:
             self.figure.output_file = self.output_file
-        self.figure.render(overwrite=self.overwrite)
+        tui = RenderTUI(verbose=self.verbose, quiet=self.quiet, preview=self.preview)
+        self.figure.render(overwrite=self.overwrite, tui=tui)
         return self.figure
 
 
