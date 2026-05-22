@@ -25,7 +25,11 @@ def test_row_layout_allocates_axes_at_expected_fractions():
             layout=LayoutConstraints(direction="row"),
             dpi=50,
         )
-        panels = [Recorder(id=f"p{i}", min_dimensions=Size(2.0, 2.0)) for i in range(3)]
+        panels = [
+            Recorder(id=f"p{i}", min_dimensions=Size(2.0, 2.0),
+                     axes_size=Size(2.0, 2.0), label_pad=0.0)
+            for i in range(3)
+        ]
         for p in panels:
             fig.add_child(p)
         mfig = jeanplot.render(fig)

@@ -27,12 +27,13 @@ def _iter_panels(root: Component) -> Iterator[PlotPanel]:
 def _panel_bbox(
     panel: PlotPanel, root_w: float, root_h: float
 ) -> tuple[float, float, float, float]:
-    """Figure-relative (left, bottom, width, height). mpl is bottom-up; jeanplot top-down."""
-    ox, oy = panel.get_world_origin()
-    w = panel._dimensions.width
-    h = panel._dimensions.height
     assert root_w > 0 and root_h > 0, f"figure has zero size: {root_w}x{root_h}"
-    return (ox / root_w, 1.0 - (oy + h) / root_h, w / root_w, h / root_h)
+    ox, oy = panel.get_world_origin()
+    left, top, right, bottom = panel.axes_insets
+    aw = panel._dimensions.width - left - right
+    ah = panel._dimensions.height - top - bottom
+    assert aw > 0 and ah > 0, f"panel {panel.id} has no room for axes after insets"
+    return ((ox + left) / root_w, 1.0 - (oy + top + ah) / root_h, aw / root_w, ah / root_h)
 
 
 def render_figure(fig: Figure, tui: Any = None) -> Any:
@@ -105,9 +106,10 @@ def _stringify_metadata(md: dict | None) -> dict | None:
     return {str(k): v if isinstance(v, str) else repr(v) for k, v in md.items()}
 
 
-# Matplotlib's SVG writer rejects unknown metadata keys (Dublin-Core allowlist).
-# PDF / PNG are permissive. So we whitelist by-format and fold extras into the
-# Description tag for SVG.
+# Matplotlib metadata allowlists per backend. SVG uses Dublin-Core; PDF/PS use
+# pdf-info dict; PNG accepts a different set. Unknown keys raise UserWarning at
+# save time, so we whitelist by-format and fold extras into a Description/Subject
+# free-text field where one exists.
 _SVG_ALLOWED_KEYS = frozenset(
     {
         "Coverage",
@@ -129,18 +131,38 @@ _SVG_ALLOWED_KEYS = frozenset(
     }
 )
 
+_PDF_ALLOWED_KEYS = frozenset(
+    {"Title", "Author", "Subject", "Keywords", "Creator", "Producer",
+     "CreationDate", "ModDate", "Trapped"}
+)
+
+_PNG_ALLOWED_KEYS = frozenset(
+    {"Title", "Author", "Description", "Copyright", "Creation Time",
+     "Software", "Disclaimer", "Warning", "Source", "Comment"}
+)
+
+_METADATA_ALLOWLISTS = {
+    ".svg": (_SVG_ALLOWED_KEYS, "Description"),
+    ".pdf": (_PDF_ALLOWED_KEYS, "Subject"),
+    ".ps":  (_PDF_ALLOWED_KEYS, "Subject"),
+    ".eps": (_PDF_ALLOWED_KEYS, "Subject"),
+    ".png": (_PNG_ALLOWED_KEYS, "Description"),
+}
+
 
 def _metadata_for(path: Path, md: dict | None) -> dict | None:
     if not md:
         return None
-    if path.suffix.lower() != ".svg":
+    entry = _METADATA_ALLOWLISTS.get(path.suffix.lower())
+    if entry is None:
         return md
-    allowed = {k: v for k, v in md.items() if k in _SVG_ALLOWED_KEYS}
-    extras = {k: v for k, v in md.items() if k not in _SVG_ALLOWED_KEYS}
+    allowed_keys, freetext_field = entry
+    allowed = {k: v for k, v in md.items() if k in allowed_keys}
+    extras = {k: v for k, v in md.items() if k not in allowed_keys}
     if extras:
-        prior = allowed.get("Description", "")
+        prior = allowed.get(freetext_field, "")
         joined = "; ".join(f"{k}={v}" for k, v in extras.items())
-        allowed["Description"] = f"{prior}; {joined}" if prior else joined
+        allowed[freetext_field] = f"{prior}; {joined}" if prior else joined
     return allowed or None
 
 

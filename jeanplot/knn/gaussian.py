@@ -28,8 +28,87 @@ try:
                 for j in range(k):
                     acc += weights[i, j] * inv * y[indices[i, j], o]
                 out[i, o] = acc
+
+    @_nb.njit(cache=True, parallel=True, fastmath=True)
+    def _kernel_weighted_gather_numba(indices, weights, source, out):
+        """Weighted gather: out[i, d] = sum_j weights[i, j] * source[indices[i, j], d].
+
+        Assumes weights are pre-normalized (rows sum to 1, or NaN for invalid
+        rows). Skips j with zero weight to tolerate sentinel indices."""
+        n_grid, k = indices.shape
+        d_out = source.shape[1]
+        for i in _nb.prange(n_grid):
+            if not np.isfinite(weights[i, 0]):
+                for dd in range(d_out):
+                    out[i, dd] = np.nan
+                continue
+            for dd in range(d_out):
+                acc = 0.0
+                for j in range(k):
+                    w = weights[i, j]
+                    if w != 0.0:
+                        acc += w * source[indices[i, j], dd]
+                out[i, dd] = acc
+
+    @_nb.njit(cache=True, parallel=True, fastmath=True)
+    def _kernel_gaussian_normed_numba(distances, indices, sigma, max_dist, min_points, out):
+        """Row-normalized Gaussian weights in one fused pass. Entries beyond
+        max_dist get zero weight (and sentinel index clamped to 0); rows with
+        fewer than min_points valid neighbours get NaN. Uses an explicit
+        distance comparison instead of np.isfinite so detection survives
+        numba's fastmath optimizer (fastmath assumes no NaN/inf)."""
+        n, k = distances.shape
+        inv_sigma = 1.0 / sigma
+        for i in _nb.prange(n):
+            s = 0.0
+            cnt = 0
+            for j in range(k):
+                d = distances[i, j]
+                if d > max_dist:
+                    out[i, j] = 0.0
+                    indices[i, j] = 0
+                else:
+                    cnt += 1
+                    z = np.exp(-0.5 * (d * inv_sigma) ** 2)
+                    out[i, j] = z
+                    s += z
+            if cnt < min_points or s <= 0.0:
+                for j in range(k):
+                    out[i, j] = np.nan
+            else:
+                inv = 1.0 / s
+                for j in range(k):
+                    out[i, j] *= inv
 except ImportError:
     _kernel_mean_numba = None
+    _kernel_weighted_gather_numba = None
+    _kernel_gaussian_normed_numba = None
+
+
+def _gaussian_normed_fast(distances, indices, sigma, max_dist, min_points):
+    distances = np.ascontiguousarray(distances)
+    indices = np.ascontiguousarray(indices)
+    W = np.empty_like(distances)
+    _kernel_gaussian_normed_numba(
+        distances, indices, float(sigma), float(max_dist), int(min_points), W
+    )
+    return indices, W
+
+
+def weighted_gather(indices, weights, source):
+    """Numba-accelerated weighted gather: out[i, d] = sum_j w[i,j] * source[idx[i,j], d].
+
+    Mean (source=y) and centroid (source=pts) share this primitive."""
+    if _kernel_weighted_gather_numba is None:
+        nbr = source[indices]
+        w = np.where(np.isfinite(weights), weights, 0.0)
+        return (w[..., None] * nbr).sum(axis=1)
+    ind = np.ascontiguousarray(indices)
+    w = np.ascontiguousarray(weights)
+    src = np.ascontiguousarray(source)
+    out = np.empty((ind.shape[0], src.shape[1]), dtype=src.dtype)
+    _kernel_weighted_gather_numba(ind, w, src, out)
+    return out
 
 
 def get_gaussian_weighted_knn(
@@ -72,15 +151,16 @@ def get_gaussian_weighted_knn(
             valid_mask = finite_mask & (distances <= max_radius)
         else:
             valid_mask = finite_mask
-        nb_points = valid_mask.sum(axis=1)
     else:
         distances, indices = _query(
             tree, x, k=k, distance_upper_bound=radius, workers=KNN_WORKERS
         )
-        valid_mask = np.isfinite(distances)
-        nb_points = valid_mask.sum(axis=1)
         sigma = (radius / sigma_in_radius) + 0.0
+        if normed_w and densities is None and _kernel_gaussian_normed_numba is not None:
+            return _gaussian_normed_fast(distances, indices, sigma, radius, min_points)
+        valid_mask = np.isfinite(distances)
 
+    nb_points = valid_mask.sum(axis=1)
     too_few = nb_points < min_points
     enough = ~too_few
     invalid_mask = ~valid_mask

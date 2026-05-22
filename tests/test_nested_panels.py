@@ -38,7 +38,8 @@ def test_nested_containers_allocate_axes_at_correct_positions():
         panels = []
         for parent_c, prefix in [(left, "L"), (right, "R")]:
             for j in range(2):
-                p = Recorder(id=f"{prefix}{j}", min_dimensions=Size(2.0, 2.0))
+                p = Recorder(id=f"{prefix}{j}", min_dimensions=Size(2.0, 2.0),
+                             axes_size=Size(2.0, 2.0), label_pad=0.0)
                 parent_c.add_child(p)
                 panels.append(p)
         fig.add_child(left)

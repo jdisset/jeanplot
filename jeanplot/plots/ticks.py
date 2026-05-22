@@ -163,7 +163,9 @@ def setup_transformed_axis_generic(
             ax.yaxis.set_ticks_position(spine_position)
             ax.yaxis.set_label_position(spine_position)
 
-    lims_tr = np.asarray(axis_lims)
+    lims_tr = np.asarray(axis_lims, dtype=float)
+    if not np.all(np.isfinite(lims_tr)):
+        return
     lims_inv = rescaler.inv(np.asarray(lims_tr))
     p10 = powers_of_ten(xmin=lims_inv[0], xmax=lims_inv[1])
     lims_margin = lims_tr + np.array([-1, 1]) * margins * np.diff(lims_tr)

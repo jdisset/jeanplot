@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 import matplotlib
+import pytest
 
 matplotlib.use("Agg")
 
@@ -72,6 +73,41 @@ def test_figure_output_path_override():
         target = Path(td) / "sub" / "elsewhere.png"
         jeanplot.render(fig, output_path=str(target))
         assert target.exists()
+
+
+class LabeledPanel(PlotPanel):
+    def draw(self, ax):
+        ax.plot([0, 1], [0, 1])
+        ax.set_xlabel("xlabel")
+        ax.set_ylabel("ylabel")
+
+
+def test_axes_bbox_inset_by_axes_insets():
+    with tempfile.TemporaryDirectory() as td:
+        panel = LabeledPanel(axes_size=Size(2.5, 2.0), label_pad=0.5, colorbar_pad=0.6)
+        fig = Figure(panel, output_dir=str(td), output_file="out.png", dpi=50)
+        mfig = fig.render()
+        figw, figh = mfig.get_size_inches()
+        bb = panel._axes.get_position()
+        assert bb.x0 == pytest.approx(0.5 / figw, abs=1e-3)
+        assert bb.y0 == pytest.approx(0.5 / figh, abs=1e-3)
+        assert (bb.x1 - bb.x0) * figw == pytest.approx(2.5, abs=1e-3)
+        assert (bb.y1 - bb.y0) * figh == pytest.approx(2.0, abs=1e-3)
+        import matplotlib.pyplot as plt
+        plt.close(mfig)
+
+
+def test_panel_at_figure_edge_leaves_label_pad_margin():
+    with tempfile.TemporaryDirectory() as td:
+        panel = LabeledPanel(axes_size=Size(2.5, 2.0), label_pad=0.5)
+        fig = Figure(panel, output_dir=str(td), output_file="out.png", dpi=50)
+        mfig = fig.render()
+        figw, figh = mfig.get_size_inches()
+        bb = panel._axes.get_position()
+        assert bb.x0 * figw == pytest.approx(0.5, abs=1e-3)
+        assert bb.y0 * figh == pytest.approx(0.5, abs=1e-3)
+        import matplotlib.pyplot as plt
+        plt.close(mfig)
 
 
 def test_figure_overwrite_false_skips_existing():

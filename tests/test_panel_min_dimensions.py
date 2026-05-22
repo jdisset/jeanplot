@@ -72,6 +72,28 @@ def test_figure_auto_sizes_from_children():
     assert fig._dimensions.height >= p1.min_dimensions.height - 1e-6
 
 
+def test_axes_insets_sum_to_min_dimensions():
+    panel = SmoothPanel2D(
+        plot_data=_data_2d(),
+        axes_size=Size(width=2.5, height=2.0),
+        label_pad=0.5,
+        colorbar_pad=0.6,
+        legend_pad=0.0,
+        title=None,
+    )
+    left, top, right, bottom = panel.axes_insets
+    assert (left, top, right, bottom) == (0.5, 0.0, 0.6, 0.5)
+    assert panel.min_dimensions.width == panel.axes_size.width + left + right
+    assert panel.min_dimensions.height == panel.axes_size.height + top + bottom
+
+
+def test_axes_insets_include_title_room_when_titled():
+    untitled = SmoothPanel2D(plot_data=_data_2d(), title=None)
+    titled = SmoothPanel2D(plot_data=_data_2d(), title="hello")
+    assert titled.axes_insets[1] == untitled.axes_insets[1] + 0.3
+    assert titled.min_dimensions.height == untitled.min_dimensions.height + 0.3
+
+
 def test_smooth_panel_1d_has_legend_pad_via_theme():
     load_plot_theme()
     try:

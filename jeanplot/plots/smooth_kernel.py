@@ -17,6 +17,7 @@ from jeanplot.knn import (
     knn_density_chunked,
     make_tree,
 )
+from jeanplot.knn.gaussian import weighted_gather
 from jeanplot.plots.colorbar import colorbar
 from jeanplot.plots.heatmap import heatmap, make_xy_grid
 from jeanplot.plots.ticks import setup_transformed_axis
@@ -105,28 +106,21 @@ def knn_stats(
 
     need_var = {"variance", "std"} & set(stats)
     need_mv = {"mean", "variance", "std"} & set(stats)
-    mean, var = (
-        get_knn_mean_and_variance(
-            xquery,
-            y,
-            iw=iw,
-            k=k,
-            min_points=min_points,
-            compute_variance=bool(need_var),
-            **kw,
+    if need_mv and not need_var and y is not None and y.ndim == 2:
+        mean, var = weighted_gather(iw[0], iw[1], y), None
+    elif need_mv:
+        mean, var = get_knn_mean_and_variance(
+            xquery, y, iw=iw, k=k, min_points=min_points,
+            compute_variance=bool(need_var), **kw,
         )
-        if need_mv
-        else (None, None)
-    )
+    else:
+        mean, var = None, None
 
     def _centroid():
         pts = np.asarray(getattr(tree, "data", None))
         if pts is None:
             raise ValueError("centroid stats require a tree exposing `.data`")
-        nbr = pts[iw[0]]
-        w = np.where(np.isfinite(iw[1]), iw[1], 0.0)
-        wsum = w.sum(axis=1, keepdims=True)
-        return (w[..., None] * nbr).sum(axis=1) / np.maximum(wsum, 1e-12)
+        return weighted_gather(iw[0], iw[1], pts)
 
     def calc(s):
         if s == "iw":

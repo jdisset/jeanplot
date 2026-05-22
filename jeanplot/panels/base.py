@@ -41,15 +41,28 @@ class PlotPanel(Container):
         self._refresh_content_size()
         return self
 
+    @property
+    def axes_insets(self) -> tuple[float, float, float, float]:
+        title_room = 0.3 if self.title else 0.0
+        return (
+            self.label_pad,
+            title_room + self.title_pad,
+            self.colorbar_pad + self.legend_pad,
+            self.label_pad,
+        )
+
     def _refresh_content_size(self) -> None:
         if "min_dimensions" in self._user_set_fields:
             return
-        title_room = 0.3 if self.title else 0.0
-        new_min = Size(
-            width=self.axes_size.width + self.label_pad + self.colorbar_pad + self.legend_pad,
-            height=self.axes_size.height + self.label_pad + title_room + self.title_pad,
+        left, top, right, bottom = self.axes_insets
+        object.__setattr__(
+            self,
+            "min_dimensions",
+            Size(
+                width=self.axes_size.width + left + right,
+                height=self.axes_size.height + top + bottom,
+            ),
         )
-        object.__setattr__(self, "min_dimensions", new_min)
 
     def draw(self, ax: matplotlib.axes.Axes) -> PlotFunctionResult | None:
         if not self.is_drawable:
