@@ -24,9 +24,9 @@ from _parity_lib import PIXEL_TOLERANCE, diff_fraction, load_fixture
 def _render_biocomp_2d(pd, out_path: Path):
     try:
         from biocomp.datautils import DataRescaler
-        from biocomp.plotting.plotting_smooth_2d import smooth_2d
+        from jeanplot.plots.smooth_2d import smooth_2d
     except ImportError as e:
-        pytest.skip(f"biocomp.plotting failed to import: {e}")
+        pytest.skip(f"jeanplot smooth_2d failed to import: {e}")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(4.0, 4.0), dpi=80)
