@@ -203,26 +203,141 @@ def gradient_field_2d(
     output_name: str,
     rescaler,
     ax,
-    space: Literal["raw", "latent"] = "latent",
     xlims=(0, 1),
     ylims=(None, None),
-    arrow_density: int = 25,
-    arrow_scale: float = 1.0,
-    arrow_color: str = "k",
     knn_grid_params: dict | None = None,
+    space: Literal["raw", "latent"] = "latent",
+    quiver_resolution: int = 22,
+    normalize_arrows: bool = False,
+    arrow_scale: float | None = None,
+    arrow_width: float = 0.0025,
+    quiver_props: dict | None = None,
+    color_by: Literal["angle", "magnitude", "deviation_subtraction", "fixed"] = "angle",
+    cmap: str = "twilight_shifted",
+    fixed_color: str = "#222222",
+    zero_dot_threshold: float = 0.05,
+    zero_dot_size: float = 6.0,
+    zero_dot_props: dict | None = None,
 ) -> PlotFunctionResult:
-    knn_grid_params = dict(knn_grid_params or {})
+    import matplotlib as mpl
+
+    if isinstance(ax, list | tuple):
+        ax = ax[0]
+    quiver_props = dict(quiver_props or {})
     xlims, ylims = _resolve_lims(X, xlims, ylims)
     X, Y = _finite_xy(X, Y)
-    field = knn_gradient_grid(X, Y, xlims, ylims, knn_grid_params, space, rescaler)
-    res = knn_grid_params.get("grid_resolution", 200)
-    step = max(1, res // arrow_density)
-    x_q = field.x1_lat[::step]
-    y_q = field.x2_lat[::step]
-    gx_q = field.gx[::step, ::step]
-    gy_q = field.gy[::step, ::step]
-    Xg, Yg = np.meshgrid(x_q, y_q)
-    q = ax.quiver(Xg, Yg, gx_q, gy_q, color=arrow_color, scale=arrow_scale)
-    ax.set_xlim(*xlims)
-    ax.set_ylim(*ylims)
-    return PlotFunctionResult(rendering=q, metadata={})
+    g = knn_gradient_grid(
+        X,
+        Y,
+        xlims,
+        ylims,
+        knn_grid_params=knn_grid_params,
+        space=space,
+        rescaler=rescaler,
+    )
+
+    step_x = max(1, len(g.x1_lat) // quiver_resolution)
+    step_y = max(1, len(g.x2_lat) // quiver_resolution)
+    xs, ys = np.meshgrid(g.x1_lat[::step_x], g.x2_lat[::step_y])
+    u, v = g.gx[::step_y, ::step_x], g.gy[::step_y, ::step_x]
+    mag = np.hypot(u, v)
+    safe = np.where(mag > 0, mag, 1.0)
+    u_n, v_n = u / safe, v / safe
+    u_plot, v_plot = (u_n, v_n) if normalize_arrows else (u, v)
+    finite = np.isfinite(u_plot) & np.isfinite(v_plot) & (mag > 0)
+
+    if color_by == "angle":
+        c = np.arctan2(v_n, u_n)
+    elif color_by == "deviation_subtraction":
+        ref = np.array([-1.0, 1.0]) / np.sqrt(2.0)
+        c = np.degrees(np.arccos(np.clip(u_n * ref[0] + v_n * ref[1], -1.0, 1.0)))
+    elif color_by == "magnitude":
+        c = mag
+    else:
+        c = None
+
+    norm = None
+    if c is not None and finite.any():
+        norm = mpl.colors.Normalize(
+            vmin=float(np.nanmin(c[finite])),
+            vmax=float(np.nanmax(c[finite])),
+        )
+
+    if zero_dot_threshold > 0 and not normalize_arrows and finite.any():
+        ref_mag = float(np.nanmax(mag[finite]))
+        near_zero = (
+            mag < zero_dot_threshold * ref_mag if ref_mag > 0 else np.zeros_like(mag, dtype=bool)
+        )
+        arrow_mask = finite & ~near_zero
+        dot_mask = finite & near_zero
+    else:
+        arrow_mask = finite
+        dot_mask = np.zeros_like(finite)
+
+    q_kwargs = {
+        **dict(
+            angles="xy",
+            scale_units="width",
+            width=arrow_width,
+            headwidth=4.5,
+            headlength=4.5,
+            headaxislength=4.0,
+            pivot="middle",
+            alpha=0.9,
+        ),
+        **quiver_props,
+    }
+    if arrow_scale is not None:
+        q_kwargs["scale"] = arrow_scale
+    elif normalize_arrows:
+        q_kwargs.setdefault("scale", 28.0)
+
+    if c is not None:
+        q = ax.quiver(
+            xs[arrow_mask],
+            ys[arrow_mask],
+            u_plot[arrow_mask],
+            v_plot[arrow_mask],
+            c[arrow_mask],
+            cmap=cmap,
+            norm=norm,
+            **q_kwargs,
+        )
+    else:
+        q = ax.quiver(
+            xs[arrow_mask],
+            ys[arrow_mask],
+            u_plot[arrow_mask],
+            v_plot[arrow_mask],
+            color=fixed_color,
+            **q_kwargs,
+        )
+
+    if dot_mask.any():
+        dot_kwargs = {
+            **dict(s=zero_dot_size, linewidths=0, alpha=0.9, marker="o", zorder=q.zorder),
+            **(zero_dot_props or {}),
+        }
+        if c is not None and "color" not in dot_kwargs and "c" not in dot_kwargs:
+            ax.scatter(
+                xs[dot_mask],
+                ys[dot_mask],
+                c=c[dot_mask],
+                cmap=cmap,
+                norm=norm,
+                **dot_kwargs,
+            )
+        else:
+            dot_kwargs.setdefault("color", fixed_color)
+            ax.scatter(xs[dot_mask], ys[dot_mask], **dot_kwargs)
+
+    return PlotFunctionResult(
+        rendering=q,
+        metadata={
+            "gx": g.gx,
+            "gy": g.gy,
+            "x1_lat": g.x1_lat,
+            "x2_lat": g.x2_lat,
+            "space": space,
+        },
+    )

@@ -280,6 +280,41 @@ def setup_transformed_axis(
     return xaxis_lims, yaxis_lims
 
 
+def setup_symlog_xaxis(ax, xaxis_lims, transform, margins=0.05, **kw):
+    xlims_tr = transform(np.asarray(xaxis_lims))
+    xp10 = powers_of_ten(*xaxis_lims)
+    xlims_margin = xlims_tr + np.array([-1, 1]) * margins * np.diff(xlims_tr)
+    ax.set_xlim(xlims_margin)
+    ax.set_xticks(transform(xp10))
+    ax.xaxis.set_major_formatter(PowerFormatter(xp10, **kw))
+
+
+def setup_symlog_yaxis(ax, yaxis_lims, transform, margins=0.05, **kw):
+    ylims_tr = transform(np.asarray(yaxis_lims))
+    yp10 = powers_of_ten(*yaxis_lims)
+    ylims_margin = ylims_tr + np.array([-1, 1]) * margins * np.diff(ylims_tr)
+    ax.set_ylim(ylims_margin)
+    ax.set_yticks(transform(yp10))
+    ax.yaxis.set_major_formatter(PowerFormatter(yp10, **kw))
+
+
+def setup_symlog_axis(
+    ax,
+    xaxis_lims=None,
+    yaxis_lims=None,
+    *,
+    transform,
+    inv_transform,
+    margins=0.05,
+    **kw,
+):
+    if xaxis_lims is not None:
+        setup_symlog_xaxis(ax, xaxis_lims, transform, margins=margins, **kw)
+    if yaxis_lims is not None:
+        setup_symlog_yaxis(ax, yaxis_lims, transform, margins=margins, **kw)
+    return transform, inv_transform, None, None
+
+
 class ShortScientificFormatter(string.Formatter):
     def format_field(self, value, format_spec, precision=1):
         if format_spec == "m":

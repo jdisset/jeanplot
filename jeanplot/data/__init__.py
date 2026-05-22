@@ -1,6 +1,6 @@
 from jeanplot.data.plot_data import PlotData, LazyPlotData, DataDimensions
 from jeanplot.data.result import PlotFunctionResult
-from jeanplot.data.rescaler import Rescaler, IdentityRescaler
+from jeanplot.data.rescaler import Rescaler, DataRescaler, IdentityRescaler
 from jeanplot.data.grid import (
     GridData,
     extract_grid_data,
@@ -14,6 +14,7 @@ __all__ = [
     "DataDimensions",
     "PlotFunctionResult",
     "Rescaler",
+    "DataRescaler",
     "IdentityRescaler",
     "GridData",
     "extract_grid_data",

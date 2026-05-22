@@ -68,13 +68,35 @@ def knn_stats(
     k=500,
     min_points=20,
     stats: str | list[str] = "iw",
+    weight_by_densities: bool = False,
+    kdensity: int = 50,
+    density_power: float = 0.0,
+    density_floor_q: float | None = 0.01,
+    density_cap_q: float | None = 0.99,
+    use_jax=None,
     **kw,
 ):
+    # use_jax is accepted but ignored — jeanplot's KNN backends are configured
+    # via env vars (BIOCOMP_KNN_BACKEND / JEANPLOT_KNN_BACKEND). Kept for
+    # back-compat with biocomp callers that pass `use_jax=False` explicitly.
+    _ = use_jax
     if isinstance(stats, str):
         stats = [stats]
 
     if tree is None and iw is None:
         tree = build_tree(xquery)
+
+    if weight_by_densities:
+        from jeanplot.knn.density import per_point_knn_density
+
+        X_ref = kw.get("X_ref", None)
+        densities = per_point_knn_density(tree=tree, X_ref=X_ref, kdensity=kdensity)
+        if density_floor_q is not None:
+            kw["density_floor"] = float(np.quantile(densities, density_floor_q))
+        if density_cap_q is not None:
+            kw["density_cap"] = float(np.quantile(densities, density_cap_q))
+        kw["densities"] = densities
+        kw["density_power"] = density_power
 
     if not iw and stats == ["mean"]:
         return get_knn_mean_only(xquery, y, tree=tree, k=k, min_points=min_points, **kw)
@@ -117,6 +139,10 @@ def knn_stats(
                 out = out.copy()
                 out[~valid] = 0.0
             return out
+        if s == "quantile":
+            from jeanplot.knn.jax_kernel import get_knn_quantile
+
+            return get_knn_quantile(xquery, y, iw=iw, k=k, min_points=min_points, **kw)
         if s == "mean":
             return mean
         if s == "variance":

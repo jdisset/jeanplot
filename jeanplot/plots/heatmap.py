@@ -42,6 +42,11 @@ def _smooth_otsu_threshold(values: np.ndarray, bias: float = 0.5) -> float:
     return float(bin_centers[np.argmax(objective)])
 
 
+def _otsu_threshold(values: np.ndarray) -> float:
+    """Vanilla Otsu threshold (alias for ``_smooth_otsu_threshold(values, bias=0.5)``)."""
+    return _smooth_otsu_threshold(values, bias=0.5)
+
+
 def _resolve_symbolic_level(level, finite_values: np.ndarray):
     if not isinstance(level, str) or len(finite_values) == 0:
         return level
