@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Literal, Any
 import numpy as np
-from pydantic import BaseModel, PrivateAttr, Field
+from pydantic import BaseModel, PrivateAttr, Field, model_validator
 
 from jeanplot.core.component import Component
 from jeanplot.core.models import Size, TextMetrics, TextHalo
@@ -22,6 +22,12 @@ class TextSegment(BaseModel):
 
 class Text(Component):
     """text component rendered using native matplotlib text."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _bare_string_is_text(cls, v: Any) -> Any:
+        # `!Text "hello"` -> `!Text { text: "hello" }`.
+        return {"text": v} if isinstance(v, str) else v
 
     text: str = ""
     segments: list[TextSegment] | None = None  # overrides text when set
