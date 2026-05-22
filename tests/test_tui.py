@@ -146,26 +146,46 @@ def test_emit_iterm_encodes_payload(monkeypatch):
     assert out.endswith("\a\n")
 
 
-def test_emit_kitty_encodes_payload(monkeypatch):
+def test_emit_kitty_uses_unicode_placeholders(monkeypatch):
     monkeypatch.delenv("TMUX", raising=False)
     sink = io.StringIO()
-    _emit_kitty(sink, b"x" * 10)
+    _emit_kitty(sink, b"x" * 10, cols=4, rows=3)
     out = sink.getvalue()
-    assert out.startswith("\033_Ga=T,f=100")
-    assert out.endswith("\n")
+    assert "\033_Ga=T,U=1,i=" in out
+    assert "f=100,c=4,r=3,q=2" in out
+    assert "\U0010eeee" in out
+    assert "\033[38;2;" in out and "\033[39m" in out
+    assert out.count("\U0010eeee") == 12
 
 
 def test_emit_kitty_chunks_long_payload(monkeypatch):
     monkeypatch.delenv("TMUX", raising=False)
     sink = io.StringIO()
-    _emit_kitty(sink, b"x" * 8000)
+    _emit_kitty(sink, b"x" * 8000, cols=4, rows=3)
     out = sink.getvalue()
-    frames = out.rstrip("\n").split("\033_G")[1:]
+    transmission = out.split("\033[38;2;")[0]
+    frames = transmission.split("\033_G")[1:]
     assert len(frames) >= 2
-    assert frames[0].startswith("a=T,f=100,m=1;")
+    assert frames[0].startswith("a=T,U=1,i=")
+    assert ",m=1" in frames[0]
     for f in frames[1:-1]:
         assert f.startswith("m=1;")
     assert frames[-1].startswith("m=0;") or frames[-1].startswith("m=1;")
+
+
+def test_emit_kitty_image_id_round_trips_through_fg_color(monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    sink = io.StringIO()
+    _emit_kitty(sink, b"hi", cols=2, rows=1)
+    out = sink.getvalue()
+    import re
+
+    m_ctrl = re.search(r"i=(\d+)", out)
+    m_fg = re.search(r"\033\[38;2;(\d+);(\d+);(\d+)m", out)
+    assert m_ctrl and m_fg
+    image_id = int(m_ctrl.group(1))
+    r, g, b = (int(m_fg.group(i)) for i in (1, 2, 3))
+    assert (r << 16) | (g << 8) | b == image_id
 
 
 def test_preview_protocol_passes_through_tmux(monkeypatch):
@@ -202,10 +222,11 @@ def test_emit_iterm_wraps_inside_tmux(monkeypatch):
 def test_emit_kitty_wraps_each_chunk_inside_tmux(monkeypatch):
     monkeypatch.setenv("TMUX", "/tmp/x,1,0")
     sink = io.StringIO()
-    _emit_kitty(sink, b"x" * 8000)
+    _emit_kitty(sink, b"x" * 8000, cols=4, rows=3)
     out = sink.getvalue()
     assert out.count("\033Ptmux;") >= 2
     assert "\033\033_G" in out
+    assert "\U0010eeee" in out
 
 
 def test_phase_accepts_unknown_name():
