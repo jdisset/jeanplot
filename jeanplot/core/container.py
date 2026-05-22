@@ -1,4 +1,4 @@
-from pydantic import Field, PrivateAttr
+from pydantic import Field, PrivateAttr, model_validator
 from typing import Any, Sequence
 import numpy as np
 import logging
@@ -15,6 +15,13 @@ class Container(Component):
 
     children: list[Component] = Field(default_factory=list)
     layout: LayoutConstraints = Field(default_factory=LayoutConstraints)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _bare_list_is_children(cls, v: Any) -> Any:
+        # Allow `!Container [a, b]` (or any subclass) as sugar for
+        # `!Container { children: [a, b] }`.
+        return {"children": v} if isinstance(v, list) else v
 
     _layout_children_cache: list[Component] = PrivateAttr(default_factory=list)
     _overlay_children_cache: list[Component] = PrivateAttr(default_factory=list)
