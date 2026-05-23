@@ -472,7 +472,7 @@ def _emit_kitty(stream: Any, data: bytes, cols: int = 40, rows: int = 20) -> Non
     stream.flush()
 
 
-_RECEIPT_MIN_DURATION = 0.05
+_RECEIPT_MIN_DURATION = 0.10
 _TREE_MIN_DURATION = 0.10
 _QUEUE_MIN_DURATION = 0.10
 _QUEUE_SIZE = 5
@@ -675,6 +675,9 @@ class RenderTUI:
         for s in slow:
             self._print_span_branch(s, depth=0)
         self._print_aggregate(fast, depth=0)
+        wall = self._wall_time()
+        if wall is not None:
+            self.console.print(f"  [dim]total[/]  [bold]{_fmt_dt(wall)}[/]")
 
     def _partition(self, spans: list[_Span]) -> tuple[list[_Span], list[_Span]]:
         slow = [s for s in spans if s.duration >= _TREE_MIN_DURATION or s.error]
@@ -702,10 +705,23 @@ class RenderTUI:
     def _print_span_summary(self) -> None:
         assert self.console is not None
         tops = [s for s in self._children_of(None) if s.duration >= _RECEIPT_MIN_DURATION]
-        if not tops:
+        wall = self._wall_time()
+        if not tops and wall is None:
             return
-        bits = " [dim]·[/] ".join(f"[dim]{s.name}[/] {_fmt_dt(s.duration)}" for s in tops)
-        self.console.print(f"  {bits}")
+        if tops:
+            bits = " [dim]·[/] ".join(f"[dim]{s.name}[/] {_fmt_dt(s.duration)}" for s in tops)
+            self.console.print(f"  {bits}")
+        if wall is not None:
+            self.console.print(f"  [dim]total[/]  [bold]{_fmt_dt(wall)}[/]")
+
+    def _wall_time(self) -> float | None:
+        if not self._spans:
+            return None
+        start = min(s.started_at for s in self._spans.values())
+        ends = [s.ended_at for s in self._spans.values() if s.ended_at is not None]
+        if not ends:
+            return None
+        return max(ends) - start
 
     def _should_preview(self) -> bool:
         if self.preview == "off" or self._mpl_figure is None:
