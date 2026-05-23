@@ -130,7 +130,7 @@ def test_history_queue_records_recent_completions():
                 pass
         with step("predicting 2/10"):
             _time.sleep(0.11)
-    names = [n for n, _ in tui._history]
+    names = [n for _sid, n, _d in tui._history]
     assert names == ["alpha", "beta", "gamma"]
 
 
@@ -145,7 +145,21 @@ def test_history_queue_caps_at_size():
             with step(f"job-{i}"):
                 _time.sleep(0.11)
     assert len(tui._history) == 5
-    assert [n for n, _ in tui._history] == [f"job-{i}" for i in range(3, 8)]
+    assert [n for _sid, n, _d in tui._history] == [f"job-{i}" for i in range(3, 8)]
+
+
+def test_history_queue_skips_parent_dominated_by_child():
+    import time as _time
+
+    from dracon.progress import step, use_subscriber
+
+    tui = RenderTUI(quiet=True, preview="off")
+    with use_subscriber(tui):
+        with step("construct Thing"):
+            with step("import module"):
+                _time.sleep(0.15)
+    names = [n for _sid, n, _d in tui._history]
+    assert names == ["import module"]
 
 
 def test_tree_aggregates_fast_siblings_under_slow_parent():
