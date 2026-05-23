@@ -18,6 +18,13 @@ from jeanplot.panels.smooth_2d import SmoothPanel2D
 from jeanplot.plots.cube import draw_cube_wireframe
 
 
+def _format_z_label(z_latent: float, rescaler=None, prefix: str = "z=") -> str:
+    if rescaler is None:
+        return f"{prefix}{float(z_latent):.2f}"
+    from jeanplot.plots.ticks import format_powers
+    return f"{prefix}{format_powers(float(rescaler.inv(float(z_latent))), n_decimals=0)}"
+
+
 class CubeView(PlotPanel):
     plot_data: PlotData
     xlims: tuple[float, float] = (0.0, 1.0)
@@ -52,15 +59,42 @@ class CubeView(PlotPanel):
 
 class SmoothPanel3D(PlotPanel):
     plot_data: PlotData
-    zslices: list[float] = Field(default_factory=lambda: [0.05, 0.25, 0.4, 0.55])
     slice_grid: tuple[int, int] = (3, 3)
-    cube_frac_w: float = 0.57
+    slice_zrange: tuple[float, float] = (0.05, 0.55)
+    slice_zvalues: list[float] | None = None
+    zslices: list[float] | None = None
+    stack_zslices: list[float] | None = None
+    stack_zrange: tuple[float, float] = (0.05, 0.55)
+    stack_n_slices: int = 4
+    cube_frac_w: float = 0.45
     xlims: tuple[float | None, float | None] = (0.0, 1.0)
     ylims: tuple[float | None, float | None] = (None, None)
     zlims: tuple[float | None, float | None] = (None, None)
     vlims: tuple[float | None, float | None] = (None, None)
     projection_angle: float = 45.0
     projection_diag_coef: float = 0.5
+    slice_show_colorbar: bool = True
+    slice_title_fontsize: int = 7
+    slice_title_color: str = "#777777"
+    slice_title_pad: float = 3.0
+    cube_show_inner_spines: bool = False
+    cube_show_slice_ticks: bool = False
+    cube_show_front_face_ticks: bool = False
+    cube_smooth_2d_params: dict | None = Field(
+        default_factory=lambda: {
+            "draw_colorbar": False,
+            "draw_xlabel": False,
+            "draw_ylabel": False,
+            "xtitle": "",
+            "ytitle": "",
+            "vtitle": "",
+            "setup_transformed_axis_params": {
+                "setup_xaxis_params": {"show_labels": False},
+                "setup_yaxis_params": {"show_labels": False},
+            },
+        }
+    )
+    cube_colorbar_params: dict | None = None
 
     is_drawable: bool = False
 
@@ -71,51 +105,91 @@ class SmoothPanel3D(PlotPanel):
 
         rows, cols = self.slice_grid
         n_slices = rows * cols
-        if len(self.zslices) >= 2:
-            zs = np.linspace(self.zslices[0], self.zslices[-1], n_slices)
-        else:
-            zs = np.linspace(0.0, 1.0, n_slices)
 
-        cube = CubeView(
+        if self.slice_zvalues is not None:
+            zs = np.asarray(self.slice_zvalues, dtype=float)
+            assert zs.size == n_slices, f"slice_zvalues has {zs.size} entries, expected R*C={n_slices}"
+        else:
+            zs = np.linspace(self.slice_zrange[0], self.slice_zrange[1], n_slices)
+
+        cube_zs: list[float] = (
+            list(self.stack_zslices) if self.stack_zslices is not None
+            else list(self.zslices) if self.zslices is not None
+            else list(np.linspace(self.stack_zrange[0], self.stack_zrange[1], self.stack_n_slices))
+        )
+
+        cube = CubeStackPanel(
             plot_data=self.plot_data,
             rescaler=self.rescaler,
-            xlims=(self.xlims[0] or 0.0, self.xlims[1] or 1.0),
-            ylims=(self.ylims[0] or 0.0, self.ylims[1] or 1.0),
-            zlims=(self.zlims[0] or 0.0, self.zlims[1] or 1.0),
+            zslices=[cube_zs],
+            xlims=self.xlims,
+            ylims=self.ylims,
+            zlims=self.zlims,
+            vlims=self.vlims,
             projection_angle=self.projection_angle,
             projection_diag_coef=self.projection_diag_coef,
             title=self.title,
             title_kwargs=self.title_kwargs,
+            show_inner_spines=self.cube_show_inner_spines,
+            show_slice_ticks=self.cube_show_slice_ticks,
+            show_front_face_ticks=self.cube_show_front_face_ticks,
+            smooth_2d_params=self.cube_smooth_2d_params,
+            colorbar_params=self.cube_colorbar_params,
+            draw_colorbar=False,
         )
 
-        slice_panels = [
-            SmoothPanel2D(
-                plot_data=self.plot_data,
-                rescaler=self.rescaler,
-                zslice=[float(z)],
-                xlims=self.xlims,
-                ylims=self.ylims,
-                vlims=self.vlims,
-                draw_colorbar=False,
-                title=f"z={z:.2f}",
+        slice_panels: list[SmoothPanel2D] = []
+        for i, z in enumerate(zs):
+            r, c = i // cols, i % cols
+            is_left = c == 0
+            is_right = c == cols - 1
+            is_bottom = r == rows - 1
+            title_label = _format_z_label(float(z), self.rescaler)
+            slice_panels.append(
+                SmoothPanel2D(
+                    plot_data=self.plot_data,
+                    rescaler=self.rescaler,
+                    zslice=[float(z)],
+                    xlims=self.xlims,
+                    ylims=self.ylims,
+                    vlims=self.vlims,
+                    draw_colorbar=(self.slice_show_colorbar and is_right),
+                    draw_xlabel=is_bottom,
+                    draw_ylabel=is_left,
+                    title=title_label,
+                    title_kwargs={
+                        "pad": self.slice_title_pad,
+                        "color": self.slice_title_color,
+                        "fontsize": self.slice_title_fontsize,
+                    },
+                )
             )
-            for z in zs
-        ]
         slice_rows = [
             Container(
-                layout=LayoutConstraints(direction="row", gap=4),
+                layout=LayoutConstraints(
+                    direction="row",
+                    gap=0.05,
+                    align_items="stretch",
+                    main_axis_weights=[1.0] * cols,
+                ),
                 children=slice_panels[r * cols : (r + 1) * cols],
             )
             for r in range(rows)
         ]
         slice_grid_container = Container(
-            layout=LayoutConstraints(direction="column", gap=4),
+            layout=LayoutConstraints(
+                direction="column",
+                gap=0.05,
+                align_items="stretch",
+                main_axis_weights=[1.0] * rows,
+            ),
             children=slice_rows,
         )
 
         self.layout = LayoutConstraints(
             direction="row",
-            gap=8,
+            gap=0.1,
+            align_items="stretch",
             main_axis_weights=[self.cube_frac_w, 1.0 - self.cube_frac_w],
         )
         self.add_children([cube, slice_grid_container])
