@@ -7,6 +7,7 @@ import random
 import re
 import shutil
 import sys
+import time
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from typing import Any, Iterator
 from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
+from rich.text import Text
 from rich.tree import Tree
 
 from dracon.progress import StepEnd, StepStart
@@ -488,6 +490,14 @@ def _bar(fraction: float, width: int = _BAR_WIDTH) -> str:
     return "[green]" + "█" * filled + "[/][dim]" + "░" * (width - filled) + "[/]"
 
 
+class _LiveSpinner:
+    def __init__(self, tui: "RenderTUI"):
+        self.tui = tui
+
+    def __rich__(self) -> Spinner:
+        return Spinner("dots", text=Text.from_markup(self.tui._spinner_text()))
+
+
 @dataclass
 class _Span:
     id: int
@@ -511,7 +521,7 @@ class RenderTUI:
     _open: list[int] = field(default_factory=list)
     _mpl_figure: Any = None
     _live: Live | None = None
-    _spinner: Spinner | None = None
+    _last_label: str | None = None
 
     def __post_init__(self):
         if self.console is None:
@@ -592,7 +602,7 @@ class RenderTUI:
 
     def _spinner_text(self) -> str:
         if not self._open:
-            return "  [dim]idle[/]"
+            return self._last_label or ""
         deepest = self._spans[self._open[-1]]
         bar = None
         for sid in reversed(self._open):
@@ -601,11 +611,16 @@ class RenderTUI:
                 label, i, n = parsed
                 bar = f"  [cyan]{label}[/]  {_bar(i / n)}  [dim]{i}/{n}[/]"
                 break
+        elapsed = time.monotonic() - deepest.started_at
+        suffix = f"  [dim]({_fmt_dt(elapsed)})[/]" if elapsed >= 0.5 else ""
         if bar is None:
-            return f"  [cyan]{deepest.name}[/]"
-        if deepest.id == self._open[-1] and _parse_numbered(deepest.name) is not None:
-            return bar
-        return f"{bar}  [dim]· {deepest.name}[/]"
+            text = f"  [cyan]{deepest.name}[/]{suffix}"
+        elif _parse_numbered(deepest.name) is not None:
+            text = f"{bar}{suffix}"
+        else:
+            text = f"{bar}  [dim]· {deepest.name}[/]{suffix}"
+        self._last_label = text if self._open else self._last_label
+        return text
 
     def _tick_spinner(self) -> None:
         if self.silent:
@@ -613,25 +628,23 @@ class RenderTUI:
         assert self.console is not None
         if not self.console.is_terminal:
             return
-        text = self._spinner_text()
+        if not self._open and self._last_label is None:
+            return
+        if self._open:
+            self._last_label = self._spinner_text()
         if self._live is None:
-            self._spinner = Spinner("dots", text=text)
             self._live = Live(
-                self._spinner,
+                _LiveSpinner(self),
                 console=self.console,
                 refresh_per_second=12,
                 transient=True,
             )
             self._live.start()
-        else:
-            assert self._spinner is not None
-            self._spinner.update(text=text)
 
     def _stop_spinner(self) -> None:
         if self._live is not None:
             self._live.stop()
             self._live = None
-            self._spinner = None
 
     def _children_of(self, parent_id: int | None) -> list[_Span]:
         return [self._spans[i] for i in self._order if self._spans[i].parent_id == parent_id]

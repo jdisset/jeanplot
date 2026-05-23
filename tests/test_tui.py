@@ -97,18 +97,19 @@ def test_verbose_emits_component_tree_and_span_tree(fig: Figure):
     assert "render" in out or "more" in out
 
 
-def test_numbered_span_renders_progress_bar(fig: Figure):
+def test_numbered_span_renders_progress_bar():
     from dracon.progress import each, use_subscriber
 
-    console, sink = _string_console()
+    from jeanplot._tui import _bar, _parse_numbered
+
+    console, _ = _string_console()
     tui = RenderTUI(quiet=False, preview="off", console=console)
     with use_subscriber(tui):
         for _ in each("predicting", list(range(4))):
             pass
-    assert tui._spinner_text() == "  [dim]idle[/]"
-    tui._open.append(next(iter(tui._spans)))
-    from jeanplot._tui import _bar, _parse_numbered
-
+    tui._stop_spinner()
+    assert "predicting" in tui._last_label
+    assert "█" in tui._last_label
     assert _parse_numbered("predicting 3/12") == ("predicting", 3, 12)
     assert _parse_numbered("plain name") is None
     assert "█" in _bar(0.5) and "░" in _bar(0.5)
