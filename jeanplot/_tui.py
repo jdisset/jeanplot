@@ -4,6 +4,7 @@ import base64
 import io
 import os
 import random
+import re
 import shutil
 import sys
 from contextvars import ContextVar
@@ -469,8 +470,22 @@ def _emit_kitty(stream: Any, data: bytes, cols: int = 40, rows: int = 20) -> Non
 
 
 _RECEIPT_MIN_DURATION = 0.05
-_TREE_MIN_DURATION = 0.01
+_TREE_MIN_DURATION = 0.10
 _DRAW_PANEL_PREFIX = "panel "
+_NUMBERED_RE = re.compile(r"^(.*) (\d+)/(\d+)$")
+_BAR_WIDTH = 14
+
+
+def _parse_numbered(name: str) -> tuple[str, int, int] | None:
+    m = _NUMBERED_RE.match(name)
+    if m is None:
+        return None
+    return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+def _bar(fraction: float, width: int = _BAR_WIDTH) -> str:
+    filled = int(round(fraction * width))
+    return "[green]" + "█" * filled + "[/][dim]" + "░" * (width - filled) + "[/]"
 
 
 @dataclass
@@ -575,17 +590,30 @@ class RenderTUI:
         if self._should_preview():
             self._inline_preview()
 
+    def _spinner_text(self) -> str:
+        if not self._open:
+            return "  [dim]idle[/]"
+        deepest = self._spans[self._open[-1]]
+        bar = None
+        for sid in reversed(self._open):
+            parsed = _parse_numbered(self._spans[sid].name)
+            if parsed is not None:
+                label, i, n = parsed
+                bar = f"  [cyan]{label}[/]  {_bar(i / n)}  [dim]{i}/{n}[/]"
+                break
+        if bar is None:
+            return f"  [cyan]{deepest.name}[/]"
+        if deepest.id == self._open[-1] and _parse_numbered(deepest.name) is not None:
+            return bar
+        return f"{bar}  [dim]· {deepest.name}[/]"
+
     def _tick_spinner(self) -> None:
         if self.silent:
             return
         assert self.console is not None
         if not self.console.is_terminal:
             return
-        if not self._open:
-            self._stop_spinner()
-            return
-        deepest = self._spans[self._open[-1]]
-        text = f"  [cyan]{deepest.name}[/]"
+        text = self._spinner_text()
         if self._live is None:
             self._spinner = Spinner("dots", text=text)
             self._live = Live(
@@ -609,18 +637,35 @@ class RenderTUI:
         return [self._spans[i] for i in self._order if self._spans[i].parent_id == parent_id]
 
     def _print_span_tree(self) -> None:
-        for span in self._children_of(None):
-            self._print_span_branch(span, depth=0)
+        assert self.console is not None
+        roots = self._children_of(None)
+        slow, fast = self._partition(roots)
+        for s in slow:
+            self._print_span_branch(s, depth=0)
+        self._print_aggregate(fast, depth=0)
+
+    def _partition(self, spans: list[_Span]) -> tuple[list[_Span], list[_Span]]:
+        slow = [s for s in spans if s.duration >= _TREE_MIN_DURATION or s.error]
+        fast = [s for s in spans if not (s.duration >= _TREE_MIN_DURATION or s.error)]
+        return slow, fast
 
     def _print_span_branch(self, span: _Span, depth: int) -> None:
-        if span.duration < _TREE_MIN_DURATION and not span.error:
-            return
         assert self.console is not None
         indent = "  " + "  " * depth
         marker = "[red]✗[/]" if span.error else "[green]·[/]"
         self.console.print(f"{indent}{marker} [dim]{span.name}[/]  {_fmt_dt(span.duration)}")
-        for child in self._children_of(span.id):
-            self._print_span_branch(child, depth + 1)
+        slow, fast = self._partition(self._children_of(span.id))
+        for c in slow:
+            self._print_span_branch(c, depth + 1)
+        self._print_aggregate(fast, depth + 1)
+
+    def _print_aggregate(self, fast: list[_Span], depth: int) -> None:
+        if not fast:
+            return
+        assert self.console is not None
+        total = sum(s.duration for s in fast)
+        indent = "  " + "  " * depth
+        self.console.print(f"{indent}[dim]· … {len(fast)} more  {_fmt_dt(total)}[/]")
 
     def _print_span_summary(self) -> None:
         assert self.console is not None

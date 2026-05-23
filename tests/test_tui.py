@@ -94,7 +94,44 @@ def test_verbose_emits_component_tree_and_span_tree(fig: Figure):
     out = sink.getvalue()
     assert "Figure" in out
     assert "SmoothPanel2D" in out
-    assert "render" in out and "draw" in out and "save" in out
+    assert "render" in out or "more" in out
+
+
+def test_numbered_span_renders_progress_bar(fig: Figure):
+    from dracon.progress import each, use_subscriber
+
+    console, sink = _string_console()
+    tui = RenderTUI(quiet=False, preview="off", console=console)
+    with use_subscriber(tui):
+        for _ in each("predicting", list(range(4))):
+            pass
+    assert tui._spinner_text() == "  [dim]idle[/]"
+    tui._open.append(next(iter(tui._spans)))
+    from jeanplot._tui import _bar, _parse_numbered
+
+    assert _parse_numbered("predicting 3/12") == ("predicting", 3, 12)
+    assert _parse_numbered("plain name") is None
+    assert "█" in _bar(0.5) and "░" in _bar(0.5)
+
+
+def test_tree_aggregates_fast_siblings_under_slow_parent():
+    import time as _time
+
+    from dracon.progress import step, use_subscriber
+
+    console, sink = _string_console()
+    tui = RenderTUI(verbose=True, preview="off", console=console)
+    with use_subscriber(tui):
+        with step("slow parent"):
+            _time.sleep(0.12)
+            for i in range(5):
+                with step(f"trivial {i}"):
+                    pass
+    tui._print_span_tree()
+    out = sink.getvalue()
+    assert "slow parent" in out
+    assert "more" in out
+    assert "trivial 0" not in out
 
 
 def test_spans_captured(fig: Figure):
