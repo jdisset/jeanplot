@@ -8,13 +8,14 @@ import re
 import shutil
 import sys
 import time
+from collections import deque
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
@@ -473,9 +474,17 @@ def _emit_kitty(stream: Any, data: bytes, cols: int = 40, rows: int = 20) -> Non
 
 _RECEIPT_MIN_DURATION = 0.05
 _TREE_MIN_DURATION = 0.10
+_QUEUE_MIN_DURATION = 0.10
+_QUEUE_SIZE = 5
+_QUEUE_GRADIENT = (180, 145, 115, 90, 70)
 _DRAW_PANEL_PREFIX = "panel "
 _NUMBERED_RE = re.compile(r"^(.*) (\d+)/(\d+)$")
 _BAR_WIDTH = 14
+
+
+def _queue_shade(rank_from_bottom: int) -> str:
+    g = _QUEUE_GRADIENT[min(rank_from_bottom, len(_QUEUE_GRADIENT) - 1)]
+    return f"rgb({g},{g},{g})"
 
 
 def _parse_numbered(name: str) -> tuple[str, int, int] | None:
@@ -494,8 +503,15 @@ class _LiveSpinner:
     def __init__(self, tui: "RenderTUI"):
         self.tui = tui
 
-    def __rich__(self) -> Spinner:
-        return Spinner("dots", text=Text.from_markup(self.tui._spinner_text()))
+    def __rich__(self) -> Group:
+        history = list(self.tui._history)
+        items: list[Any] = []
+        for i, (name, dt) in enumerate(history):
+            rank = len(history) - 1 - i
+            shade = _queue_shade(rank)
+            items.append(Text.from_markup(f"  [{shade}]{name}  {_fmt_dt(dt)}[/]"))
+        items.append(Spinner("dots", text=Text.from_markup(self.tui._spinner_text())))
+        return Group(*items)
 
 
 @dataclass
@@ -519,6 +535,7 @@ class RenderTUI:
     _spans: dict[int, _Span] = field(default_factory=dict)
     _order: list[int] = field(default_factory=list)
     _open: list[int] = field(default_factory=list)
+    _history: deque[tuple[str, float]] = field(default_factory=lambda: deque(maxlen=_QUEUE_SIZE))
     _mpl_figure: Any = None
     _live: Live | None = None
     _last_label: str | None = None
@@ -555,6 +572,8 @@ class RenderTUI:
                 span.ended_at = event.ended_at
                 span.duration = event.duration
                 span.error = event.error
+                if event.duration >= _QUEUE_MIN_DURATION and _parse_numbered(span.name) is None:
+                    self._history.append((span.name, event.duration))
             if event.id in self._open:
                 self._open.remove(event.id)
             self._tick_spinner()

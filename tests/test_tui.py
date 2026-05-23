@@ -115,6 +115,39 @@ def test_numbered_span_renders_progress_bar():
     assert "█" in _bar(0.5) and "░" in _bar(0.5)
 
 
+def test_history_queue_records_recent_completions():
+    import time as _time
+
+    from dracon.progress import step, use_subscriber
+
+    tui = RenderTUI(quiet=True, preview="off")
+    with use_subscriber(tui):
+        for label in ["alpha", "beta", "gamma"]:
+            with step(label):
+                _time.sleep(0.11)
+        for _ in range(3):
+            with step("flash"):
+                pass
+        with step("predicting 2/10"):
+            _time.sleep(0.11)
+    names = [n for n, _ in tui._history]
+    assert names == ["alpha", "beta", "gamma"]
+
+
+def test_history_queue_caps_at_size():
+    import time as _time
+
+    from dracon.progress import step, use_subscriber
+
+    tui = RenderTUI(quiet=True, preview="off")
+    with use_subscriber(tui):
+        for i in range(8):
+            with step(f"job-{i}"):
+                _time.sleep(0.11)
+    assert len(tui._history) == 5
+    assert [n for n, _ in tui._history] == [f"job-{i}" for i in range(3, 8)]
+
+
 def test_tree_aggregates_fast_siblings_under_slow_parent():
     import time as _time
 
