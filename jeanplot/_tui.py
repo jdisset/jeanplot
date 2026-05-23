@@ -1,9 +1,4 @@
-"""Terminal UI surface for jeanplot renders.
-
-SSOT for the receipt block, the per-panel spinner, the component tree dump,
-and inline image preview. Off unless the caller (typically the CLI) constructs
-a `RenderTUI` and threads it through `render(..., tui=...)`.
-"""
+"""TUI: live spinner + receipt + inline preview. Acts as a dracon.progress subscriber."""
 
 import base64
 import io
@@ -11,15 +6,18 @@ import os
 import random
 import shutil
 import sys
-import time
+from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.live import Live
+from rich.spinner import Spinner
 from rich.tree import Tree
+
+from dracon.progress import StepEnd, StepStart
 
 _KITTY_DIACRITICS = (
     0x0305,
@@ -470,16 +468,20 @@ def _emit_kitty(stream: Any, data: bytes, cols: int = 40, rows: int = 20) -> Non
     stream.flush()
 
 
-@dataclass
-class PhaseTimings:
-    layout: float = 0.0
-    draw: float = 0.0
-    save: float = 0.0
-    panels: list[tuple[str, float]] = field(default_factory=list)
+_RECEIPT_MIN_DURATION = 0.05
+_TREE_MIN_DURATION = 0.01
+_DRAW_PANEL_PREFIX = "panel "
 
-    @property
-    def total(self) -> float:
-        return self.layout + self.draw + self.save
+
+@dataclass
+class _Span:
+    id: int
+    parent_id: int | None
+    name: str
+    started_at: float
+    ended_at: float | None = None
+    duration: float = 0.0
+    error: str | None = None
 
 
 @dataclass
@@ -488,11 +490,13 @@ class RenderTUI:
     quiet: bool = False
     preview: str = "auto"
     console: Console | None = None
-    timings: PhaseTimings = field(default_factory=PhaseTimings)
+
+    _spans: dict[int, _Span] = field(default_factory=dict)
+    _order: list[int] = field(default_factory=list)
+    _open: list[int] = field(default_factory=list)
     _mpl_figure: Any = None
-    _progress: Progress | None = None
-    _task_id: int | None = None
-    _panel_started_at: float = 0.0
+    _live: Live | None = None
+    _spinner: Spinner | None = None
 
     def __post_init__(self):
         if self.console is None:
@@ -502,61 +506,50 @@ class RenderTUI:
     def silent(self) -> bool:
         return self.quiet
 
+    def configure(self, *, verbose: bool, quiet: bool, preview: str) -> None:
+        self.verbose = verbose
+        self.preview = preview
+        if quiet and not self.quiet:
+            self.quiet = True
+            self._stop_spinner()
+
+    def __call__(self, event: StepStart | StepEnd) -> None:
+        if isinstance(event, StepStart):
+            self._spans[event.id] = _Span(
+                id=event.id,
+                parent_id=event.parent_id,
+                name=event.name,
+                started_at=event.started_at,
+            )
+            self._order.append(event.id)
+            self._open.append(event.id)
+            self._tick_spinner()
+        else:
+            span = self._spans.get(event.id)
+            if span is not None:
+                span.ended_at = event.ended_at
+                span.duration = event.duration
+                span.error = event.error
+            if event.id in self._open:
+                self._open.remove(event.id)
+            self._tick_spinner()
+
     def show_tree(self, figure: Any) -> None:
         if self.silent or not self.verbose:
             return
+        self._stop_spinner()
         assert self.console is not None
         self.console.print(build_tree(figure))
-
-    @contextmanager
-    def phase(self, name: str) -> Iterator[None]:
-        t0 = time.perf_counter()
-        try:
-            yield
-        finally:
-            prior = getattr(self.timings, name, 0.0)
-            setattr(self.timings, name, prior + time.perf_counter() - t0)
-
-    @contextmanager
-    def panels(self, total: int) -> Iterator["RenderTUI"]:
-        assert self.console is not None
-        if self.silent or total == 0 or not self.console.is_terminal:
-            yield self
-            return
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("{task.description}"),
-            TimeElapsedColumn(),
-            console=self.console,
-            transient=True,
-        ) as progress:
-            self._progress = progress
-            self._task_id = progress.add_task("rendering", total=total)
-            try:
-                yield self
-            finally:
-                self._progress = None
-                self._task_id = None
-
-    def panel_start(self, name: str) -> None:
-        self._panel_started_at = time.perf_counter()
-        if self._progress is not None and self._task_id is not None:
-            self._progress.update(self._task_id, description=f"rendering {name}")
-
-    def panel_done(self, name: str) -> None:
-        dt = time.perf_counter() - self._panel_started_at
-        self.timings.panels.append((name, dt))
-        if self._progress is not None and self._task_id is not None:
-            self._progress.advance(self._task_id)
 
     def attach_mpl_figure(self, mfig: Any) -> None:
         self._mpl_figure = mfig
 
     def receipt(self, figure: Any, output_path: Path | None) -> None:
+        self._stop_spinner()
         if self.silent:
             return
         assert self.console is not None
-        n_panels = len(self.timings.panels)
+        n_panels = sum(1 for s in self._spans.values() if s.name.startswith(_DRAW_PANEL_PREFIX))
         w, h = (figure._dimensions.width, figure._dimensions.height)
         head = (
             f"[green]rendered[/] [bold]{type(figure).__name__}[/]"
@@ -575,17 +568,67 @@ class RenderTUI:
             self.console.print(f"  {_path_markup(output_path)}", soft_wrap=True)
         else:
             self.console.print(head)
-        t = self.timings
-        phases = " [dim]·[/] ".join(
-            f"[dim]{n}[/] {_fmt_dt(dt)}"
-            for n, dt in (("layout", t.layout), ("draw", t.draw), ("save", t.save))
-        )
-        self.console.print(f"  {phases}")
-        if self.verbose and t.panels:
-            for name, dt in t.panels:
-                self.console.print(f"    [dim]{name}[/]  {_fmt_dt(dt)}")
+        if self.verbose:
+            self._print_span_tree()
+        else:
+            self._print_span_summary()
         if self._should_preview():
             self._inline_preview()
+
+    def _tick_spinner(self) -> None:
+        if self.silent:
+            return
+        assert self.console is not None
+        if not self.console.is_terminal:
+            return
+        if not self._open:
+            self._stop_spinner()
+            return
+        deepest = self._spans[self._open[-1]]
+        text = f"  [cyan]{deepest.name}[/]"
+        if self._live is None:
+            self._spinner = Spinner("dots", text=text)
+            self._live = Live(
+                self._spinner,
+                console=self.console,
+                refresh_per_second=12,
+                transient=True,
+            )
+            self._live.start()
+        else:
+            assert self._spinner is not None
+            self._spinner.update(text=text)
+
+    def _stop_spinner(self) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+            self._spinner = None
+
+    def _children_of(self, parent_id: int | None) -> list[_Span]:
+        return [self._spans[i] for i in self._order if self._spans[i].parent_id == parent_id]
+
+    def _print_span_tree(self) -> None:
+        for span in self._children_of(None):
+            self._print_span_branch(span, depth=0)
+
+    def _print_span_branch(self, span: _Span, depth: int) -> None:
+        if span.duration < _TREE_MIN_DURATION and not span.error:
+            return
+        assert self.console is not None
+        indent = "  " + "  " * depth
+        marker = "[red]✗[/]" if span.error else "[green]·[/]"
+        self.console.print(f"{indent}{marker} [dim]{span.name}[/]  {_fmt_dt(span.duration)}")
+        for child in self._children_of(span.id):
+            self._print_span_branch(child, depth + 1)
+
+    def _print_span_summary(self) -> None:
+        assert self.console is not None
+        tops = [s for s in self._children_of(None) if s.duration >= _RECEIPT_MIN_DURATION]
+        if not tops:
+            return
+        bits = " [dim]·[/] ".join(f"[dim]{s.name}[/] {_fmt_dt(s.duration)}" for s in tops)
+        self.console.print(f"  {bits}")
 
     def _should_preview(self) -> bool:
         if self.preview == "off" or self._mpl_figure is None:
@@ -608,3 +651,30 @@ class RenderTUI:
         elif proto == "kitty":
             cols, rows = _kitty_preview_cells(self._mpl_figure)
             _emit_kitty(stream, data, cols=cols, rows=rows)
+
+
+_current_tui: ContextVar[RenderTUI | None] = ContextVar("jeanplot_tui", default=None)
+
+
+def current_tui() -> RenderTUI | None:
+    return _current_tui.get()
+
+
+@contextmanager
+def use_tui(tui: RenderTUI | None) -> Iterator[RenderTUI | None]:
+    from dracon.progress import use_subscriber
+
+    if tui is None:
+        with use_subscriber(None):
+            tok = _current_tui.set(None)
+            try:
+                yield None
+            finally:
+                _current_tui.reset(tok)
+        return
+    with use_subscriber(tui):
+        tok = _current_tui.set(tui)
+        try:
+            yield tui
+        finally:
+            _current_tui.reset(tok)

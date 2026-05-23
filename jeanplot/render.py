@@ -30,17 +30,12 @@ def render(
     overwrite: bool = True,
     renderer_kwargs: dict[str, Any] | None = None,
     context_kwargs: dict[str, Any] | None = None,
-    tui: Any = None,
 ):
-    """Render a component tree through a selected backend.
+    from dracon.progress import step
 
-    Returns backend-native output:
-    - `matplotlib`: Axes (or saved figure side-effect when `output` is set)
-    - `svg`: SVG root element, or SVG string when `output` is None and no context provided
-    """
-
-    from jeanplot.panels.figure import Figure
     from jeanplot._figure_render import render_figure, save_figure
+    from jeanplot._tui import current_tui
+    from jeanplot.panels.figure import Figure
 
     if isinstance(component, Figure):
         if output_path is not None:
@@ -49,12 +44,14 @@ def render(
             component.output_dir = str(p.parent) if p.parent != Path("") else "./"
         if not overwrite and component.output_path is not None and component.output_path.exists():
             return None
+        tui = current_tui()
         if tui is not None:
             tui.show_tree(component)
-        mfig = render_figure(component, tui=tui)
-        if tui is not None:
-            tui.attach_mpl_figure(mfig)
-        save_figure(component, mfig, tui=tui)
+        with step("render"):
+            mfig = render_figure(component)
+            if tui is not None:
+                tui.attach_mpl_figure(mfig)
+            save_figure(component, mfig)
         if tui is not None:
             tui.receipt(component, component.output_path)
         return mfig

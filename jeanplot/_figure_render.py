@@ -11,6 +11,8 @@ from typing import Any, Iterator
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+from dracon.progress import step
+
 from jeanplot.core.component import Component
 from jeanplot.core.style import jstyle
 from jeanplot.panels.base import PlotPanel
@@ -36,14 +38,13 @@ def _panel_bbox(
     return ((ox + left) / root_w, 1.0 - (oy + top + ah) / root_h, aw / root_w, ah / root_h)
 
 
-def render_figure(fig: Figure, tui: Any = None) -> Any:
-    """Build the mpl Figure, lay out the tree, allocate axes, draw panels and overlays."""
-    with mpl.rc_context(rc=fig.rc_context):
-        if fig.theme is not None:
-            jstyle.update(fig.theme)
-        jstyle.apply(fig)
+def render_figure(fig: Figure) -> Any:
+    if fig.theme is not None:
+        jstyle.update(fig.theme)
+    jstyle.apply(fig)
 
-        with _phase(tui, "layout"):
+    with mpl.rc_context(rc=fig.rc_context):
+        with step("layout"):
             fig.measure_and_layout(None)
 
         figsize = (fig._dimensions.width, fig._dimensions.height)
@@ -56,18 +57,13 @@ def render_figure(fig: Figure, tui: Any = None) -> Any:
         overlays = [p for p in panels if p.is_overlay]
 
         for panel in drawable:
-            bbox = _panel_bbox(panel, root_w, root_h)
-            panel._axes = mfig.add_axes(bbox)
+            panel._axes = mfig.add_axes(_panel_bbox(panel, root_w, root_h))
 
-        with _phase(tui, "draw"), _panel_progress(tui, len(drawable)):
+        with step("draw"):
             for panel in drawable:
                 assert panel._axes is not None, f"panel {panel.id} has no axes"
-                name = type(panel).__name__
-                if tui is not None:
-                    tui.panel_start(name)
-                res = panel.draw(panel._axes)
-                if tui is not None:
-                    tui.panel_done(name)
+                with step(f"panel {type(panel).__name__}"):
+                    res = panel.draw(panel._axes)
                 if res is not None:
                     if getattr(res, "mappable", None) is not None:
                         panel._mappable = res.mappable
@@ -86,18 +82,6 @@ def render_figure(fig: Figure, tui: Any = None) -> Any:
             mfig.suptitle(fig.subtitle, **fig.subtitle_kwargs)
 
         return mfig
-
-
-def _phase(tui: Any, name: str):
-    from contextlib import nullcontext
-
-    return tui.phase(name) if tui is not None else nullcontext()
-
-
-def _panel_progress(tui: Any, total: int):
-    from contextlib import nullcontext
-
-    return tui.panels(total) if tui is not None else nullcontext()
 
 
 def _stringify_metadata(md: dict | None) -> dict | None:
@@ -132,19 +116,38 @@ _SVG_ALLOWED_KEYS = frozenset(
 )
 
 _PDF_ALLOWED_KEYS = frozenset(
-    {"Title", "Author", "Subject", "Keywords", "Creator", "Producer",
-     "CreationDate", "ModDate", "Trapped"}
+    {
+        "Title",
+        "Author",
+        "Subject",
+        "Keywords",
+        "Creator",
+        "Producer",
+        "CreationDate",
+        "ModDate",
+        "Trapped",
+    }
 )
 
 _PNG_ALLOWED_KEYS = frozenset(
-    {"Title", "Author", "Description", "Copyright", "Creation Time",
-     "Software", "Disclaimer", "Warning", "Source", "Comment"}
+    {
+        "Title",
+        "Author",
+        "Description",
+        "Copyright",
+        "Creation Time",
+        "Software",
+        "Disclaimer",
+        "Warning",
+        "Source",
+        "Comment",
+    }
 )
 
 _METADATA_ALLOWLISTS = {
     ".svg": (_SVG_ALLOWED_KEYS, "Description"),
     ".pdf": (_PDF_ALLOWED_KEYS, "Subject"),
-    ".ps":  (_PDF_ALLOWED_KEYS, "Subject"),
+    ".ps": (_PDF_ALLOWED_KEYS, "Subject"),
     ".eps": (_PDF_ALLOWED_KEYS, "Subject"),
     ".png": (_PNG_ALLOWED_KEYS, "Description"),
 }
@@ -166,13 +169,12 @@ def _metadata_for(path: Path, md: dict | None) -> dict | None:
     return allowed or None
 
 
-def save_figure(fig: Figure, mfig: Any, tui: Any = None) -> Path | None:
-    """Write the figure to disk per `fig.output_path` and `fig.extra_output_paths`."""
+def save_figure(fig: Figure, mfig: Any) -> Path | None:
     out = fig.output_path
     if out is None:
         return None
     md = _stringify_metadata(fig.metadata)
-    with _phase(tui, "save"):
+    with step("save"):
         out.parent.mkdir(parents=True, exist_ok=True)
         mfig.savefig(out, dpi=fig.dpi, metadata=_metadata_for(out, md))
         for extra in fig.extra_output_paths:

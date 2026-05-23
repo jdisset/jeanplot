@@ -1,7 +1,6 @@
 """TUI surface tests: receipt, tree, spinner, inline preview."""
 
 import io
-import time
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +17,7 @@ from jeanplot._tui import (
     _preview_protocol,
     _tmux_wrap,
     build_tree,
+    use_tui,
 )
 
 
@@ -44,20 +44,21 @@ def _string_console() -> tuple[Console, io.StringIO]:
 def test_quiet_is_silent(fig: Figure):
     console, sink = _string_console()
     tui = RenderTUI(quiet=True, preview="off", console=console)
-    fig.render(tui=tui)
+    with use_tui(tui):
+        fig.render()
     assert sink.getvalue() == ""
 
 
 def test_default_receipt(fig: Figure):
     console, sink = _string_console()
     tui = RenderTUI(preview="off", console=console)
-    fig.render(tui=tui)
+    with use_tui(tui):
+        fig.render()
     out = sink.getvalue()
     assert "rendered" in out
     assert "Figure" in out
     assert "2 panels" in out
     assert "t.png" in out
-    assert "layout" in out and "draw" in out and "save" in out
 
 
 def test_long_path_emits_clickable_link_without_breaking(tmp_path: Path):
@@ -75,7 +76,8 @@ def test_long_path_emits_clickable_link_without_breaking(tmp_path: Path):
     )
     sink = io.StringIO()
     narrow = Console(file=sink, force_terminal=True, width=60, highlight=False)
-    fig.render(tui=RenderTUI(preview="off", console=narrow))
+    with use_tui(RenderTUI(preview="off", console=narrow)):
+        fig.render()
     out = sink.getvalue()
     assert out.count("\033]8;id=") == 1
     assert out.count("\033]8;;\033\\") == 1
@@ -84,23 +86,27 @@ def test_long_path_emits_clickable_link_without_breaking(tmp_path: Path):
     assert "\n" not in out[link_open:link_close]
 
 
-def test_verbose_emits_tree_and_panel_breakdown(fig: Figure):
+def test_verbose_emits_component_tree_and_span_tree(fig: Figure):
     console, sink = _string_console()
     tui = RenderTUI(verbose=True, preview="off", console=console)
-    fig.render(tui=tui)
+    with use_tui(tui):
+        fig.render()
     out = sink.getvalue()
     assert "Figure" in out
     assert "SmoothPanel2D" in out
-    assert out.count("SmoothPanel2D") >= 3
+    assert "render" in out and "draw" in out and "save" in out
 
 
-def test_timings_recorded(fig: Figure):
+def test_spans_captured(fig: Figure):
     tui = RenderTUI(quiet=True, preview="off")
-    fig.render(tui=tui)
-    assert tui.timings.draw > 0
-    assert tui.timings.save > 0
-    assert len(tui.timings.panels) == 2
-    assert all(dt > 0 for _, dt in tui.timings.panels)
+    with use_tui(tui):
+        fig.render()
+    names = [s.name for s in tui._spans.values()]
+    assert "render" in names
+    assert "layout" in names
+    assert "draw" in names
+    assert "save" in names
+    assert sum(1 for n in names if n.startswith("panel ")) == 2
 
 
 def test_build_tree_shape(fig: Figure):
@@ -130,15 +136,6 @@ def test_fmt_helpers():
     assert _fmt_bytes(0) == "0 B"
     assert _fmt_bytes(2048).endswith("KB")
     assert _fmt_bytes(5 * 1024 * 1024).endswith("MB")
-
-
-def test_phase_accumulator():
-    tui = RenderTUI(quiet=True, preview="off")
-    with tui.phase("draw"):
-        time.sleep(0.01)
-    with tui.phase("draw"):
-        time.sleep(0.01)
-    assert tui.timings.draw >= 0.02
 
 
 @pytest.mark.parametrize(
@@ -253,21 +250,6 @@ def test_emit_kitty_wraps_each_chunk_inside_tmux(monkeypatch):
     assert "\U0010eeee" in out
 
 
-def test_phase_accepts_unknown_name():
-    tui = RenderTUI(quiet=True, preview="off")
-    with tui.phase("totally_new_phase"):
-        time.sleep(0.005)
-    assert getattr(tui.timings, "totally_new_phase") >= 0.005
-
-
-def test_phase_finally_preserves_exception():
-    tui = RenderTUI(quiet=True, preview="off")
-    with pytest.raises(ValueError, match="user error"):
-        with tui.phase("draw"):
-            raise ValueError("user error")
-    assert tui.timings.draw > 0
-
-
 def test_preview_on_bypasses_tty_check(monkeypatch):
     for k in ("TERM_PROGRAM", "TERM", "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR", "TMUX"):
         monkeypatch.delenv(k, raising=False)
@@ -286,7 +268,8 @@ def test_preview_on_bypasses_tty_check(monkeypatch):
 def test_receipt_survives_missing_output_file(fig: Figure, tmp_path: Path):
     console, sink = _string_console()
     tui = RenderTUI(preview="off", console=console)
-    fig.render(tui=tui)
+    with use_tui(tui):
+        fig.render()
     out_path = Path(fig.output_dir) / fig.output_file  # type: ignore[arg-type]
     out_path.unlink()
     sink.truncate(0)
@@ -306,10 +289,11 @@ def test_render_does_nothing_without_tui(fig: Figure, capsys):
 
 def test_overwrite_false_skips_when_file_exists(fig: Figure):
     console, sink = _string_console()
-    tui = RenderTUI(preview="off", console=console)
-    fig.render(tui=tui)
+    with use_tui(RenderTUI(preview="off", console=console)):
+        fig.render()
     sink.truncate(0)
     sink.seek(0)
     tui2 = RenderTUI(preview="off", console=Console(file=sink, force_terminal=True))
-    fig.render(tui=tui2, overwrite=False)
+    with use_tui(tui2):
+        fig.render(overwrite=False)
     assert sink.getvalue() == ""
