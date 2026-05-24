@@ -356,7 +356,7 @@ def smooth_1d(
 
     xlabel = input_names[0] if xtitle is None else xtitle
     ylabel = output_name if ytitle is None else ytitle
-    if nslices > 1 and show_legend:
+    if show_legend:
         ax.legend(**(legend_kwargs or {}))
     if draw_xlabel and xlabel:
         ax.set_xlabel(xlabel)

@@ -145,6 +145,54 @@ class AdditionVsRemovalOverlay(PlotPanel):
         return PlotFunctionResult(rendering=None, metadata={})
 
 
+class LinearityReferenceOverlay(PlotPanel):
+    is_overlay: bool = True
+    plot_data: None = None
+    X: Any
+    Y: Any
+    slices: Any
+    xlims: tuple[float | None, float | None] = (0.0, 1.0)
+    colors: list[Any] | None = None
+    knn_stats_params: dict = Field(default_factory=dict)
+    head_frac: float = 0.1
+    tail_frac: float = 0.1
+    show_head: bool = True
+    show_tail: bool = True
+    show_chord: bool = True
+    line_props: dict = Field(default_factory=dict)
+    head_props: dict | None = None
+    tail_props: dict | None = None
+    chord_props: dict | None = None
+    res: int = 200
+    n_curve: int = 200
+
+    def draw(self, ax) -> PlotFunctionResult | None:
+        _o.plot_linearity_reference(
+            ax,
+            self.X,
+            self.Y,
+            self.slices,
+            rescaler=self.rescaler,
+            xlims=self.xlims,
+            colors=self.colors,
+            knn_stats_params=self.knn_stats_params,
+            head_frac=self.head_frac,
+            tail_frac=self.tail_frac,
+            show_head=self.show_head,
+            show_tail=self.show_tail,
+            show_chord=self.show_chord,
+            line_props=self.line_props,
+            head_props=self.head_props,
+            tail_props=self.tail_props,
+            chord_props=self.chord_props,
+            res=self.res,
+            n_curve=self.n_curve,
+        )
+        if getattr(self.parent, "show_legend", False):
+            ax.legend(**(getattr(self.parent, "legend_kwargs", None) or {}))
+        return PlotFunctionResult(rendering=None, metadata={})
+
+
 class DensityContourOverlay(PlotPanel):
     is_overlay: bool = True
     plot_data: None = None
@@ -180,4 +228,5 @@ DiagonalPathOverlay.model_rebuild(force=True)
 SliceOverlay.model_rebuild(force=True)
 SliceChordOverlay.model_rebuild(force=True)
 AdditionVsRemovalOverlay.model_rebuild(force=True)
+LinearityReferenceOverlay.model_rebuild(force=True)
 DensityContourOverlay.model_rebuild(force=True)

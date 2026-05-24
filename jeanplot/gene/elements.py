@@ -39,12 +39,17 @@ def make_vertical_anchors(prefix: str = "", style_base: str = "ern") -> list[Anc
 
 
 class AutoLabelMixin:
-    """Mixin that auto-creates labels from part_name."""
-
     _auto_label: ClassVar[bool] = False
-    _label_offset: ClassVar[Offset | None] = None
     _label_prefix: ClassVar[str] = ""
-    _label_font_size: ClassVar[float | None] = None
+    _label_aliases: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def register_label_aliases(cls, mapping: dict[str, str]) -> None:
+        """Add part_name → display-label overrides for this class."""
+        # per-subclass copy: don't mutate an inherited shared dict
+        if "_label_aliases" not in cls.__dict__:
+            cls._label_aliases = dict(cls._label_aliases)
+        cls._label_aliases.update(mapping)
 
     @model_validator(mode="before")
     @classmethod
@@ -60,18 +65,8 @@ class AutoLabelMixin:
             if "_" in part_name and cls.__name__ == "UorfGroup"
             else part_name
         )
-        label_kwargs = {
-            "id": f"{part_id}_label",
-            "text": label_text,
-            "align": "center",
-            "vertical_align": "middle",
-            "is_overlay": True,
-        }
-        if getattr(cls, "_label_offset", None):
-            label_kwargs["offset"] = cls._label_offset
-        if getattr(cls, "_label_font_size", None):
-            label_kwargs["font_size"] = cls._label_font_size
-        values["label"] = Text(**label_kwargs)
+        label_text = cls._label_aliases.get(label_text, label_text)
+        values["label"] = Text(id=f"{part_id}_label", text=label_text, is_overlay=True)
         return values
 
 
@@ -106,15 +101,12 @@ class TranscriptionUnit(Container):
                 text=self.name,
                 style_class=["tu-label"],
                 is_overlay=True,
-                color="#888888",
-                font_size=3.5,
             )
             self.add_child(self.label)
         elif self.label and self.label not in self.children:
             if not any(c.id == self.label.id for c in self.children if c.id and self.label.id):
                 self.add_child(self.label)
 
-        # bold "(×X)" suffix from normalized ratio
         if self.ratio_normalized is not None and self._ratio_label is None:
             ratio_str = _format_ratio_multiplier(self.ratio_normalized)
             if self.label and self.label.segments is None:
@@ -129,10 +121,6 @@ class TranscriptionUnit(Container):
                     text=ratio_str,
                     style_class=["tu-ratio-label"],
                     is_overlay=True,
-                    color="#666666",
-                    font_size=3.5,
-                    font_weight="bold",
-                    offset=Offset(relative=(0.5, 0.0), absolute=(0, -3)),
                 )
                 self.add_child(self._ratio_label)
 
@@ -259,7 +247,12 @@ class Source(Container):
 
 
 class GeneticPart(Container):
-    """Container holding an SVG shape, optional label, and anchors."""
+    """Container holding an SVG shape, optional label, and anchors.
+    Set `_label_fit_to_svg = True` to auto-shrink labels wider than the shape."""
+
+    _label_fit_to_svg: ClassVar[bool] = False
+    _label_fit_factor: ClassVar[float] = 0.9  # label width ≤ factor × svg width
+    _label_fit_min_font_size: ClassVar[float] = 4.0
 
     part_type: str = "unknown_part"
     part_name: str | None = None
@@ -273,6 +266,7 @@ class GeneticPart(Container):
     style: BoxStyle = Field(default_factory=lambda: BoxStyle(padding=(0, 0, 0, 0)))
 
     _svg_shape: SVGElement | None = PrivateAttr(default=None)
+    _label_fit_applied: bool = PrivateAttr(default=False)
 
     def model_post_init(self, *args, **kwargs):
         super().model_post_init(*args, **kwargs)
@@ -317,6 +311,31 @@ class GeneticPart(Container):
             )
             return SVGContent(paths=())
 
+    def measure_and_layout(self, renderer=None):
+        result = super().measure_and_layout(renderer)
+        # auto-shrink an oversized label to fit the SVG; idempotent via _label_fit_applied
+        if (
+            self._label_fit_to_svg
+            and not self._label_fit_applied
+            and self.label is not None
+            and self._svg_shape is not None
+            and renderer is not None
+        ):
+            svg_w = self._svg_shape._natural_dimensions.width
+            lbl_w = self.label._natural_dimensions.width
+            target = svg_w * self._label_fit_factor
+            if svg_w > 0 and lbl_w > target:
+                scale = target / lbl_w
+                new_size = max(self.label.font_size * scale, self._label_fit_min_font_size)
+                if new_size < self.label.font_size:
+                    self.label.font_size = new_size
+                    # mark user-set so the cascade won't reset it next layout pass
+                    self.label._user_set_fields.add("font_size")
+                    self.label._text_metrics_cache = None
+                    self._label_fit_applied = True
+                    result = super().measure_and_layout(renderer)
+        return result
+
     @property
     def svg_content(self) -> str | Path | bytes | SVGContent | None:
         return self._svg_shape.svg_content if self._svg_shape else None
@@ -349,7 +368,6 @@ class ERN(GeneticPart, AutoLabelMixin):
     part_type: str = "ERN"
     _auto_label: ClassVar[bool] = True
     _label_prefix: ClassVar[str] = "ern_"
-    _label_font_size: ClassVar[float] = 5.0
     anchor_points: list[AnchorComponent] = Field(
         default_factory=lambda: make_vertical_anchors("", "ern")
     )
@@ -359,7 +377,7 @@ class FluoMarker(GeneticPart, AutoLabelMixin):
     part_type: str = "fluo_marker"
     _auto_label: ClassVar[bool] = True
     _label_prefix: ClassVar[str] = "fluo_"
-    _label_font_size: ClassVar[float] = 5.0
+    _label_fit_to_svg: ClassVar[bool] = True  # long fluorophore names auto-shrink
 
 
 class Promoter(GeneticPart):
@@ -374,8 +392,6 @@ class UorfGroup(GeneticPart, AutoLabelMixin):
     part_type: str = "uORF_group"
     _auto_label: ClassVar[bool] = True
     _label_prefix: ClassVar[str] = "uorf_"
-    _label_font_size: ClassVar[float] = 5.0
-    _label_offset: ClassVar[Offset] = Offset(relative=(0.5, 1.0), absolute=(0, 1))
 
 
 class ERN5pRecog(GeneticPart):

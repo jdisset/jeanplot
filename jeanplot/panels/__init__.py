@@ -20,6 +20,7 @@ from jeanplot.panels.overlays import (
     SliceOverlay,
     SliceChordOverlay,
     AdditionVsRemovalOverlay,
+    LinearityReferenceOverlay,
     DensityContourOverlay,
 )
 from jeanplot.panels.auto import auto_panel
@@ -48,6 +49,7 @@ __all__ = [
     "SliceOverlay",
     "SliceChordOverlay",
     "AdditionVsRemovalOverlay",
+    "LinearityReferenceOverlay",
     "DensityContourOverlay",
     "auto_panel",
 ]

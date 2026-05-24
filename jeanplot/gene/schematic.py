@@ -17,9 +17,11 @@ class _SourceSummary(NamedTuple):
     source_type: str | None
     ratios: list[float] | None
     marker_ratio: float | None
+    tag_label: str | None
+    axis_tag: str | None
 
 
-_EMPTY_SOURCE = _SourceSummary(None, None, None, None)
+_EMPTY_SOURCE = _SourceSummary(None, None, None, None, None, None)
 
 
 class TranscriptionUnitRow(Container):
@@ -36,6 +38,8 @@ class SourceAnnotation(Container):
     marker_ratio: float | None = None
     ratios: list[float] | None = None
     source_type: Literal["plasmid", "cotx", "mix", "linear"] | None = "cotx"
+    tag_label: str | None = None
+    axis_tag: str | None = None
     style_class: list[str] = Field(default_factory=lambda: ["SourceAnnotation"])
 
     layout: LayoutConstraints = Field(
@@ -46,7 +50,17 @@ class SourceAnnotation(Container):
 
     def model_post_init(self, *args, **kwargs):
         super().model_post_init(*args, **kwargs)
-        if self.marker or self.ratios:
+        if self.axis_tag:
+            from jeanplot.core.text import Text
+            axis = Text(
+                id=f"{self.id}_axis_tag" if self.id else None,
+                text=self.axis_tag,
+                style_class=["axis_tag"],
+                is_overlay=True,
+                parent=self,
+            )
+            self.add_child(axis)
+        if self.marker or self.ratios or self.tag_label:
             from jeanplot.gene.elements import Source
 
             source_proxy = Source(
@@ -55,6 +69,7 @@ class SourceAnnotation(Container):
                 marker=self.marker,
                 marker_ratio=self.marker_ratio,
                 ratios=self.ratios,
+                tag_label=self.tag_label,
                 parent=self,
             )
             jstyle.apply(source_proxy)
@@ -87,6 +102,8 @@ class GeneticSchematic(Container):
 
     def model_post_init(self, *args, **kwargs):
         super().model_post_init(*args, **kwargs)
+        if self.orientation == "row" and "layout" not in self.model_fields_set:
+            self.layout = LayoutConstraints(direction="row", gap=20, align_items="start")
         self._build_layout()
 
     def _build_layout(self):
@@ -123,7 +140,10 @@ class GeneticSchematic(Container):
         for source in self.data.sources:
             for tu_id in source.tu_ids:
                 source_by_tu[tu_id] = source.id
-            source_info[source.id] = _SourceSummary(source.marker, source.source_type, source.ratios, source.marker_ratio)
+            source_info[source.id] = _SourceSummary(
+                source.marker, source.source_type, source.ratios, source.marker_ratio,
+                source.tag_label, source.axis_tag,
+            )
 
         rows_dict: dict[int, list[TranscriptionUnit]] = {}
 
@@ -153,7 +173,7 @@ class GeneticSchematic(Container):
             source_id = source_by_tu.get(first_tu_id)
             info = source_info.get(source_id, _EMPTY_SOURCE) if source_id else _EMPTY_SOURCE
 
-            if self.show_sources and (info.marker or info.ratios):
+            if self.show_sources and (info.marker or info.ratios or info.tag_label or info.axis_tag):
                 wrapper = SourceAnnotation(
                     id=f"source_{source_id}",
                     source_id=source_id,
@@ -161,6 +181,8 @@ class GeneticSchematic(Container):
                     marker_ratio=info.marker_ratio,
                     ratios=info.ratios,
                     source_type=info.source_type or "cotx",
+                    tag_label=info.tag_label,
+                    axis_tag=info.axis_tag,
                     children=tus_in_row,
                 )
                 self.add_child(wrapper)
@@ -175,21 +197,21 @@ class GeneticSchematic(Container):
         from jeanplot.core.svg import LineEndFlat
 
         for interaction in self.data.interactions:
-            source_tu = self._tu_components.get(interaction.source_tu)
-            target_tu = self._tu_components.get(interaction.target_tu)
-            if not source_tu or not target_tu:
+            if not (self._tu_components.get(interaction.source_tu) and self._tu_components.get(interaction.target_tu)):
                 continue
 
-            end_cap = LineEndFlat(stroke_width=1.5, length=8.0) if interaction.interaction_type in ("inhibition", "repression") else None
             curve = SimpleBezierCurve() if self.connection_style == "bezier" else OrthogonalCurve()
-
             conn = Connection(
                 id=f"conn_{interaction.id}",
                 start_component=f"//{interaction.source_tu}/{interaction.source_part}",
                 end_component=f"//{interaction.target_tu}/{interaction.target_part}",
-                curve_type=curve,
-                end_cap=end_cap,
+                style_class=[f"interaction-{interaction.interaction_type}"],
                 is_overlay=True,
+            ).with_defaults(
+                curve_type=curve,
+                end_cap=LineEndFlat(stroke_width=1.5, length=8.0)
+                if interaction.interaction_type in ("inhibition", "repression")
+                else None,
             )
             self._connections.append(conn)
             self.add_child(conn)

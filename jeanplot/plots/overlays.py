@@ -235,3 +235,95 @@ def plot_addition_vs_removal_overlay(
                 y_lat = np.asarray(knn_mean).reshape(-1)
 
             ax.plot(plot_x_lat, y_lat, **kw_base)
+
+
+_HEAD_DEFAULT = {"linestyle": "--", "lw": 0.9}
+_TAIL_DEFAULT = {"linestyle": "-.", "lw": 0.9}
+_CHORD_DEFAULT = {"linestyle": ":", "lw": 1.1}
+
+
+def plot_linearity_reference(
+    ax,
+    X,
+    Y,
+    slices,
+    rescaler=None,
+    xlims=(0.0, 1.0),
+    colors=None,
+    knn_stats_params=None,
+    head_frac=0.1,
+    tail_frac=0.1,
+    show_head=True,
+    show_tail=True,
+    show_chord=True,
+    line_props=None,
+    head_props=None,
+    tail_props=None,
+    chord_props=None,
+    res=200,
+    n_curve=200,
+):
+    X = np.asarray(X)
+    Y = np.asarray(Y)
+    slices = np.asarray(slices)
+    knn_stats_params = dict(knn_stats_params or {})
+    knn_radius = float(knn_stats_params.get("radius", 0.075))
+    knn_stats_params["radius"] = knn_radius
+
+    xmin = float(X[:, 0].min() if xlims[0] is None else xlims[0])
+    xmax = float(X[:, 0].max() if xlims[1] is None else xlims[1])
+    xquery_min = max(xmin, float(X[:, 0].min()) + knn_radius * 0.5)
+    xquery_max = min(xmax, float(X[:, 0].max()) - knn_radius)
+    xq = np.linspace(xquery_min, xquery_max, res)
+
+    tree = build_tree(X)
+    nslices = slices.shape[0] if slices.ndim else 0
+    n_input = X.shape[1]
+
+    base = {"alpha": 0.85, "zorder": 3.0}
+    base.update(line_props or {})
+
+    def _plot_raw(x_raw, y_raw, kw):
+        if rescaler is None:
+            ax.plot(x_raw, y_raw, **kw)
+        else:
+            ax.plot(rescaler.fwd(x_raw), rescaler.fwd(y_raw), **kw)
+
+    for i in range(nslices):
+        query = xq.reshape(-1, 1)
+        if n_input > 1:
+            query = np.hstack([query, np.tile(slices[i], (query.shape[0], 1))])
+        knn_mean = np.asarray(
+            knn_stats(query, Y, tree=tree, stats=["mean"], **knn_stats_params)
+        ).reshape(-1)
+        finite = np.isfinite(knn_mean)
+        if finite.sum() < 2:
+            continue
+        xs, ys = xq[finite], knn_mean[finite]
+        lo, hi = float(xs[0]), float(xs[-1])
+        span = hi - lo
+        if span <= 0:
+            continue
+        xr = xs if rescaler is None else np.asarray(rescaler.inv(xs))
+        yr = ys if rescaler is None else np.asarray(rescaler.inv(ys))
+        ok = np.isfinite(xr) & np.isfinite(yr)
+        if ok.sum() < 2:
+            continue
+        xd_lat = np.linspace(lo, hi, n_curve)
+        xd_raw = xd_lat if rescaler is None else np.asarray(rescaler.inv(xd_lat))
+        kw_color = {"color": colors[i]} if colors is not None else {}
+        xr_ok, yr_ok = xr[ok], yr[ok]
+
+        if show_chord and xr_ok[-1] != xr_ok[0]:
+            slope = (yr_ok[-1] - yr_ok[0]) / (xr_ok[-1] - xr_ok[0])
+            y_chord = yr_ok[0] + slope * (xd_raw - xr_ok[0])
+            _plot_raw(xd_raw, y_chord, {**_CHORD_DEFAULT, **base, **kw_color, **(chord_props or {})})
+        for show, frac, defaults, props, mask in (
+            (show_head, head_frac, _HEAD_DEFAULT, head_props, xs <= lo + (head_frac or 0) * span),
+            (show_tail, tail_frac, _TAIL_DEFAULT, tail_props, xs >= hi - (tail_frac or 0) * span),
+        ):
+            if not (show and frac and frac > 0 and (mask & ok).sum() >= 2):
+                continue
+            sel = mask & ok
+            a, b = np.polyfit(xr[sel], yr[sel], 1)
+            _plot_raw(xd_raw, a * xd_raw + b, {**defaults, **base, **kw_color, **(props or {})})

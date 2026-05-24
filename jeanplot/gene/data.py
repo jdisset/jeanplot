@@ -26,11 +26,11 @@ class PartData(BaseModel):
 
 class TUData(BaseModel):
     id: str
-    name: str
+    name: str | None = None
     parts: list[PartData] = Field(default_factory=list)
     source_id: str | None = None
     position: int = 0
-    ratio_normalized: float | None = None  # min-ratio-normalized-to-one value
+    ratio_normalized: float | None = None
     disabled: bool = False
 
 
@@ -39,9 +39,11 @@ class SourceData(BaseModel):
     name: str | None = None
     source_type: Literal["plasmid", "linear", "mix"] = "plasmid"
     tu_ids: list[str] = Field(default_factory=list)
-    ratios: list[float] | None = None  # per-TU ratios (normalized, smallest=1)
+    ratios: list[float] | None = None
     marker: str | None = None
-    marker_ratio: float | None = None  # marker source's normalized ratio
+    marker_ratio: float | None = None
+    tag_label: str | None = None
+    axis_tag: str | None = None
 
 
 class InteractionData(BaseModel):
