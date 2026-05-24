@@ -132,19 +132,35 @@ def knn_gradient_grid(
     else:
         x1_axis, x2_axis, y_field = x1_lat, x2_lat, y_lat
 
-    nan_mask = ~np.isfinite(y_field)
-    if nan_mask.any() and not nan_mask.all():
-        from scipy.ndimage import distance_transform_edt
-
-        _, (ii, jj) = distance_transform_edt(nan_mask, return_indices=True)
-        y_filled = y_field[ii, jj]
-    else:
-        y_filled = y_field
-
-    gy, gx = np.gradient(y_filled, x2_axis, x1_axis)
-    gy = np.where(nan_mask, np.nan, gy)
-    gx = np.where(nan_mask, np.nan, gx)
+    gy = _nan_aware_gradient(y_field, x2_axis, axis=0)
+    gx = _nan_aware_gradient(y_field, x1_axis, axis=1)
     return KnnGradientField(input_coords, gx, gy, x1_lat, x2_lat, xlims, ylims)
+
+
+def _nan_aware_gradient(y: NdArray, coords: NdArray, axis: int) -> NdArray:
+    """np.gradient with one-sided diffs at internal NaN→finite boundaries."""
+    y = np.asarray(y, float)
+    y_prev = np.roll(y, 1, axis=axis)
+    y_next = np.roll(y, -1, axis=axis)
+    def _idx(i):
+        s = [slice(None)] * y.ndim
+        s[axis] = i
+        return tuple(s)
+    y_prev[_idx(0)] = np.nan
+    y_next[_idx(-1)] = np.nan
+    h = np.diff(np.asarray(coords, float))
+    shape = [1] * y.ndim
+    shape[axis] = -1
+    h_prev = np.concatenate([[np.nan], h]).reshape(shape)
+    h_next = np.concatenate([h, [np.nan]]).reshape(shape)
+    p, n = np.isfinite(y_prev), np.isfinite(y_next)
+    with np.errstate(invalid="ignore"):
+        g = np.where(
+            p & n, (y_next - y_prev) / (h_prev + h_next),
+            np.where(n, (y_next - y) / h_next,
+                     np.where(p, (y - y_prev) / h_prev, np.nan)),
+        )
+    return np.where(np.isfinite(y), g, np.nan)
 
 
 def smooth_grad_magnitude_2d(
@@ -163,6 +179,10 @@ def smooth_grad_magnitude_2d(
     xlims=(0, 1),
     ylims=(None, None),
     vlims=(None, None),
+    draw_xlabel=True,
+    draw_ylabel=True,
+    xaxis_labelpad=None,
+    yaxis_labelpad=None,
     knn_grid_params: dict | None = None,
     heatmap_params: dict | None = None,
     colorbar_params: dict | None = None,
@@ -190,6 +210,10 @@ def smooth_grad_magnitude_2d(
         ytitle=ytitle,
         vtitle=vtitle,
         vlims=vlims,
+        draw_xlabel=draw_xlabel,
+        draw_ylabel=draw_ylabel,
+        xaxis_labelpad=xaxis_labelpad,
+        yaxis_labelpad=yaxis_labelpad,
         heatmap_params=heatmap_params,
         colorbar_params=colorbar_params,
         draw_colorbar=False,

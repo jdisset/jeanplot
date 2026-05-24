@@ -17,7 +17,7 @@ from jeanplot.knn import (
     knn_density_chunked,
     make_tree,
 )
-from jeanplot.knn.gaussian import weighted_gather
+from jeanplot.knn.gaussian import balance_weights_by_density, weighted_gather
 from jeanplot.plots.colorbar import colorbar
 from jeanplot.plots.heatmap import heatmap, make_xy_grid
 from jeanplot.plots.ticks import setup_transformed_axis
@@ -74,6 +74,10 @@ def knn_stats(
     density_power: float = 0.0,
     density_floor_q: float | None = 0.01,
     density_cap_q: float | None = 0.99,
+    rebalance_centroids: float = 0.0,
+    rebalance_centroids_mode: Literal["smooth", "hard"] = "hard",
+    rebalance_values: float = 0.0,
+    rebalance_values_mode: Literal["smooth", "hard"] = "smooth",
     use_jax=None,
     **kw,
 ):
@@ -87,11 +91,14 @@ def knn_stats(
     if tree is None and iw is None:
         tree = build_tree(xquery)
 
-    if weight_by_densities:
+    densities = None
+    if weight_by_densities or rebalance_centroids > 0.0 or rebalance_values > 0.0:
         from jeanplot.knn.density import per_point_knn_density
 
         X_ref = kw.get("X_ref", None)
         densities = per_point_knn_density(tree=tree, X_ref=X_ref, kdensity=kdensity)
+
+    if weight_by_densities:
         if density_floor_q is not None:
             kw["density_floor"] = float(np.quantile(densities, density_floor_q))
         if density_cap_q is not None:
@@ -99,10 +106,22 @@ def knn_stats(
         kw["densities"] = densities
         kw["density_power"] = density_power
 
-    if not iw and stats == ["mean"]:
+    do_rebalance_values = rebalance_values > 0.0 and densities is not None
+    if not iw and stats == ["mean"] and not do_rebalance_values:
         return get_knn_mean_only(xquery, y, tree=tree, k=k, min_points=min_points, **kw)
 
     iw = iw or get_gaussian_weighted_knn(xquery, tree, k=k, min_points=min_points, **kw)
+    indices, weights = iw
+
+    def _rebalanced(strength: float, mode: Literal["smooth", "hard"]):
+        cap = float(np.quantile(densities, 1.0 - strength))
+        return balance_weights_by_density(indices, weights, densities, cap=cap, mode=mode)
+
+    centroid_w = weights
+    if rebalance_centroids > 0.0 and densities is not None:
+        centroid_w = _rebalanced(rebalance_centroids, rebalance_centroids_mode)
+    if do_rebalance_values:
+        iw = (indices, _rebalanced(rebalance_values, rebalance_values_mode))
 
     need_var = {"variance", "std"} & set(stats)
     need_mv = {"mean", "variance", "std"} & set(stats)
@@ -110,8 +129,13 @@ def knn_stats(
         mean, var = weighted_gather(iw[0], iw[1], y), None
     elif need_mv:
         mean, var = get_knn_mean_and_variance(
-            xquery, y, iw=iw, k=k, min_points=min_points,
-            compute_variance=bool(need_var), **kw,
+            xquery,
+            y,
+            iw=iw,
+            k=k,
+            min_points=min_points,
+            compute_variance=bool(need_var),
+            **kw,
         )
     else:
         mean, var = None, None
@@ -120,7 +144,7 @@ def knn_stats(
         pts = np.asarray(getattr(tree, "data", None))
         if pts is None:
             raise ValueError("centroid stats require a tree exposing `.data`")
-        return weighted_gather(iw[0], iw[1], pts)
+        return weighted_gather(indices, centroid_w, pts)
 
     def calc(s):
         if s == "iw":

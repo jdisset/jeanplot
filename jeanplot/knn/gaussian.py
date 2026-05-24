@@ -1,3 +1,5 @@
+from typing import Literal
+
 import numpy as np
 from jeanplot.knn.tree import _query, KNN_WORKERS, KNN_MEAN_CHUNK_SIZE
 
@@ -95,6 +97,29 @@ def _gaussian_normed_fast(distances, indices, sigma, max_dist, min_points):
     return indices, W
 
 
+def balance_weights_by_density(
+    indices: np.ndarray,
+    weights: np.ndarray,
+    densities: np.ndarray,
+    cap: float,
+    mode: Literal["smooth", "hard"] = "smooth",
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Cap each neighbor's weight by local density, re-normalise rows.
+    hard: scale=min(1, cap/density); smooth: scale=cap/(density+cap). Lower cap =
+    stronger rebalancing. NaN sentinel rows preserved."""
+    dens_nei = densities[indices]
+    if mode == "hard":
+        scale = np.minimum(1.0, cap / np.maximum(dens_nei, eps))
+    else:
+        scale = cap / (dens_nei + cap + eps)
+    raw = weights * scale
+    row_sums = raw.sum(axis=1, keepdims=True)
+    out = np.full_like(raw, np.nan)
+    np.divide(raw, row_sums, out=out, where=row_sums > 0)
+    return out
+
+
 def weighted_gather(indices, weights, source):
     """Numba-accelerated weighted gather: out[i, d] = sum_j w[i,j] * source[idx[i,j], d].
 
@@ -152,9 +177,7 @@ def get_gaussian_weighted_knn(
         else:
             valid_mask = finite_mask
     else:
-        distances, indices = _query(
-            tree, x, k=k, distance_upper_bound=radius, workers=KNN_WORKERS
-        )
+        distances, indices = _query(tree, x, k=k, distance_upper_bound=radius, workers=KNN_WORKERS)
         sigma = (radius / sigma_in_radius) + 0.0
         if normed_w and densities is None and _kernel_gaussian_normed_numba is not None:
             return _gaussian_normed_fast(distances, indices, sigma, radius, min_points)
