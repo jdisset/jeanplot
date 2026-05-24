@@ -16,6 +16,7 @@ from jeanplot import (
     make_context_from_types,
     jstyle,
 )
+from jeanplot.core.models import Offset
 
 
 class FillComp(Component):
@@ -23,6 +24,8 @@ class FillComp(Component):
     size: int = 10
     meta: dict = Field(default_factory=dict)
     style: BoxStyle = Field(default_factory=BoxStyle)
+    # non-zero default like Connection.start_offset: a partial theme value must replace it
+    anchor: Offset = Field(default_factory=lambda: Offset(reference_relative=(0.5, 0.5)))
 
 
 def test_explicit_value_wins_over_theme():
@@ -58,6 +61,46 @@ def test_nested_model_per_field_user_wins():
     jstyle.apply(c)
     assert c.style.border_width == 1.0
     assert c.style.background_color in ("green", "#008000ff")
+
+
+def test_typed_model_fill_replaces_field_default():
+    # complete same-type value replaces; field default_factory must not leak through
+    jstyle.update({"FillComp": {"anchor": Offset(relative=(1.0, 0.5))}})
+    c = FillComp(id="c")
+    jstyle.apply(c)
+    assert c.anchor.relative == (1.0, 0.5)
+    assert c.anchor.reference_relative == (0.0, 0.0)
+
+
+def test_typed_model_user_set_deep_fills():
+    # user set the field -> keep their sub-fields, fill only what they omitted
+    jstyle.update({"FillComp": {"anchor": Offset(reference_relative=(0.1, 0.2))}})
+    c = FillComp(id="c", anchor=Offset(relative=(0.3, 0.0)))
+    jstyle.apply(c)
+    assert c.anchor.relative == (0.3, 0.0)
+    assert c.anchor.reference_relative == (0.1, 0.2)
+
+
+def test_typed_model_clobber_replaces(tmp_path):
+    yaml_text = "rules: !cascade:jstyle\n  FillComp:\n    anchor: !Offset { relative: [1, 0.5] }\n"
+    p = tmp_path / "clobber_model.yaml"
+    p.write_text(yaml_text)
+    cfg = dr.load(
+        f"file:{p}",
+        enable_interpolation=True,
+        raw_dict=True,
+        context=make_context_from_types(DEFAULT_TYPES + [FillComp]),
+    )
+    dr.resolve_all_lazy(cfg, except_for={"component"})
+    jstyle.clear()
+    jstyle.update(cfg["rules"])
+    try:
+        c = FillComp(id="c", anchor=Offset(reference_relative=(0.9, 0.9)))
+        jstyle.apply(c)
+        assert c.anchor.relative == (1.0, 0.5)
+        assert c.anchor.reference_relative == (0.0, 0.0)
+    finally:
+        jstyle.clear()
 
 
 def test_descendant_selectors_still_apply_under_fill():

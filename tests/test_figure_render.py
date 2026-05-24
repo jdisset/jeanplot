@@ -82,9 +82,10 @@ class LabeledPanel(PlotPanel):
         ax.set_ylabel("ylabel")
 
 
-def test_axes_bbox_inset_by_axes_insets():
+def test_axes_bbox_inset_by_style_padding():
     with tempfile.TemporaryDirectory() as td:
-        panel = LabeledPanel(axes_size=Size(2.5, 2.0), label_pad=0.5, colorbar_pad=0.6)
+        panel = LabeledPanel(axes_size=Size(2.5, 2.0))
+        panel.style.padding = {"left": 0.5, "right": 0.6, "bottom": 0.5}
         fig = Figure(panel, output_dir=str(td), output_file="out.png", dpi=50)
         mfig = fig.render()
         figw, figh = mfig.get_size_inches()
@@ -97,9 +98,10 @@ def test_axes_bbox_inset_by_axes_insets():
         plt.close(mfig)
 
 
-def test_panel_at_figure_edge_leaves_label_pad_margin():
+def test_panel_at_figure_edge_leaves_padding_margin():
     with tempfile.TemporaryDirectory() as td:
-        panel = LabeledPanel(axes_size=Size(2.5, 2.0), label_pad=0.5)
+        panel = LabeledPanel(axes_size=Size(2.5, 2.0))
+        panel.style.padding = {"left": 0.5, "bottom": 0.5}
         fig = Figure(panel, output_dir=str(td), output_file="out.png", dpi=50)
         mfig = fig.render()
         figw, figh = mfig.get_size_inches()

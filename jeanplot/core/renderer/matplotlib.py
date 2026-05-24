@@ -45,6 +45,8 @@ logger = get_logger(__name__)
 
 
 def _apply_opacity(color: str | tuple | None, opacity: float) -> str | tuple | None:
+    if color == "transparent":
+        return "none"
     if color is None or color == "none" or opacity >= 1.0:
         return color
     try:
@@ -626,7 +628,14 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         if label.clip_connection:
             self._pending_connection_clips.append(label)
 
-    def render_component(self, context: Axes, component: Component, adjust_lims: bool = True):
+    def render_component(
+        self,
+        context: Axes,
+        component: Component,
+        adjust_lims: bool = True,
+        adjust_lims_padding: float = 0.1,
+        adjust_lims_set_aspect: bool = True,
+    ):
         if self._context != context:
             self._log_debug("context changed, updating and reconnecting event")
             self._disconnect_draw_event()
@@ -640,7 +649,11 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         component.measure_and_layout(self)
 
         if adjust_lims and component.parent is None:
-            self._adjust_limits(context, component)
+            self._adjust_limits(
+                context, component,
+                padding=adjust_lims_padding,
+                set_aspect=adjust_lims_set_aspect,
+            )
 
         # synchronous draw to stabilize transforms before rendering;
         # draw_idle() is async and causes transform inconsistencies
@@ -663,7 +676,10 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             cb(context)
         self._refresh_data_units()
 
-    def _adjust_limits(self, context: Axes, root: Component, padding: float = 0.1):
+    def _adjust_limits(
+        self, context: Axes, root: Component,
+        padding: float = 0.1, set_aspect: bool = True,
+    ):
         from jeanplot.core.connector import Connection
 
         bounds = get_recursive_world_bounds(root, exclude_types=(Connection,))
@@ -671,8 +687,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             min_x, min_y, max_x, max_y = bounds
             width = max(max_x - min_x, 1.0)
             height = max(max_y - min_y, 1.0)
-            pad_x = max(width * padding * 1.5, 10.0)
-            pad_y = max(height * padding * 1.5, 10.0)
+            pad_x = width * padding * 1.5
+            pad_y = height * padding * 1.5
             context.set_xlim(min_x - pad_x, max_x + pad_x)
             context.set_ylim(min_y - pad_y, max_y + pad_y)
             self._log_debug(
@@ -682,7 +698,8 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
             context.set_xlim(0, 100)
             context.set_ylim(0, 100)
             self._log_debug("no valid bounds found, setting default limits (0,100).")
-        context.set_aspect("equal", adjustable="box")
+        if set_aspect:
+            context.set_aspect("equal", adjustable="box")
 
     def measure_text(self, text_component: Text) -> Size:
         metrics = measure_text_metrics(

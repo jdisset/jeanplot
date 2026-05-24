@@ -1,0 +1,15 @@
+# jeanplot baseline Figure rcParams. Both plots.yaml and default.yaml pull this
+# in via `@Figure` selector-include so the cascade's `Figure:` rule inherits
+# these regardless of whether the user loads the plot theme or the circuit
+# theme. Per-figure / per-theme overrides still win via `<<{+<}:` deep-merge.
+#
+#   Font chain: Poppins → Roboto → DejaVu Sans (silent fallback if missing).
+#   Spines:     top + right hidden by default (publication-ready look).
+
+Figure:
+  rc_context:
+    axes.spines.top:    false
+    axes.spines.right:  false
+    font.family:        ["Poppins", "Roboto", "DejaVu Sans"]
+    font.sans-serif:    ["Poppins", "Roboto", "DejaVu Sans"]
+    mathtext.fontset:   custom

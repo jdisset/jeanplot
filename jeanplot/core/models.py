@@ -1,5 +1,5 @@
-from typing import Literal, TypeVar, Annotated
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from typing import Iterator, Literal, TypeVar, Annotated
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, model_validator
 import numpy as np
 import logging
 
@@ -29,12 +29,21 @@ NormalizedColor = Annotated[str | None, BeforeValidator(normalize_color)]
 T = TypeVar("T")
 
 
+_UNSET = object()
+
+
 class Size(BaseModel):
     width: float = 0.0
     height: float = 0.0
 
-    def __init__(self, width: float = 0.0, height: float = 0.0, **data):
-        super().__init__(width=width, height=height, **data)
+    def __init__(self, width=_UNSET, height=_UNSET, **data):
+        # sentinel init: positional Size(2.5, 2.0) works, but model_fields_set stays
+        # accurate so the cascade's user-set signal isn't blanket-tripped
+        if width is not _UNSET:
+            data["width"] = width
+        if height is not _UNSET:
+            data["height"] = height
+        super().__init__(**data)
 
     def union(self, other: "Size") -> "Size":
         return Size(width=max(self.width, other.width), height=max(self.height, other.height))
@@ -147,50 +156,101 @@ class BorderStyle(BaseModel):
     corner_radius: float = 0.0
 
 
+class BoxInset(BaseModel):
+    """CSS-style inset (top, right, bottom, left).
+    Coerces 4-tuple/list/dict; iterates + indexes as (top, right, bottom, left).
+    Tracks user-set fields so the jstyle fill cascade respects explicit values."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    top: float = 0.0
+    right: float = 0.0
+    bottom: float = 0.0
+    left: float = 0.0
+
+    _user_set_fields: set[str] = PrivateAttr(default_factory=set)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, v):
+        if isinstance(v, (list, tuple)):
+            assert len(v) == 4, f"BoxInset tuple must have 4 elements, got {len(v)}"
+            return {"top": v[0], "right": v[1], "bottom": v[2], "left": v[3]}
+        return v
+
+    def model_post_init(self, _ctx) -> None:
+        object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
+
+    def __iter__(self) -> Iterator[float]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return iter((self.top, self.right, self.bottom, self.left))
+
+    def __getitem__(self, i: int) -> float:
+        return (self.top, self.right, self.bottom, self.left)[i]
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, (list, tuple)):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return hash(tuple(self))
+
+
 class MarginPadding(BaseModel):
-    margin: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    padding: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    margin: BoxInset = Field(default_factory=BoxInset)
+    padding: BoxInset = Field(default_factory=BoxInset)
+
+    _user_set_fields: set[str] = PrivateAttr(default_factory=set)
+
+    def model_post_init(self, _ctx) -> None:
+        object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
+
+    def __setattr__(self, name, value):
+        # coerce to BoxInset without enabling validate_assignment globally
+        if name in ("margin", "padding") and not isinstance(value, BoxInset):
+            value = BoxInset.model_validate(value)
+        super().__setattr__(name, value)
 
     @property
     def margin_top(self) -> float:
-        return self.margin[0]
+        return self.margin.top
 
     @property
     def margin_right(self) -> float:
-        return self.margin[1]
+        return self.margin.right
 
     @property
     def margin_bottom(self) -> float:
-        return self.margin[2]
+        return self.margin.bottom
 
     @property
     def margin_left(self) -> float:
-        return self.margin[3]
+        return self.margin.left
 
     @property
     def padding_top(self) -> float:
-        return self.padding[0]
+        return self.padding.top
 
     @property
     def padding_right(self) -> float:
-        return self.padding[1]
+        return self.padding.right
 
     @property
     def padding_bottom(self) -> float:
-        return self.padding[2]
+        return self.padding.bottom
 
     @property
     def padding_left(self) -> float:
-        return self.padding[3]
+        return self.padding.left
 
-    def content_inset(self) -> tuple[float, float, float, float]:
+    def content_inset(self) -> BoxInset:
         return self.padding
 
     def content_box(self, bounds: Size) -> tuple[float, float]:
-        inset = self.content_inset()
+        p = self.padding
         return (
-            max(0, bounds.width - inset[1] - inset[3]),
-            max(0, bounds.height - inset[0] - inset[2]),
+            max(0, bounds.width - p.right - p.left),
+            max(0, bounds.height - p.top - p.bottom),
         )
 
 

@@ -70,6 +70,13 @@ class Component(DebugMixin, BaseModel):
     def model_post_init(self, _context):
         object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
 
+    def with_defaults(self, **defaults: Any) -> "Component":
+        for k, v in defaults.items():
+            if k not in self.model_fields_set:
+                setattr(self, k, v)
+                self._user_set_fields.discard(k)
+        return self
+
     @model_validator(mode="after")
     def _validate_dimension_constraints(self):
         if self.min_dimensions.width > self.max_dimensions.width:

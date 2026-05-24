@@ -5,6 +5,7 @@ import numpy as np
 from jeanplot.core.component import Component
 from jeanplot.core.container import Container
 from jeanplot.core.models import (
+    BoxInset,
     Size,
     BoxStyle,
     LayoutConstraints,
@@ -334,17 +335,18 @@ class Table(Container):
 
             if self.border_collapse == "separate" and self.border_spacing > 0:
                 table_row.layout.gap = self.border_spacing
-                table_row.style.padding = (self.border_spacing / 2, 0, self.border_spacing / 2, 0)
+                table_row.style.padding = BoxInset(
+                    top=self.border_spacing / 2, bottom=self.border_spacing / 2
+                )
 
             self.add_child(table_row)
 
         if self.border_collapse == "separate" and self.border_spacing > 0:
-            pad_t, pad_r, pad_b, pad_l = self.style.padding
-            self.style.padding = (
-                pad_t + self.border_spacing / 2,
-                pad_r + self.border_spacing / 2,
-                pad_b + self.border_spacing / 2,
-                pad_l + self.border_spacing / 2,
+            pad = self.style.padding
+            bump = self.border_spacing / 2
+            self.style.padding = BoxInset(
+                top=pad.top + bump, right=pad.right + bump,
+                bottom=pad.bottom + bump, left=pad.left + bump,
             )
             self.layout.gap = self.border_spacing
 

@@ -104,7 +104,9 @@ class _SimpleSelector:
     def _matches_type(self, component: Any) -> bool:
         if not self.type_selector:
             return True
-        return any(cls.__name__ == self.type_selector for cls in inspect.getmro(component.__class__))
+        return any(
+            cls.__name__ == self.type_selector for cls in inspect.getmro(component.__class__)
+        )
 
     def _matches_attributes(self, component: Any) -> bool:
         return all(
@@ -300,8 +302,28 @@ class Selector:
             parent = getattr(parent, "parent", None)
         return True
 
+    def get_inexactness(self, component: Any) -> tuple[int, int]:
+        """(skipped_ancestors, mro_distance) tiebreaker; lower wins, skip first.
+        Snugger chains (immediate parent, exact class) beat looser ones."""
+        mro = self.segments[-1].get_mro_level(component)
+        skip = 0
+        parent = getattr(component, "parent", None)
+        for needed in reversed(self.segments[:-1]):
+            steps = 0
+            while parent is not None and not needed.matches(parent):
+                parent = getattr(parent, "parent", None)
+                steps += 1
+            if parent is None:
+                break
+            skip += steps
+            mro += needed.get_mro_level(parent)
+            parent = getattr(parent, "parent", None)
+        return (skip, mro)
+
     def get_mro_level(self, component: Any) -> int:
-        return self.segments[-1].get_mro_level(component)
+        """Back-compat: scalar collapse of `get_inexactness`. Skip dominates MRO."""
+        skip, mro = self.get_inexactness(component)
+        return skip * 1000 + mro
 
     def __repr__(self):
         return f"<Selector('{self.raw_selector}', spec={self.specificity})>"

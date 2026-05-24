@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import matplotlib as mpl
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 
 from dracon.progress import step
@@ -26,16 +27,49 @@ def _iter_panels(root: Component) -> Iterator[PlotPanel]:
         yield from _iter_panels(c)
 
 
+def _iter_debug_components(root: Component) -> Iterator[Component]:
+    if getattr(root, "debug", False):
+        yield root
+    for c in getattr(root, "children", None) or []:
+        yield from _iter_debug_components(c)
+
+
 def _panel_bbox(
     panel: PlotPanel, root_w: float, root_h: float
 ) -> tuple[float, float, float, float]:
     assert root_w > 0 and root_h > 0, f"figure has zero size: {root_w}x{root_h}"
     ox, oy = panel.get_world_origin()
-    left, top, right, bottom = panel.axes_insets
-    aw = panel._dimensions.width - left - right
-    ah = panel._dimensions.height - top - bottom
+    p = panel.effective_padding
+    aw = panel._dimensions.width - p.left - p.right
+    ah = panel._dimensions.height - p.top - p.bottom
     assert aw > 0 and ah > 0, f"panel {panel.id} has no room for axes after insets"
-    return ((ox + left) / root_w, 1.0 - (oy + top + ah) / root_h, aw / root_w, ah / root_h)
+    return ((ox + p.left) / root_w, 1.0 - (oy + p.top + ah) / root_h, aw / root_w, ah / root_h)
+
+
+def _component_bbox(
+    c: Component, root_w: float, root_h: float
+) -> tuple[float, float, float, float]:
+    ox, oy = c.get_world_origin()
+    w, h = c._dimensions.width, c._dimensions.height
+    return (ox / root_w, 1.0 - (oy + h) / root_h, w / root_w, h / root_h)
+
+
+def _draw_debug_overlays(fig: Figure, mfig: Any, root_w: float, root_h: float) -> None:
+    """outline every component with debug=True (figure path bypasses render_debug)."""
+    def rect(x, y, w, h, ls, lw):
+        mfig.add_artist(mpatches.Rectangle(
+            (x, y), w, h, transform=mfig.transFigure,
+            fill=False, ec="red", ls=ls, lw=lw, zorder=10000,
+        ))
+    for c in _iter_debug_components(fig):
+        if c._dimensions.width <= 0 or c._dimensions.height <= 0:
+            continue
+        x, y, w, h = _component_bbox(c, root_w, root_h)
+        rect(x, y, w, h, "--", 0.5)
+        if isinstance(c, PlotPanel) and c.is_drawable and not c.is_overlay:
+            rect(*_panel_bbox(c, root_w, root_h), ":", 0.4)
+        mfig.text(x, y + h, c.id or type(c).__name__, transform=mfig.transFigure,
+                  fontsize=5, color="red", va="bottom", ha="left", zorder=10001)
 
 
 def render_figure(fig: Figure) -> Any:
@@ -77,6 +111,8 @@ def render_figure(fig: Figure) -> Any:
                 if parent_ax is None:
                     continue
                 overlay.draw(parent_ax)
+
+        _draw_debug_overlays(fig, mfig, root_w, root_h)
 
         if fig.subtitle:
             mfig.suptitle(fig.subtitle, **fig.subtitle_kwargs)
@@ -174,7 +210,7 @@ def save_figure(fig: Figure, mfig: Any) -> Path | None:
     if out is None:
         return None
     md = _stringify_metadata(fig.metadata)
-    with step("save"):
+    with step("save"), mpl.rc_context(rc=fig.rc_context):
         out.parent.mkdir(parents=True, exist_ok=True)
         mfig.savefig(out, dpi=fig.dpi, metadata=_metadata_for(out, md))
         for extra in fig.extra_output_paths:

@@ -21,12 +21,10 @@ def test_min_dimensions_computed_from_content():
     assert md.height >= panel.axes_size.height
 
 
-def test_panel_with_colorbar_has_larger_width():
-    no_cb = SmoothPanel2D(plot_data=_data_2d(), colorbar_pad=0.0)
-    with_cb = SmoothPanel2D(plot_data=_data_2d(), colorbar_pad=0.6)
-    no_cb._refresh_content_size()
-    with_cb._refresh_content_size()
-    assert with_cb.min_dimensions.width > no_cb.min_dimensions.width
+def test_panel_with_padding_has_larger_width():
+    no_pad = SmoothPanel2D(plot_data=_data_2d())
+    with_pad = SmoothPanel2D(plot_data=_data_2d(), style={"padding": {"right": 0.6}})
+    assert with_pad.min_dimensions.width > no_pad.min_dimensions.width
 
 
 def test_explicit_min_dimensions_wins():
@@ -34,28 +32,26 @@ def test_explicit_min_dimensions_wins():
     panel = SmoothPanel2D(plot_data=_data_2d(), min_dimensions=forced)
     assert panel.min_dimensions.width == 5.0
     assert panel.min_dimensions.height == 5.0
-    panel._refresh_content_size()
-    assert panel.min_dimensions.width == 5.0
 
 
-def test_theme_colorbar_pad_reflected_in_min_dims():
+def test_theme_padding_right_reflected_in_min_dims():
     load_plot_theme()
     try:
         panel = SmoothPanel2D(plot_data=_data_2d())
         jstyle.apply(panel)
-        assert panel.colorbar_pad >= 0.5
-        assert panel.min_dimensions.width >= panel.axes_size.width + panel.colorbar_pad
+        assert panel.style.padding.right >= 0.5
+        assert panel.min_dimensions.width >= panel.axes_size.width + panel.style.padding.right
     finally:
         jstyle.clear()
         jeanplot.load_default_theme(force=True)
 
 
-def test_user_colorbar_pad_wins_over_theme():
+def test_user_padding_right_wins_over_theme():
     load_plot_theme()
     try:
-        panel = SmoothPanel2D(plot_data=_data_2d(), colorbar_pad=2.0)
+        panel = SmoothPanel2D(plot_data=_data_2d(), style={"padding": {"right": 2.0}})
         jstyle.apply(panel)
-        assert panel.colorbar_pad == 2.0
+        assert panel.style.padding.right == 2.0
     finally:
         jstyle.clear()
         jeanplot.load_default_theme(force=True)
@@ -72,29 +68,27 @@ def test_figure_auto_sizes_from_children():
     assert fig._dimensions.height >= p1.min_dimensions.height - 1e-6
 
 
-def test_axes_insets_sum_to_min_dimensions():
+def test_padding_sums_to_min_dimensions():
     panel = SmoothPanel2D(
         plot_data=_data_2d(),
         axes_size=Size(width=2.5, height=2.0),
-        label_pad=0.5,
-        colorbar_pad=0.6,
-        legend_pad=0.0,
         title=None,
+        style={"padding": {"left": 0.5, "right": 0.6, "bottom": 0.5, "top": 0.0}},
     )
-    left, top, right, bottom = panel.axes_insets
-    assert (left, top, right, bottom) == (0.5, 0.0, 0.6, 0.5)
-    assert panel.min_dimensions.width == panel.axes_size.width + left + right
-    assert panel.min_dimensions.height == panel.axes_size.height + top + bottom
+    p = panel.effective_padding
+    assert (p.left, p.top, p.right, p.bottom) == (0.5, 0.0, 0.6, 0.5)
+    assert panel.min_dimensions.width == panel.axes_size.width + p.left + p.right
+    assert panel.min_dimensions.height == panel.axes_size.height + p.top + p.bottom
 
 
-def test_axes_insets_include_title_room_when_titled():
+def test_effective_padding_reserves_title_room():
     untitled = SmoothPanel2D(plot_data=_data_2d(), title=None)
     titled = SmoothPanel2D(plot_data=_data_2d(), title="hello")
-    assert titled.axes_insets[1] == untitled.axes_insets[1] + 0.3
+    assert titled.effective_padding.top == untitled.effective_padding.top + 0.3
     assert titled.min_dimensions.height == untitled.min_dimensions.height + 0.3
 
 
-def test_smooth_panel_1d_has_legend_pad_via_theme():
+def test_smooth_panel_1d_has_padding_right_via_theme():
     load_plot_theme()
     try:
         rng = np.random.default_rng(0)
@@ -103,7 +97,7 @@ def test_smooth_panel_1d_has_legend_pad_via_theme():
         pd = PlotData(xval=x, yval=y, input_names=["a"], output_name="o")
         panel = SmoothPanel1D(plot_data=pd)
         jstyle.apply(panel)
-        assert panel.legend_pad > 0.0
+        assert panel.style.padding.right > 0.0
     finally:
         jstyle.clear()
         jeanplot.load_default_theme(force=True)

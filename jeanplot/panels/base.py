@@ -3,17 +3,20 @@ from pydantic import Field, PrivateAttr, model_validator
 import matplotlib.axes
 
 from jeanplot.core.container import Container
-from jeanplot.core.models import Size
+from jeanplot.core.models import BoxInset, Size
 from jeanplot.data import PlotData, LazyPlotData, PlotFunctionResult
 
 
-class PlotPanel(Container):
-    """Base for any component that claims a matplotlib Axes from its laid-out bbox.
+TITLE_ROOM = 0.3  # min top inset auto-reserved for ax.set_title()
 
-    Subclasses implement `draw(self, ax)` and may override `render_txt()` for
-    terminal output. Container layout, jstyle, and overlay mechanics are inherited.
-    Numbers in min/max/dimensions are interpreted as inches by the figure renderer.
-    """
+
+class PlotPanel(Container):
+    """Container whose content is a matplotlib Axes.
+
+    `axes_size` sets the min data-area size; `style.padding` is the inset between
+    the panel bbox and the axes. Everything else (margin, dimensions, border,
+    layout, offset) behaves like any Container. The axes fills `bbox - padding`;
+    `min_dimensions` derives from `axes_size + padding` unless set explicitly."""
 
     plot_data: PlotData | LazyPlotData | None = None
     rescaler: Any | None = None
@@ -25,44 +28,33 @@ class PlotPanel(Container):
     is_drawable: bool = True
 
     axes_size: Size = Field(default_factory=lambda: Size(width=2.5, height=2.0))
-    label_pad: float = 0.5
-    title_pad: float = 0.0
-    colorbar_pad: float = 0.0
-    legend_pad: float = 0.0
 
     _axes: matplotlib.axes.Axes | None = PrivateAttr(default=None)
     _mappable: Any | None = PrivateAttr(default=None)
     _last_metadata: dict = PrivateAttr(default_factory=dict)
 
+    @property
+    def effective_padding(self) -> BoxInset:
+        """style.padding, with top bumped to TITLE_ROOM when there's a title."""
+        p = self.safe_style.padding
+        if self.title and p.top < TITLE_ROOM:
+            return BoxInset(top=TITLE_ROOM, right=p.right, bottom=p.bottom, left=p.left)
+        return p
+
     @model_validator(mode="after")
     def _compute_min_dimensions(self):
-        if "min_dimensions" in self.model_fields_set:
-            return self
-        self._refresh_content_size()
-        return self
-
-    @property
-    def axes_insets(self) -> tuple[float, float, float, float]:
-        title_room = 0.3 if self.title else 0.0
-        return (
-            self.label_pad,
-            title_room + self.title_pad,
-            self.colorbar_pad + self.legend_pad,
-            self.label_pad,
-        )
-
-    def _refresh_content_size(self) -> None:
         if "min_dimensions" in self._user_set_fields:
-            return
-        left, top, right, bottom = self.axes_insets
+            return self
+        p = self.effective_padding
         object.__setattr__(
             self,
             "min_dimensions",
             Size(
-                width=self.axes_size.width + left + right,
-                height=self.axes_size.height + top + bottom,
+                width=self.axes_size.width + p.left + p.right,
+                height=self.axes_size.height + p.top + p.bottom,
             ),
         )
+        return self
 
     def draw(self, ax: matplotlib.axes.Axes) -> PlotFunctionResult | None:
         if not self.is_drawable:

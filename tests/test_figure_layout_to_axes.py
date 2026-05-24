@@ -27,7 +27,7 @@ def test_row_layout_allocates_axes_at_expected_fractions():
         )
         panels = [
             Recorder(id=f"p{i}", min_dimensions=Size(2.0, 2.0),
-                     axes_size=Size(2.0, 2.0), label_pad=0.0)
+                     axes_size=Size(2.0, 2.0))
             for i in range(3)
         ]
         for p in panels:

@@ -14,12 +14,20 @@ from jeanplot.core.style_dialect import parse_jstyle_rule_tree, parse_selector_k
 logger = logging.getLogger(__name__)
 
 
+def _jstyle_specificity(sel, component):
+    """CSS specificity, then tiebreakers preferring snug selector chains:
+    fewer ancestor-skips first, then closer MRO matches. Both negated so the
+    sort (ascending) puts more-specific rules later."""
+    skip, mro = sel.get_inexactness(component)
+    return (tuple(sel.specificity), -skip, -mro)
+
+
 _JSTYLE_STRATEGY = CascadeStrategy(
     name="jstyle",
     input_params=("component",),
     parse=parse_selector_key,
     matches=lambda sel, component: sel.matches(component),
-    specificity=lambda sel: tuple(sel.specificity),
+    specificity=_jstyle_specificity,
 )
 register_cascade_strategy(_JSTYLE_STRATEGY)
 
@@ -28,7 +36,7 @@ _JSTYLE_FILL_STRATEGY = CascadeStrategy(
     input_params=("component",),
     parse=parse_selector_key,
     matches=lambda sel, component: sel.matches(component),
-    specificity=lambda sel: tuple(sel.specificity),
+    specificity=_jstyle_specificity,
 )
 register_cascade_strategy(_JSTYLE_FILL_STRATEGY)
 
@@ -168,6 +176,21 @@ class JStyle:
                     target_obj = current_intermediate
 
             current_val = getattr(target_obj, attr_to_set, None)
+
+            if (
+                isinstance(current_val, BaseModel)
+                and isinstance(value, BaseModel)
+                and isinstance(value, type(current_val))
+            ):
+                # full same-type instance = complete value: replace, don't merge the
+                # field default_factory back in. fill mode still keeps user-set fields.
+                user_set = getattr(target_obj, "_user_set_fields", None) or set()
+                if clobber or attr_to_set not in user_set:
+                    setattr(target_obj, attr_to_set, value)
+                    return
+                # exclude_defaults, not exclude_unset: Size always fills model_fields_set
+                value = value.model_dump(exclude_defaults=True)
+
             final_value = value
 
             if not clobber:
@@ -176,7 +199,7 @@ class JStyle:
                     if isinstance(current_val, dict) and isinstance(value, dict):
                         fill_field_set_by_user = True
                     elif isinstance(current_val, BaseModel) and isinstance(value, dict):
-                        pass  # fall through to per-key model merge under fill semantics
+                        pass
                     else:
                         return
 
@@ -273,6 +296,10 @@ class JStyle:
         current_dict = current_model.model_dump()
         merged_update_dict = {}
 
+        # Read user-set fields from `_user_set_fields` (Component, MarginPadding,
+        # BoxInset opt in via model_post_init) or fall back to `model_fields_set`.
+        # Models like Size now use sentinel-init so `model_fields_set` only
+        # contains fields the caller actually passed.
         user_set_nested = (
             getattr(current_model, "_user_set_fields", None) or current_model.model_fields_set
         )
@@ -312,6 +339,11 @@ class JStyle:
             else:
                 merged_update_dict[key] = update_val
 
+        # Identity-preserve: no actual updates means the input is unchanged. Avoid
+        # constructing a new instance so `panel.rescaler is explicit` holds for the
+        # user-set / theme-no-op case.
+        if not merged_update_dict:
+            return current_model
         return current_model.model_copy(update=merged_update_dict)
 
     def _merge_sequence(
