@@ -6,7 +6,7 @@ A 2D plotting library that thinks the way matplotlib should have. Build a tree o
 pip install -e .
 ```
 
-That's it. No conda, no extras, no platform shenanigans.
+That's it. No conda, no extras, no platform shenanigans. Bundled fonts ship in the wheel.
 
 ## What you actually do with it
 
@@ -16,7 +16,7 @@ Three things, in order of how often you'll touch them:
 2. **Render it.** `from jeanplot import render; render(root)`. Matplotlib by default, SVG if you ask for it. You get back an axes or a string.
 3. **Style it.** `jstyle` is the global style engine. Selectors look like `Container[style_class=card]`. Properties look like `style.background_color`. You either feed it a dict or a `!cascade:jstyle` YAML document, your call.
 
-Hello world is the same shape as every other example in the repo:
+Hello world:
 
 ```python
 from jeanplot import Container, Text, Size, LayoutConstraints, render
@@ -33,51 +33,64 @@ root = Container(
 render(root, output="hello.png")
 ```
 
-Open `example/hello_jeanplot.py` for a slightly nicer version with colors.
+`example/hello_jeanplot.py` is a slightly nicer version with colors.
+
+## Dracon: the config engine
+
+jeanplot leans hard on [dracon](../dracon) for YAML. Every component is a Pydantic model, every model is a dracon tag, every CLI flag comes from a `!set_default` in a YAML file. Worth knowing the basics:
+
+- **Tag form is the default invocation.** `!Figure { panels: [...] }` constructs a `Figure`. `!SmoothPanel2D { data: ... }` constructs a panel. Mapping bodies are kwargs.
+- **`!include`** pulls in another file: `!include pkg:jeanplot:resources/themes/plots.yaml`, `!include file:./data.json`, `!include path@subkey` to extract a subtree.
+- **`<<:` / `<<{+<}:`** merge mappings (deep-merge for the second form). Use these for overrides, not `${dict}`.
+- **`${...}`** interpolates values: arithmetic, references via `${@/path}`, lazy resolution.
+- **`!set_default`** declares a variable with a default; mapping body (`{default: X, help: "...", short: -X}`) makes it a CLI flag.
+- **`!fn`** is a parametric template. `!cascade:jstyle` is the predicate-keyed style mapping dialect.
+
+If you've never seen dracon: scroll its README first. The rest of this doc assumes you can read a YAML config and recognize tags.
 
 ## The tree
 
 Everything is a `Component`. The interesting subclasses live in `jeanplot/core/`:
 
-- `Container` — has children, has a `layout`, optionally has a `style` (`BoxStyle` — background, border, corner radius, padding). This is 90% of what you'll instantiate.
-- `Text` — a string with a font size, weight, color. Has two sizing modes: `data` (scales with the world) and `points` (fixed visual size). Pick `points` if you want labels that stay legible at any zoom.
-- `Connection` — line from one component's anchor to another's. Pass `start_component="id1", end_component="id2"`. Curve type can be straight, orthogonal (right angles with rounded corners), or bezier. Endpoints can be arrows or circles.
-- `Table` — rows of cells with column widths in `%` or pixels. Behaves how you'd expect.
-- `SVGElement` / `LineEnd*` — for when you want to draw something matplotlib doesn't have a primitive for.
+- `Container` — children + `layout` + optional `style` (`BoxStyle`: background, border, corner radius, padding, shadow). 90% of what you'll instantiate.
+- `Text` — string with font size, weight, color, optional `TextHalo`. Two sizing modes: `data` (scales with the world) and `points` (fixed visual size). Use `points` for labels that should stay legible at any zoom.
+- `Connection` — line between two components by id (`start_component="a", end_component="b"`). Curves: `StraightCurve`, `OrthogonalCurve` (right angles + rounded corners), `SimpleBezierCurve`. Endpoints: `LineEndFlat`, `LineEndCircle`, `LineEndArrow`. Endpoint position defaults to the component centre (`Offset(reference_relative=(0.5, 0.5))`); override with `start_offset` / `end_offset`. If both endpoints have `AnchorComponent` children (gene parts do), `auto_route=True` picks the best anchor pair automatically — set `auto_route=False` to use raw centres.
+- `ConnectionLabel` — text attached to a `Connection` at a fractional position along its path.
+- `Table` — `TableRow`s of `TableCell`s, column widths in `%` or pixels.
+- `SVGElement` — drop arbitrary SVG into the tree for things matplotlib doesn't have a primitive for.
+- `Overlay` / `AnchorComponent` — base classes for things that read from a parent (overlays for panels, anchors for connections).
 
-Components have an `id`, optional `style_class` (list of strings, like CSS classes), and a parent set automatically when you add them as children. The parent link is what makes `jstyle` selectors work — "Text inside a Container that has class=warning" actually parses.
+Components have an `id`, optional `style_class` (list of strings — CSS-class-ish), and a parent that's set when you add them as children. The parent link is what makes `jstyle` descendant selectors work.
 
 ## Layout
 
-`LayoutConstraints` is the boring part you can mostly ignore. The fields that matter:
+`LayoutConstraints` is the boring part you can mostly ignore. Fields that matter:
 
-- `direction`: `row` or `column`.
+- `direction`: `row` or `column` (alias: `col`).
 - `gap`: pixels between children.
 - `align_items`: `start`, `center`, `end`, `stretch`.
 - `justify_content`: same vocabulary.
-- `main_axis_weights` / `cross_axis_weights`: optional list of floats for flex-style distribution when there's leftover space. If you don't set them, children get their `min_dimensions` and the rest is padding.
+- `main_axis_weights` / `cross_axis_weights`: optional float list for flex-style distribution.
 
-You can write a `LayoutConstraints` long-form mapping or use the string DSL:
+Long-form mapping or string DSL — either works:
 
 ```python
-Container(layout="row gap=8 align=center", children=[...])
+Container(layout="row gap=8 align=center justify=center", children=[...])
 ```
 
 ```yaml
 layout: "row gap=1.0 align=stretch"
 ```
 
-`align` aliases `align_items`, `justify` aliases `justify_content`, `col` aliases `column`. Mapping and string forms are interchangeable.
+`align` aliases `align_items`, `justify` aliases `justify_content`. Mapping and string are interchangeable everywhere.
 
-Children can be passed positionally: `Container(panel1, panel2, ...)` is sugar for `Container(children=[panel1, panel2, ...])`. Works for `Figure` too, in Python and via the YAML `!Container [a, b]` bare-list shortcut.
+Children can be positional: `Container(panel1, panel2, ...)` is sugar for `children=[...]`. Works in YAML too: `!Container [a, b]` is shorthand for `!Container { children: [a, b] }`.
 
-Nest containers to get grids. There's no grid primitive because you don't need one — `Container(layout="column", children=[Container(layout="row", ...), ...])` is a grid.
-
-Absolute positioning works too: pass `offset=Offset(absolute=(x, y))` on a child and the layout pass leaves it alone.
+Nest containers to get grids — there's no grid primitive because you don't need one. Absolute positioning: pass `offset=Offset(absolute=(x, y))` on a child and layout leaves it alone.
 
 ## jstyle
 
-`jstyle` is CSS minus the inheritance soup. You write rules keyed by selectors and the engine matches them against components during layout.
+`jstyle` is CSS minus the inheritance soup. You write rules keyed by selectors; the engine matches them against components during layout.
 
 ```python
 from jeanplot import jstyle
@@ -96,17 +109,67 @@ jstyle.update({
 ```
 
 Selectors support:
-- type name (`Container`)
+- type name (`Container`, inherits — a `Component` rule applies to `Container`)
 - id (`[id=foo]`)
 - class (`[style_class=card]`)
+- attribute (`[attr=value]`, `[attr~=value]`, `[attr*=value]`, `[attr^=value]`, `[attr$=value]`)
 - descendant (space-separated, like CSS)
-- combinations of all of the above
 
-Specificity is the usual `(ids, classes, types)` tuple. More specific wins. Newer wins ties.
+Specificity is the standard `(ids, classes, types)` tuple, ordered `id > class/attr > type > *`. More specific wins; newer wins ties.
 
-`jstyle.update(value)` defaults to **fill** semantics — cascade values fill fields the user didn't set, explicit values on a component always win. Under the hood every `Component` snapshots `model_fields_set` at construction (`_user_set_fields`), and the cascade walks around those. To get the old clobber-everything behaviour, write the cascade as `!cascade:jstyle` (legacy) instead of `!cascade:jstyle_fill` (the default). `jstyle.clear()` exists if you want a true reset.
+`jstyle.update(...)` defaults to **fill** semantics — cascade values fill fields the user didn't explicitly set on the component, explicit values always win. Every `Component` snapshots `model_fields_set` at construction (`_user_set_fields`), and the cascade walks around those. For the old clobber-everything behaviour, use `!cascade:jstyle` instead of `!cascade:jstyle_fill` (which is the default). `jstyle.clear()` for a true reset.
 
-YAML form looks like:
+### Nested rules
+
+Rules nested inside another rule's mapping apply to descendants — same shape as CSS descendant selectors, but indented:
+
+```python
+jstyle.update({
+    "Container[id=sidebar]": {
+        "style.background_color": "#eee",
+        "Text": {                       # Text inside #sidebar only
+            "color": "black",
+            "font_size": 9,
+        },
+        "Button[style_class=primary]": {  # Button.primary inside #sidebar
+            "style.background_color": "blue",
+        },
+    },
+})
+```
+
+This flattens internally to descendant selectors (`Container[id=sidebar] Text`, etc.) — same as writing them flat, just nicer to read when rules cluster.
+
+### Partial updates
+
+Nested Pydantic models can be updated partially — drop just the keys you want to change:
+
+```python
+jstyle.update({
+    "Container[id=main]": {
+        "style": {                       # partial BoxStyle update
+            "background_color": "lightblue",
+            "padding": [20, None, 20, None],  # only top/bottom; None preserves
+        },
+    },
+})
+```
+
+Lists and tuples take `None` at each index to mean "leave that one alone".
+
+### Scoped overrides
+
+`jstyle` is a context manager. Use it to apply temporary rules in tests, notebooks, or one-off blocks — the old cascade restores on exit:
+
+```python
+with jstyle({"Text": {"color": "red"}}):
+    render(root, output="red_text.png")
+# back to whatever was set before
+```
+
+`jstyle(...)` is sugar for `jstyle.context(...)`. Both work.
+
+YAML form:
 
 ```yaml
 rules: !cascade:jstyle_fill
@@ -117,13 +180,13 @@ rules: !cascade:jstyle_fill
     font_size: 12
 ```
 
-Load with `load_default_theme()` (which reads `pkg:jeanplot:resources/themes/default.yaml`) or with `jstyle.update(your_cascade_symbol)`. Layer themes by including one cascade as the base of another — explicit fields keep winning at every level.
+Bootstrap the default theme with `load_default_theme()` (reads `pkg:jeanplot:resources/themes/default.yaml`), or load plot defaults on top with `load_plot_theme(*extra_files)`. In production code, prefer setting `Figure.theme` so the theme travels with the figure.
+
+For deeper docs on selectors and the cascade engine, see `docs/STYLE_GUIDE.md`.
 
 ## Gene schematics
 
-`jeanplot/gene/` is the original reason this library exists. It draws genetic circuits: promoters, terminators, ERNs, fluorophore markers, transcription units, sources (plasmids), and the interactions between them.
-
-The shape is:
+`jeanplot/gene/` is the original reason this library exists. It draws genetic circuits: promoters, terminators, ERNs (with optional 5p recognition sites), fluorophore markers, uORF groups, transcription units, sources (plasmids), and the interactions between them.
 
 ```python
 from jeanplot.gene import GeneticSchematic, CircuitData
@@ -133,9 +196,9 @@ schematic = GeneticSchematic.from_circuit(circuit)
 render(schematic, output="circuit.svg")
 ```
 
-Parts are SVG-backed (`Promoter`, `Terminator`, `ERN`, `ERN5pRecog`, `FluoMarker`, `UorfGroup`). They lay out left-to-right inside a `TranscriptionUnit` row. Sources sit on the side. Interactions are `Connection` objects with arrow heads.
+Parts are SVG-backed (`Promoter`, `Terminator`, `ERN`, `ERN5pRecog`, `FluoMarker`, `UorfGroup`); raw assets live in `resources/parts/`. They lay out left-to-right inside a `TranscriptionUnit` row. Sources sit on the side. Interactions become `Connection`s with arrow heads.
 
-The grammar of "what valid circuit shapes look like" lives in `jeanplot/gene/data.py` as plain Pydantic models. The visual layer just reads those.
+The grammar of "what valid circuit shapes look like" lives in `jeanplot/gene/data.py` as plain Pydantic models — `CircuitData`, `TUData`, `PartData`, `SourceData`, `InteractionData`. The visual layer just reads those.
 
 ## Scientific plots (the panels layer)
 
@@ -150,31 +213,49 @@ y = np.random.randn(500)
 z = np.exp(-(x**2 + y**2))
 
 data = PlotData(
-    X=np.column_stack([x, y]),
-    Y=z[:, None],
-    column_names=["x", "y"],
-    output_names=["z"],
+    xval=np.column_stack([x, y]),  # (n_samples, n_inputs)
+    yval=z[:, None],                # (n_samples, n_outputs)
+    input_names=["x", "y"],
+    output_name="z",
 )
 fig = Figure(panels=[SmoothPanel2D(data=data)])
 render(fig, output="smooth.png")
 ```
 
-`Figure` is a `Container` with figure-level fields (`dpi`, `output_file`, `rc_context`, `theme`). It doesn't orchestrate anything — the renderer walks the tree, sees `PlotPanel` leaves, and allocates a real matplotlib axes for each one. Layout decides where the axes go.
+`Figure` is a `Container` with figure-level fields (`output_dir`, `output_file`, `dpi`, `rc_context`, `theme`, `metadata`, `subtitle`, `svg_id_prefix`). It doesn't orchestrate anything — the renderer walks the tree, sees `PlotPanel` leaves, and allocates a real matplotlib axes for each one. Layout decides where the axes go.
 
-Panels you get out of the box (`jeanplot.panels`):
+### Panels
 
-- `SmoothPanel1D` / `SmoothPanel2D` / `SmoothPanel3D` — KNN-smoothed surfaces. 3D is a cube view + a grid of slices.
-- `MVPPanel` — measured-vs-predicted scatter with an identity line.
-- `DensityPanel` — kernel density estimate.
-- `ScatterPanel` — what it says.
-- `ViolinPanel`, `ParticlePanel`, `StackedPolyPanel` — distribution viz.
-- `AsciiHeatmapPanel` — terminal-friendly output (Kitty graphics if you have it, else `░▒▓█` characters).
-- `Colorbar` — overlay child that reads `parent._mappable`. Drop it next to any panel that produces one.
-- `AutoPanel` — dispatches to the right Smooth* panel based on `data.X.shape[1]`.
+`jeanplot.panels` ships:
+
+- **`SmoothPanel1D`** — KNN-smoothed 1D curve with optional std band, legend.
+- **`SmoothPanel2D`** — KNN-smoothed 2D surface, heatmap + optional contours.
+- **`SmoothGradMagnitudePanel2D`** — gradient magnitude of a 2D smooth.
+- **`GradientFieldPanel2D`** — quiver of the 2D gradient.
+- **`SmoothPanel3D`** + **`CubeView`** + **`CubeStackPanel`** — 3D surfaces. Cube view (rotatable wireframe with face heatmaps) plus a grid of 2D slices.
+- **`MVPPanel`** — measured-vs-predicted scatter with an identity line.
+- **`DensityPanel1D`** — kernel density estimate.
+- **`GridHistogramPanel`** / **`ScatterPanel3D`** — gridded histograms and 3D scatter.
+- **`ViolinPanel`**, **`ParticlePanel`**, **`StackedPolyPanel`** — distribution viz.
+- **`AsciiHeatmapPanel`** — terminal-friendly output (Kitty graphics if your terminal supports it, else `░▒▓█` characters).
+- **`Colorbar`** — overlay child that reads `parent._mappable`. Drop it next to any panel that produces one.
+- **`AutoPanel`** (via `auto_panel(...)`) — dispatches to the right Smooth* panel based on `data.X.shape[1]`.
 
 Each panel is a typed Pydantic model with the parameters you'd pass to the equivalent matplotlib call as fields. No `**kwargs`. The fields you don't set come from the theme (cascade-fill).
 
-The matplotlib drawing code itself lives in `jeanplot/plots/` as plain functions. Panels are thin shells that call those. If you want to draw without the panel system, just call the function.
+The matplotlib drawing code itself lives in `jeanplot/plots/` as plain functions. Panels are thin shells that call them. If you want to draw without the panel system, just call the function.
+
+### Overlays
+
+Panels accept overlay children that draw on the same axes after the panel itself. `jeanplot.panels.overlays` ships:
+
+- **`IdentityLineOverlay`** — y=x reference line. Default for MVP.
+- **`DiagonalPathOverlay`** — a diagonal path through the 2D plot region.
+- **`SliceOverlay`** / **`SliceChordOverlay`** — show a 2D slice plane / chord on a 3D plot.
+- **`AdditionVsRemovalOverlay`** — directional decomposition viz.
+- **`DensityContourOverlay`** — density contours over a scatter or smooth.
+
+Roll your own by subclassing `Overlay` and implementing `draw(self, ax, parent)`.
 
 ### `@panel_from` — function = panel
 
@@ -190,6 +271,18 @@ def my_plot(plot_data, *, ax, vlims=(0.0, 1.0), cmap="viridis"):
 
 The decorator introspects the signature and synthesises a `PlotPanel` subclass with `vlims` and `cmap` as Pydantic fields, registers it as the YAML tag `!my_plot`, and keeps the original function callable as a plain function (REPL-friendly). Panels also expose cascade-fillable `axes_size`, `colorbar_pad`, `legend_pad`, and a computed `min_dimensions` so the figure auto-sizes around its contents.
 
+**Plot data routing.** Four parameter names are special: `X`, `Y`, `input_names`, `output_name`. If your function declares any of them, they're not exposed as Panel fields — they're auto-wired from `self.plot_data.{x, y, input_names, output_name}` at draw time. So you write:
+
+```python
+@panel_from
+def my_plot(X, Y, *, ax, cmap="viridis"):
+    ax.scatter(X[:, 0], X[:, 1], c=Y[:, 0], cmap=cmap)
+```
+
+…and the panel only exposes `cmap` (and inherits `plot_data`, `axes_size`, etc. from `PlotPanel`). Use `plot_data_keys=(...)` on the decorator to customise the routed set. `ax` and `self` are skipped. `*args` / `**kwargs` are rejected — name your params.
+
+Parameter names that collide with `PlotPanel`'s own fields (`title`, `xlims`, `vlims`, ...) are *inherited* rather than re-declared; your function gets the panel's value at draw time.
+
 ## Themes
 
 `pkg:jeanplot:resources/themes/plots.yaml` is the single source of truth for plot defaults. Selector-keyed, same dialect as `jstyle`:
@@ -204,23 +297,138 @@ rules: !cascade:jstyle
       labelsize: 8
 ```
 
-You override per-panel-class, per-instance (via id), or per-class (via `style_class`). Specificity does the right thing. The bio palettes (a couple hundred named colors I use for fluorophores) ship in `resources/colors/bio_palettes.yaml`; they're loaded at import time.
+Override per-panel-class, per-instance (via id), or per-class (via `style_class`). Specificity does the right thing.
 
-There's also `themes/paper.yaml` for a print-friendly preset and `themes/rcparams.yaml` for matplotlib rcParams.
+Themes that ship in `resources/themes/`:
+- `default.yaml` — base styles for everything (gene schematics, containers, text).
+- `plots.yaml` — defaults for plot panels (xlims/ylims/vlims, cmap, smoothing params).
+- `paper.yaml` — print-friendly preset.
+- `rcparams.yaml` — pure matplotlib rcParams.
+- `_figure_defaults.yaml` — shared baseline `Figure.rc_context` (font chain Poppins → Roboto → DejaVu Sans, spines off on top + right). Both `plots.yaml` and `default.yaml` pull this in via `@Figure` selector-include so the cascade inherits it regardless of which theme you load.
+
+Bio palettes (~hundreds of named colors I use for fluorophores) ship in `resources/colors/bio_palettes.yaml` and load at import time.
+
+### Layering recipe
+
+Themes compose via `!cascade:jstyle` and `<<{+<}:` deep-merge. A typical stack:
+
+```yaml
+# my_theme.yaml
+rules: !cascade:jstyle
+  <<{+<}: !include pkg:jeanplot:resources/themes/default.yaml@rules
+  <<{+<}: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  # your overrides on top — explicit fields keep winning at every level
+  SmoothPanel2D:
+    cmap: magma
+    vlims: [0.0, 2.0]
+  "[style_class=highlight] Text":
+    color: "#ff0066"
+```
+
+Load it with `Figure(theme=...)` (preferred — theme travels with the figure), or imperatively via `load_plot_theme("my_theme.yaml")` for notebook/test use. The `@rules` selector-include is important: it pulls just the cascade out of each theme file so they merge cleanly.
+
+### Bundled fonts
+
+Poppins and Roboto (both SIL OFL 1.1) ship in `resources/fonts/` and register with matplotlib at import time via `_fonts.register_bundled_fonts()`. The default font chain resolves to a real font without requiring system-level installs. Disable by setting `font.family` in your theme's `rc_context`.
+
+## PlotData
+
+`PlotData` is what panels consume. Shape conventions:
+
+- **`xval`** — `(n_samples, n_inputs)`. 1D arrays are auto-reshaped to `(n, 1)`.
+- **`yval`** — `(n_samples, n_outputs)`. Same auto-reshape.
+- **`input_names`** — `list[str]` of length `n_inputs`. Used as axis labels.
+- **`output_name`** — `str` (or `list[str]` if `force_single_output=False`). Used as the dependent-axis label.
+- **`column_names`** — optional names for the `xval` columns. Defaults to `input_names`.
+- **`metadata`** — free-form dict. `default_output_name` reads `metadata['network_name']`; compose helpers aggregate it into figure metadata.
+
+`AutoPanel` dispatches on `xval.shape[1]`: 1 → `SmoothPanel1D`, 2 → `SmoothPanel2D`, 3 → `SmoothPanel3D`. So the shape *is* the panel choice.
+
+`LazyPlotData` has the same fields but loads arrays on first access (useful when you build a figure tree that references files you don't want to read until render time). `GridData` is a gridded summary that round-trips through base64 — handy when shipping precomputed surfaces through YAML.
+
+## Writing a figure YAML
+
+The shape of a typical figure config — same primitives the bundled templates use:
+
+```yaml
+# my_figure.yaml
+<<(<): !include pkg:jeanplot:resources/templates/auto_panel   # AutoPanel template
+<<(<): !include pkg:jeanplot:resources/themes/plots           # propagates xlims, vlims, ...
+
+!require plot_data: "PlotData to render"
+!set_default title: null
+!set_default output_dir: "./"
+!set_default output_file: null
+
+figure: !Figure
+  theme: !include pkg:jeanplot:resources/themes/plots.yaml@rules
+  output_dir: ${output_dir}
+  output_file: !default_output_name
+    plot_data: ${plot_data}
+    fallback: "fig"
+    override: ${output_file}
+  layout: !LayoutConstraints { direction: row, gap: 8 }
+  children:
+    - !AutoPanel
+      plot_data: ${plot_data}
+      title: ${title}
+```
+
+Then either:
+
+```bash
+jeanplot +my_figure.yaml ++plot_data='!include file:data.json' --output-dir out/
+```
+
+or from Python:
+
+```python
+from jeanplot.cli import PlotJob
+PlotJob.invoke("my_figure.yaml", plot_data=my_plot_data).run()
+```
+
+Things to notice:
+- `<<(<):` propagates `!define`/`!set_default` from the included files. That's how `${xlims}` resolves inside `!AutoPanel` even though you didn't declare it here — `plots.yaml` did.
+- `theme:` uses a **selector-include** (`@rules`) to pull just the cascade out of the theme file. The Figure carries it; the renderer applies it during layout.
+- `!default_output_name` is a registered compose helper called as a tag — kwargs in the mapping body.
+- Every `!set_default` becomes a CLI flag automatically. `output_dir` → `--output-dir`. Mapping bodies (`{default: X, help: "..."}`) add help text and shorts.
+
+For multi-panel figures, swap `children:` with `!panel_row` / `!panel_grid`, or use the higher-order templates in `resources/figures/templates.yaml` (`!ComparePair`, `!Triple`).
 
 ## Compose helpers
 
-`jeanplot/compose.py` is ~100 LOC of "build a row of panels" / "build a grid" / "build a figure with metadata" helpers. They're registered as dracon `!fn` templates so you can use them from YAML:
+`jeanplot/compose.py` is ~100 LOC of "build a row of panels" / "build a grid" / "build a figure with metadata" helpers. They're registered as dracon `!fn` templates so you can use them from YAML too:
+
+- `panel_row(panels, gap, weights)` / `!panel_row` — one row of panels.
+- `panel_grid(rows, gap, col_weights, row_weights)` / `!panel_grid` — multi-row grid.
+- `panels_from_datas(datas, **kwargs)` / `!panels_from_datas` — map a list of `PlotData` to a list of `AutoPanel`.
+- `build_figure_metadata(panels, extra)` / `!build_figure_metadata` — aggregate per-panel + per-data metadata into one dict (useful for filename templates).
+- `default_output_name(plot_data, fallback, prefix, suffix, override)` / `!default_output_name` — pick a sensible output filename from `plot_data.metadata['network_name']` with overrides.
+
+Reusable figure templates live in `resources/figures/`:
+- `data.yaml`, `pred_combined.yaml`, `combined.yaml` — concrete figures.
+- `templates.yaml` — higher-order `!fn`s like `!ComparePair { a, b }` and `!Triple { a, b, c }`.
 
 ```yaml
-figure: !Figure
-  panels: !panel_row
-    panels:
-      - !SmoothPanel1D { data: !include data_1.json }
-      - !SmoothPanel1D { data: !include data_2.json }
+<<(<): !include pkg:jeanplot:resources/figures/templates
+figure: !ComparePair { a: ${gt}, b: ${pred} }
 ```
 
-The reusable figure templates live in `resources/figures/` — `data.yaml`, `pred_combined.yaml`, `combined.yaml`, and `templates.yaml` for higher-order things like `ComparePair`.
+## Loading YAML from Python
+
+The package exposes context helpers so dracon can find all the jeanplot types:
+
+```python
+from jeanplot import make_plot_context
+import dracon as dr
+
+ctx = make_plot_context(extra_types=[MyCustomPanel], extra={"my_var": 42})
+cfg = dr.load("path/to/figure.yaml", context=ctx)
+```
+
+- `make_context_from_types(types)` — dict of `{TypeName: type}` for dracon tag resolution.
+- `make_plot_context(extra_types=None, extra=None)` — adds `COMPOSE_HELPERS` on top so `!panel_row` etc. resolve.
+- `DEFAULT_TYPES` — the full list of jeanplot types pre-registered (Components, panels, gene parts, data models).
 
 ## The CLI
 
@@ -229,42 +437,62 @@ The reusable figure templates live in `resources/figures/` — `data.yaml`, `pre
 ```bash
 jeanplot +path/to/figure.yaml --output-dir out/
 jeanplot +mytheme --vlim-low -1 --vlim-high 1
+jeanplot +fig.yaml ++network_name=ABCD12  # context override
 ```
 
-The flags that appear depend on the YAML you load — any `!set_default`/`!require` declared in the file or its includes surfaces as a CLI flag. This is a dracon thing, not a jeanplot thing, but it's why the CLI is small.
+CLI surface (model fields):
+- `-o`/`--output-dir` — override the figure's `output_dir`.
+- `--output-file` — override the figure's `output_file`.
+- `-v`/`--verbose` — show component tree + full span tree.
+- `-q`/`--quiet` — suppress terminal output.
+- `--preview {auto,on,off}` — inline image preview in graphics-capable terminals.
 
-From Python: `PlotJob.invoke('path.yaml', **overrides)` or `PlotJob.from_config('path.yaml').run()` if you want to poke at the job before running it.
+Any extra flags come from `!set_default`/`!require` declared in the YAML (or its includes). That's a dracon thing — see "Vocabulary-as-CLI" in dracon's docs.
+
+From Python: `PlotJob.invoke('path.yaml', **overrides)`, or `PlotJob.from_config('path.yaml').run()` if you want to poke at the job before running it.
+
+### The TUI
+
+The CLI uses a rich-based live TUI by default: spinner with current dracon span, rolling history of recent steps, total wall-time receipt, and inline image preview at the end (Kitty graphics protocol if your terminal supports it). It plugs into dracon's progress event system as a `Subscriber`. `-q` disables it; `--preview off` keeps the receipt but skips the image.
 
 ## Rendering
 
 `render(component, *, backend="matplotlib", output=None, ...)` is the function you'll use. Returns axes/context, or an SVG string for `backend="svg"`, or just writes the file if you pass `output=`.
 
-If you need backend-specific control: `MatplotlibRenderer().render_component(ax, root)` and `SVGRenderer().render_to_string(root)` are the underlying calls.
+`render_to_string(component, *, backend="svg")` is the explicit string variant.
 
-For testing layouts: `jeanplot.testing` ships `MockRenderer`, `render_to_svg`, `svg_hash`, and `assert_element_position` / `assert_element_size`. These keep snapshot tests boring.
+Need backend-specific control? `MatplotlibRenderer().render_component(ax, root)` and `SVGRenderer().render_to_string(root)` are the underlying calls. Both subclass `BaseRenderer`.
+
+For testing layouts, `jeanplot.testing` ships `MockRenderer`, `render_to_svg`, `parse_svg`, `get_element_bounds`, `svg_hash`, and `assert_element_position` / `assert_element_size`. These keep snapshot tests boring.
 
 ## Foundations module
 
 `jeanplot/data/`:
-- `PlotData` — `X`, `Y`, `column_names`, `output_names`, metadata. Plain Pydantic.
+- `PlotData` — `X`, `Y`, `column_names`, `output_names`, `metadata`. Plain Pydantic.
 - `LazyPlotData` — same shape, arrays load on first access.
-- `GridData` — gridded summary, base64-roundtrippable.
+- `GridData` — gridded summary, base64-roundtrippable via `grid_data_to_b64` / `grid_data_from_b64` / `extract_grid_data`.
+- `DataDimensions` — shape descriptors.
 - `Rescaler` — `fwd(x)` / `inv(x)` protocol. `IdentityRescaler` is the default; biocomp's `DataRescaler` already satisfies it without changes.
+- `PlotFunctionResult` — return type for drawing functions that want to surface a `_mappable` etc.
 
 `jeanplot/knn/`:
 - KNN tree backends — picks `usearch`, `pykdtree`, or `scipy` based on what's installed.
 - Density estimators, Gaussian-weighted KNN with optional numba acceleration, optional JAX kernels for differentiable use.
 
 `jeanplot/color/`:
-- `load_palette`, `closest_name` for fuzzy name matching.
+- `load_palettes(path)`, `register_palettes(palettes)`, `closest_name(name)` for fuzzy name matching.
 - Bio palettes register on import.
 
 `jeanplot/stats.py`:
 - `rmse`, `mse`, `mae`, `r_squared`, `pearson_r`. Just numpy, no deps.
 
+## Debugging utilities
+
+`from jeanplot import set_debug, get_logger, debug_print, DebugMixin`. Toggle `set_debug(True)` to surface internal layout / style decisions. `DebugMixin` is the base if you want to add debug output to your own components.
+
 ## Migration from biocomp-plot
 
-There's a cheatsheet at `docs/migrating_from_biocomp.md` if you're porting an existing biocomp plotting script. The TL;DR mapping:
+There's a cheatsheet at `docs/migrating_from_biocomp.md` if you're porting an existing biocomp plotting script. TL;DR mapping:
 
 | biocomp | jeanplot |
 |---|---|
@@ -275,26 +503,28 @@ There's a cheatsheet at `docs/migrating_from_biocomp.md` if you're porting an ex
 | `Overlay` protocol | child component with `is_overlay=True` |
 | `FigAx.subdivide` / `subax_spec` | nested `Container` |
 
-Every drawing function, KNN kernel, axis helper, `PlotData`, and `Rescaler` lives in jeanplot exactly once. `biocomp.plotting.*` is now a shim layer that re-exports jeanplot symbols; the legacy `BiocompPlotFigure` / `PlotConfig` / `PartialFunction` / `@configurable` / `SimpleLayout` / `GridLayout` / `FigureSpec` machinery is marked deprecated (it still renders the un-migrated paper-jobs YAMLs, but emits `DeprecationWarning` at construction). Port when you feel like it; the deprecation flag tells you when something still uses the old path.
+Every drawing function, KNN kernel, axis helper, `PlotData`, and `Rescaler` lives in jeanplot exactly once. `biocomp.plotting.*` is now a shim layer that re-exports jeanplot symbols; the legacy `BiocompPlotFigure` / `PlotConfig` / `PartialFunction` / `@configurable` / `SimpleLayout` / `GridLayout` / `FigureSpec` machinery is deprecated (still renders un-migrated paper-jobs YAMLs, but emits `DeprecationWarning` at construction).
 
 ## Repo layout
 
 ```
 jeanplot/
-├── core/         scene graph: Component, Container, Text, Connection, ...
+├── core/         scene graph: Component, Container, Text, Connection, Table, SVGElement, style engine
 ├── gene/         gene schematic data + visual parts
-├── panels/       PlotPanel subclasses + Figure
+├── panels/       PlotPanel subclasses + Figure + overlays + panel_from
 ├── plots/        plain matplotlib drawing functions panels delegate to
-├── data/         PlotData, GridData, Rescaler
-├── knn/          KNN trees + density
+├── data/         PlotData, LazyPlotData, GridData, Rescaler
+├── knn/          KNN trees + density estimators
 ├── color/        palettes, name matching
-├── resources/    themes, figure templates, color palette YAML
-├── compose.py    tree-construction helpers
+├── resources/    themes, figure templates, color palettes, SVG parts, bundled fonts
+├── compose.py    tree-construction helpers (also dracon !fn templates)
 ├── render.py     top-level render() / render_to_string()
-├── testing.py    test helpers (MockRenderer, svg_hash, ...)
+├── testing.py    test helpers (MockRenderer, svg_hash, assert_element_*)
+├── _fonts.py     bundled-font registration with matplotlib
+├── _tui.py       CLI TUI (dracon progress subscriber + image preview)
 ├── cli.py        jeanplot entry point
 └── tests/        ~460 tests, pytest
-docs/             this README is the main entry; STYLE_GUIDE, migration
+docs/             STYLE_GUIDE, migrating_from_biocomp
 example/          hello_jeanplot.py
 ```
 
@@ -305,6 +535,8 @@ example/          hello_jeanplot.py
 - **Text too big or too small.** It's `font_size_mode`. `data` scales with the world (good for in-world labels). `points` stays a constant visual size (good for everything else).
 - **Connection invisible.** Check the endpoint ids resolve and the components have non-zero size.
 - **Panel draws but axes empty.** Probably an empty `PlotData` or a shape mismatch — panels assert at the boundary.
+- **Font shows up as DejaVu instead of Poppins.** Either the bundled font failed to register (rare; check warnings at import), or your theme's `rc_context` overrode the chain.
+- **CLI flag doesn't exist that you expected.** It's declared with `!set_default name:` (or `!require name:`) somewhere in the loaded YAML or an include. Run `jeanplot show +your.yaml --show-vars` (dracon's `show` form) to see what's actually declared.
 
 Reach for `jeanplot.testing.svg_hash` when you want to know if your output changed. Pixel-equality on matplotlib output is a losing game; SVG hashing is cheap and stable.
 
@@ -316,4 +548,4 @@ It's also not a UI framework. The scene graph is retained but inert. Nothing ani
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See `LICENSE`. Bundled fonts (Poppins, Roboto) are SIL OFL 1.1 — license files ship in `resources/fonts/<family>/OFL.txt`.
