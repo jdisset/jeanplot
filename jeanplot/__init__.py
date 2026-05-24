@@ -92,6 +92,7 @@ from jeanplot.panels import (
     SliceOverlay,
     SliceChordOverlay,
     AdditionVsRemovalOverlay,
+    LinearityReferenceOverlay,
     DensityContourOverlay,
     auto_panel as auto_panel,
 )
@@ -167,10 +168,14 @@ DEFAULT_TYPES = [
     SliceOverlay,
     SliceChordOverlay,
     AdditionVsRemovalOverlay,
+    LinearityReferenceOverlay,
     DensityContourOverlay,
 ]
 
 register_palettes(load_palettes("pkg:jeanplot:resources/colors/bio_palettes.yaml"))
+
+from jeanplot._fonts import register_bundled_fonts  # noqa: E402
+register_bundled_fonts()
 
 SVGElement.model_rebuild(force=True)
 Connection.model_rebuild(force=True)

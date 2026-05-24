@@ -11,6 +11,9 @@
 _body:
   PlotPanel:
     rescaler: ${IdentityRescaler()}
+    # Axis-label room. Per-side so subclasses can override one side without restating.
+    style.padding.bottom: 0.5
+    style.padding.left: 0.5
 
   SmoothPanel1D:
     xlims: ${xlims}
@@ -19,7 +22,7 @@ _body:
     draw_ylabel: true
     show_std: true
     show_legend: true
-    legend_pad: 1.0
+    style.padding.right: 1.0   # legend room (when legend draws outside the axes)
 
   SmoothPanel2D:
     xlims: ${xlims}
@@ -29,7 +32,7 @@ _body:
     draw_xlabel: true
     draw_ylabel: true
     draw_colorbar: true
-    colorbar_pad: 0.6
+    style.padding.right: 0.6   # colorbar room
     knn_grid_params:
       grid_resolution: 250
       is_density_plot: false
@@ -50,7 +53,7 @@ _body:
     xlims: ${xlims}
     ylims: ${ylims}
     vlims: [null, null]
-    colorbar_pad: 0.6
+    style.padding.right: 0.6
     heatmap_params:
       bad_color: ${bad_color}
       contours: 0
@@ -108,6 +111,7 @@ _body:
     grid_resolution: 32
 
   Figure:
+    <<: !include pkg:jeanplot:resources/themes/_figure_defaults.yaml@Figure
     dpi: 300
 
   Colorbar:

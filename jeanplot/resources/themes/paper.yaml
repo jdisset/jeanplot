@@ -27,17 +27,17 @@ _body_paper_only:
   SmoothPanel2D:
     vlim_min_floor: ${vlim_min_floor}
     vlim_min_range: ${vlim_min_range}
-    colorbar_pad: 0.6
+    style.padding.right: 0.6
     heatmap_params:
       cmap: ${paper_cmap_value}
 
   SmoothGradMagnitudePanel2D:
-    colorbar_pad: 0.6
+    style.padding.right: 0.6
     heatmap_params:
       cmap: ${paper_cmap_grad}
 
   SmoothPanel1D:
-    legend_pad: 1.2
+    style.padding.right: 1.2
 
   SmoothPanel3D:
     SmoothPanel2D:
