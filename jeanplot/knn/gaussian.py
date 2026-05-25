@@ -53,6 +53,30 @@ try:
                 out[i, dd] = acc
 
     @_nb.njit(cache=True, parallel=True, fastmath=True)
+    def _kernel_balance_weights_numba(indices, weights, densities, cap, hard, eps, out):
+        """Fused density-cap + row-renormalise, no (n,k) temporaries; NaN rows preserved."""
+        n, k = indices.shape
+        for i in _nb.prange(n):
+            s = 0.0
+            for j in range(k):
+                dn = densities[indices[i, j]]
+                if hard:
+                    inv = cap / (dn if dn > eps else eps)
+                    sc = inv if inv < 1.0 else 1.0
+                else:
+                    sc = cap / (dn + cap + eps)
+                r = weights[i, j] * sc
+                out[i, j] = r
+                s += r
+            if s > 0.0:
+                inv = 1.0 / s
+                for j in range(k):
+                    out[i, j] *= inv
+            else:
+                for j in range(k):
+                    out[i, j] = np.nan
+
+    @_nb.njit(cache=True, parallel=True, fastmath=True)
     def _kernel_gaussian_normed_numba(distances, indices, sigma, max_dist, min_points, out):
         """Row-normalized Gaussian weights in one fused pass. Entries beyond
         max_dist get zero weight (and sentinel index clamped to 0); rows with
@@ -85,6 +109,7 @@ except ImportError:
     _kernel_mean_numba = None
     _kernel_weighted_gather_numba = None
     _kernel_gaussian_normed_numba = None
+    _kernel_balance_weights_numba = None
 
 
 def _gaussian_normed_fast(distances, indices, sigma, max_dist, min_points):
@@ -108,6 +133,15 @@ def balance_weights_by_density(
     """Cap each neighbor's weight by local density, re-normalise rows.
     hard: scale=min(1, cap/density); smooth: scale=cap/(density+cap). Lower cap =
     stronger rebalancing. NaN sentinel rows preserved."""
+    if _kernel_balance_weights_numba is not None:
+        ind = np.ascontiguousarray(indices)
+        w = np.ascontiguousarray(weights, dtype=np.float64)
+        dens = np.ascontiguousarray(densities, dtype=np.float64)
+        out = np.empty_like(w)
+        _kernel_balance_weights_numba(
+            ind, w, dens, float(cap), mode == "hard", float(eps), out
+        )
+        return out
     dens_nei = densities[indices]
     if mode == "hard":
         scale = np.minimum(1.0, cap / np.maximum(dens_nei, eps))

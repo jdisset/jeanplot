@@ -97,6 +97,17 @@ class _UsearchTree:
         return distances, labels
 
 
+def array_content_key(x):
+    if not isinstance(x, np.ndarray):
+        return None
+    a = x if x.flags["C_CONTIGUOUS"] else np.ascontiguousarray(x)
+    try:
+        h = hash(bytes(memoryview(a).cast("B")))
+    except Exception:
+        return None
+    return (h, x.shape, x.dtype.str)
+
+
 def make_tree(x: np.ndarray):
     if _BACKEND == "usearch":
         return _UsearchTree(x)

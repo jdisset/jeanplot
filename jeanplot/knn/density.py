@@ -1,7 +1,7 @@
 import threading
 
 import numpy as np
-from jeanplot.knn.tree import make_tree, _query, KNN_WORKERS
+from jeanplot.knn.tree import array_content_key, make_tree, _query, KNN_WORKERS
 
 
 def _ball_volume(d: int) -> float:
@@ -10,54 +10,34 @@ def _ball_volume(d: int) -> float:
     return (np.pi ** (d / 2.0)) / gamma(d / 2.0 + 1.0)
 
 
-# density depends only on (tree, kdensity, X_ref); cache collapses the redundant
-# per-slice/per-panel recompute. Strong tree ref keeps id(tree) valid as the key.
+# keyed by id(tree); the strong tree ref in the value pins id so it can't alias a freed tree
 _PPD_CACHE: dict = {}
 _PPD_CACHE_MAX = 16
 _PPD_CACHE_LOCK = threading.Lock()
 
 
-def _ppd_xref_key(X_ref):
-    a = X_ref if X_ref.flags["C_CONTIGUOUS"] else np.ascontiguousarray(X_ref)
-    try:
-        return hash(bytes(memoryview(a).cast("B")))
-    except Exception:
-        return None
-
-
 def per_point_knn_density(tree, X_ref=None, kdensity: int = 50):
-    """KNN density (points per unit d-volume) for the points that define ``tree``.
-
-    Works in any dimension ``d = X_ref.shape[1]``. Result depends only on
-    (tree, X_ref, kdensity), so it is memoised across the many calls a single
-    figure makes against the same tree.
-    """
-    explicit_xref = X_ref is not None
+    """KNN density per reference point; memoised by (tree, kdensity, X_ref)."""
+    xref_key = array_content_key(X_ref) if X_ref is not None else None
     if X_ref is None:
         X_ref = getattr(tree, "data", None)
         if X_ref is None:
-            raise ValueError(
-                "Cannot infer reference coordinates for density. "
-                "Pass X_ref or use a tree exposing `.data`."
-            )
+            raise ValueError("density needs X_ref or a tree exposing `.data`")
 
-    xref_key = _ppd_xref_key(X_ref) if explicit_xref else None
-    cache_key = (id(tree), int(kdensity), xref_key)
+    key = (id(tree), int(kdensity), xref_key)
     with _PPD_CACHE_LOCK:
-        ent = _PPD_CACHE.get(cache_key)
+        ent = _PPD_CACHE.get(key)
         if ent is not None:
             return ent[1]
 
     dists, _ = _query(tree, X_ref, k=kdensity + 1, workers=KNN_WORKERS)
-    rk = dists[:, -1]
     d = X_ref.shape[1]
-    Vd = _ball_volume(d)
-    result = kdensity / (Vd * np.maximum(rk, 1e-12) ** d)
+    result = kdensity / (_ball_volume(d) * np.maximum(dists[:, -1], 1e-12) ** d)
 
     with _PPD_CACHE_LOCK:
         if len(_PPD_CACHE) >= _PPD_CACHE_MAX:
             _PPD_CACHE.pop(next(iter(_PPD_CACHE)))
-        _PPD_CACHE[cache_key] = (tree, result)
+        _PPD_CACHE[key] = (tree, result)
     return result
 
 

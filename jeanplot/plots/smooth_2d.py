@@ -15,6 +15,7 @@ from jeanplot.plots.smooth_kernel import (
     _render_smooth_heatmap,
     _resolve_lims,
     knn_grid,
+    knn_grid_gradient,
 )
 
 T = TypeVar("T")
@@ -116,24 +117,43 @@ def knn_gradient_grid(
     knn_grid_params: dict | None = None,
     space: Literal["raw", "latent"] = "latent",
     rescaler=None,
+    method: Literal["local_linear", "finite_diff"] = "local_linear",
 ) -> KnnGradientField:
     knn_grid_params = dict(knn_grid_params or {})
     resolution = knn_grid_params.get("grid_resolution", 200)
-    input_coords, output_values = knn_grid(X, Y, xlims, ylims, **knn_grid_params)
-    y_lat = np.asarray(output_values).reshape(resolution, resolution)
     x1_lat = np.linspace(xlims[0], xlims[1], resolution)
     x2_lat = np.linspace(ylims[0], ylims[1], resolution)
 
+    if method == "finite_diff":  # legacy: central differences of the smoothed value grid
+        input_coords, value = knn_grid(X, Y, xlims, ylims, **knn_grid_params)
+        y_lat = np.asarray(value).reshape(resolution, resolution)
+        if space == "raw":
+            assert rescaler is not None, "rescaler required for space='raw'"
+            x1_axis = np.asarray(rescaler.inv(x1_lat[:, None]).squeeze())
+            x2_axis = np.asarray(rescaler.inv(x2_lat[:, None]).squeeze())
+            y_field = np.asarray(rescaler.inv(y_lat[..., None]).squeeze())
+        else:
+            x1_axis, x2_axis, y_field = x1_lat, x2_lat, y_lat
+        gy = _nan_aware_gradient(y_field, x2_axis, axis=0)
+        gx = _nan_aware_gradient(y_field, x1_axis, axis=1)
+        return KnnGradientField(input_coords, gx, gy, x1_lat, x2_lat, xlims, ylims)
+
+    input_coords, grad = knn_grid_gradient(X, Y, xlims, ylims, **knn_grid_params)
+    gx = grad[:, 0].reshape(resolution, resolution)
+    gy = grad[:, 1].reshape(resolution, resolution)
     if space == "raw":
         assert rescaler is not None, "rescaler required for space='raw'"
-        x1_axis = np.asarray(rescaler.inv(x1_lat[:, None]).squeeze())
-        x2_axis = np.asarray(rescaler.inv(x2_lat[:, None]).squeeze())
-        y_field = np.asarray(rescaler.inv(y_lat[..., None]).squeeze())
-    else:
-        x1_axis, x2_axis, y_field = x1_lat, x2_lat, y_lat
+        _, value = knn_grid(X, Y, xlims, ylims, **knn_grid_params)
 
-    gy = _nan_aware_gradient(y_field, x2_axis, axis=0)
-    gx = _nan_aware_gradient(y_field, x1_axis, axis=1)
+        def d(u, e=1e-4):  # chain-rule factor d(inv)/du of the (smooth) rescaler
+            u = np.asarray(u, float)
+            hi = np.asarray(rescaler.inv((u + e)[..., None]))[..., 0]
+            lo = np.asarray(rescaler.inv((u - e)[..., None]))[..., 0]
+            return (hi - lo) / (2 * e)
+
+        dy = d(value.reshape(resolution, resolution))
+        gx = gx * dy / d(x1_lat)[None, :]
+        gy = gy * dy / d(x2_lat)[:, None]
     return KnnGradientField(input_coords, gx, gy, x1_lat, x2_lat, xlims, ylims)
 
 
@@ -142,10 +162,12 @@ def _nan_aware_gradient(y: NdArray, coords: NdArray, axis: int) -> NdArray:
     y = np.asarray(y, float)
     y_prev = np.roll(y, 1, axis=axis)
     y_next = np.roll(y, -1, axis=axis)
+
     def _idx(i):
         s = [slice(None)] * y.ndim
         s[axis] = i
         return tuple(s)
+
     y_prev[_idx(0)] = np.nan
     y_next[_idx(-1)] = np.nan
     h = np.diff(np.asarray(coords, float))
@@ -156,9 +178,9 @@ def _nan_aware_gradient(y: NdArray, coords: NdArray, axis: int) -> NdArray:
     p, n = np.isfinite(y_prev), np.isfinite(y_next)
     with np.errstate(invalid="ignore"):
         g = np.where(
-            p & n, (y_next - y_prev) / (h_prev + h_next),
-            np.where(n, (y_next - y) / h_next,
-                     np.where(p, (y - y_prev) / h_prev, np.nan)),
+            p & n,
+            (y_next - y_prev) / (h_prev + h_next),
+            np.where(n, (y_next - y) / h_next, np.where(p, (y - y_prev) / h_prev, np.nan)),
         )
     return np.where(np.isfinite(y), g, np.nan)
 
@@ -186,11 +208,12 @@ def smooth_grad_magnitude_2d(
     knn_grid_params: dict | None = None,
     heatmap_params: dict | None = None,
     colorbar_params: dict | None = None,
+    gradient_method: Literal["local_linear", "finite_diff"] = "local_linear",
 ) -> PlotFunctionResult:
     knn_grid_params = dict(knn_grid_params or {})
     xlims, ylims = _resolve_lims(X, xlims, ylims)
     X, Y = _finite_xy(X, Y)
-    field = knn_gradient_grid(X, Y, xlims, ylims, knn_grid_params, space, rescaler)
+    field = knn_gradient_grid(X, Y, xlims, ylims, knn_grid_params, space, rescaler, gradient_method)
     magnitude = np.sqrt(field.gx**2 + field.gy**2)
     resolution = knn_grid_params.get("grid_resolution", 200)
     return _render_smooth_heatmap(
@@ -242,6 +265,7 @@ def gradient_field_2d(
     zero_dot_threshold: float = 0.05,
     zero_dot_size: float = 6.0,
     zero_dot_props: dict | None = None,
+    gradient_method: Literal["local_linear", "finite_diff"] = "local_linear",
 ) -> PlotFunctionResult:
     import matplotlib as mpl
 
@@ -258,6 +282,7 @@ def gradient_field_2d(
         knn_grid_params=knn_grid_params,
         space=space,
         rescaler=rescaler,
+        method=gradient_method,
     )
 
     step_x = max(1, len(g.x1_lat) // quiver_resolution)

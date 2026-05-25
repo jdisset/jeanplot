@@ -68,6 +68,40 @@ def _as_cascade(value: Any) -> CallableSymbol | None:
     raise TypeError(f"unsupported jstyle value type: {type(value).__name__}")
 
 
+def merge_jstyle_rules(base: Any, overrides: Any) -> Any:
+    """Deep-merge a jstyle rule tree with ``overrides``; ``overrides`` wins at the leaves.
+
+    ``JStyle.update`` *replaces* the active cascade, so to layer overrides on top
+    of a base theme the rule trees must be merged first, then applied with a single
+    ``update``. Recurses into nested selector/prop mappings.
+
+    ``base`` may be a raw dict OR an already-parsed cascade ``CallableSymbol`` (what
+    every ``load_*_theme`` produces). For a cascade, overrides are parsed and layered
+    onto its flat ``{Selector: props}`` tree and a new fill cascade is returned -- a
+    plain dict merge would treat the cascade as non-dict and silently drop it.
+    """
+    from dracon.utils import dict_like, raw_items
+
+    if isinstance(base, CallableSymbol):
+        merged: dict[Any, Any] = dict(base._rule_tree or {})
+        ov_tree = parse_jstyle_rule_tree(_resolve_lazies(overrides)) if overrides else {}
+        for sel, props in ov_tree.items():
+            if sel in merged and dict_like(merged[sel]) and dict_like(props):
+                merged[sel] = {**dict(raw_items(merged[sel])), **dict(raw_items(props))}
+            else:
+                merged[sel] = props
+        return CallableSymbol.from_match(merged, _JSTYLE_FILL_STRATEGY, name="jstyle_fill")
+
+    out: dict = dict(raw_items(base)) if dict_like(base) else {}
+    if dict_like(overrides):
+        for k, v in raw_items(overrides):
+            if k in out and dict_like(out[k]) and dict_like(v):
+                out[k] = merge_jstyle_rules(out[k], v)
+            else:
+                out[k] = v
+    return out
+
+
 def _resolve_lazies(value: Any) -> Any:
     """Recursively force-resolve any LazyInterpolable in dict keys / values,
     leaving live-scope (component-bound) lazies untouched.

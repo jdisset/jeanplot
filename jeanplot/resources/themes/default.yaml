@@ -73,12 +73,12 @@
 !define class_swatch: !fn
   !require channel: "swatch channel (dark/base/light/bright)"
   !live component:
-    ${palette_value(component, theme.marker_colors, null,          theme.neutral_swatch, channel)}
+    ${palette_value(component, theme.marker_colors, None,          theme.neutral_swatch, channel)}
 
 !define fluo_swatch: !fn
   !require channel: "swatch channel (dark/base/light/bright)"
   !live component:
-    ${palette_value(component, theme.marker_colors, null,          theme.fluonode_swatch, channel)}
+    ${palette_value(component, theme.marker_colors, None,          theme.fluonode_swatch, channel)}
 
 !define ern_color: !fn
   !live component:
@@ -143,8 +143,9 @@ rules: !cascade:jstyle_fill
     Text:
       font_size: 7
       color: !part_swatch dark
-      offset.absolute: [0, 0]
-      offset.relative: [-0.5, -0.5]
+      offset: !Offset 
+        reference_relative: [0.45, 0.5] 
+        relative: [-0.5, -0.5] 
       vertical_align: middle
       align: center
 
@@ -260,10 +261,20 @@ rules: !cascade:jstyle_fill
   InputNode:
     style.background_color: "#222"
     Text: { color: "#fff" }
+    style.shadow:
+      color: !class_swatch bright
+      blur_radius: 12
+      resolution: 0.01
+      z_index: 1
 
   BiasNode:
     style.background_color: "#bbb"
     Text: { color: "#444" }
+    style.shadow:
+      color: !class_swatch bright
+      blur_radius: 12
+      resolution: 0.01
+      z_index: 1
 
   ERNNode:
     min_dimensions: !Size { width: 70, height: 70 }
@@ -347,23 +358,36 @@ rules: !cascade:jstyle_fill
         font_size: 6
         vertical_align: middle
 
+  TUNode[style_class=hidden_source]:
+    is_overlay: true
+    min_dimensions: !Size { width: 0.1, height: 0.1 }
+    max_dimensions: !Size { width: 0.1, height: 0.1 }
+    style.background_color: "#00000000"
+    style.border_width: 0
+    style.shadow: null
+    offset: !Offset { reference_relative: [1.0, 0.5] }
+
   AggregationNode[!collapsed]:
     style.background_color: "#FFFFFFAA"
     style.border_color: "#FFA068"
-    style.border_width: 1.5
-    style.padding: [12, 4, 12, 4]
+    style.border_width: 0
+    style.padding: [10, 4, 10, 4]
     layout: !LayoutConstraints { direction: column, justify_content: space-around, gap: 5 }
     TUNode:
       is_overlay: false
 
   AggregationNode[collapsed]:
-    min_dimensions: !Size { width: 15, height: 4 }
-    max_dimensions: !Size { width: 15, height: 4 }
+    min_dimensions: !Size { width: 20, height: 4 }
+    max_dimensions: !Size { width: 20, height: 4 }
+    style.corner_radius: 3
     style.border_width: 0
     style.padding: [0, 0, 0, 0]
-    TUNode:
-      is_overlay: true
-      offset: !Offset { absolute: [0, 0] }
+    style.background_color: "#000000"
+    style.shadow:
+      color: !class_swatch bright
+      blur_radius: 10
+      resolution: 0.01
+      z_index: 1
 
   AggregationNode[collapsed][bias_connected]:
     TUNode:
@@ -371,6 +395,23 @@ rules: !cascade:jstyle_fill
 
   Container[style_class=input_layer]:
     style.padding: [0, 0, 0, 40]
+
+  Text[style_class=legend_text]:
+    font_size: 7
+    vertical_align: middle
+    align: right
+    offset: !Offset { reference_relative: [2, 0], absolute: [0, 0], relative: [0, -0.3] }
+
+  Text[style_class=marker_color_label]:
+    font_size: 6
+    vertical_align: top
+    align: center
+    attachment_offset: !Offset { reference_relative: [1, 0], relative: [-1, 0], absolute: [0, -12] }
+
+  Container[style_class=ern_spacer]:
+    min_dimensions: !Size { width: 70, height: 70 }
+    max_dimensions: !Size { width: 70, height: 70 }
+    style.margin: [10, 10, 10, 10]
 
   DeadEndNode:
     style.background_color: "#00000000"
@@ -401,21 +442,36 @@ rules: !cascade:jstyle_fill
       Text: { font_weight: bold }
 
   NetworkDiagram:
-    layout.gap: 25
+    layout.gap: 10
     layout.direction: row
     layout.align_items: center
     layout.justify_content: center
+    thickness_range: [0.5, 2.5]
+    embedding_thickness_map:
+      tc_rate: { hef1a: 1 }
+      tl_rate:
+        None: 15
+        1w_uorf: 10
+        1x_uorf: 9
+        2x_uorf: 8
+        3x_uorf: 7
+        4x_uorf: 6
+        5x_uorf: 5
+        6x_uorf: 4
+        7x_uorf: 3
+        8x_uorf: 2
+        9x_uorf: 1
 
     Connection[style_class=comp-connection]:
       color: ${theme.comp_connection_color}
       line_width: 1
-      start_offset: !Offset { reference_relative: [0.99, 0.5] }
+      start_offset: !Offset { reference_relative: [1, 0.5] }
       end_offset: !Offset { reference_relative: [0.0, 0.5], absolute: [0, 0] }
       curve_type: !SimpleBezierCurve
         start_mode: vector
         end_mode: vector
-        start_vector: [20, 0]
-        end_vector: [-15, 0]
+        start_vector: [30, 0]
+        end_vector: [25, 0]
       end_cap: !LineEndCircle
         fill_color: ${theme.comp_connection_color}
         stroke_width: 0
@@ -429,6 +485,13 @@ rules: !cascade:jstyle_fill
       end_offset: !Offset { reference_relative: [0.5, 0.5] }
       curve_type: !StraightCurve {}
 
+    Connection[style_class=src-source]:
+      curve_type: !SimpleBezierCurve
+        start_mode: vector
+        end_mode: vector
+        start_vector: [30, 0]
+        end_vector: [-25, 0]
+
     Container[style_class=layer]:
       layout.gap: 10
       layout.direction: column
@@ -437,12 +500,13 @@ rules: !cascade:jstyle_fill
 
     Container[style_class=input_layer]:
       layout.gap: 15
+      style.padding: [0, 0, 0, 0]
 
     Container[style_class=auto_layer]:
       style.padding: [0, 0, 0, 0]
 
     Container[style_class=output_layer]:
-      style.padding: [0, 0, 0, 20]
+      style.padding: [0, 0, 0, 30]
 
     Container[style_class=main_layer]:
       layout.direction: column
@@ -452,8 +516,37 @@ rules: !cascade:jstyle_fill
       layout.gap: 20
 
     Text[style_class=layer_title]:
-      color: "#777"
+      color: "#999"
       font_size: 7
+
+    ConnectionLabel[style_class=edge_annotation]:
+      z_index: 10
+      align_to_edge: true
+      clip_connection: true
+      clip_padding: 1.0
+
+    ConnectionLabel[style_class=edge_ratio]:
+      font_size: 5
+      font_weight: normal
+      color: "#222"
+      halo: { color: "#00000000" }
+      distance: 30
+      relative: false
+      align: left
+      deny_text: "[(].1[)]"
+
+    ConnectionLabel[style_class=edge_part]:
+      font_size: 4
+      font_weight: normal
+      vertical_align: bottom
+      color: "#222"
+      halo: { color: "#00000000" }
+      distance: -20
+      relative: false
+      align: right
+
+    ConnectionLabel[style_class=embed-tc_rate]:
+      deny_text: "hef1a"
 
   "[style_class=disabled]":
     opacity: 0.3

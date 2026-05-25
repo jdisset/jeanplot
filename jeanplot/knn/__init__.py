@@ -1,4 +1,4 @@
-from jeanplot.knn.tree import make_tree
+from jeanplot.knn.tree import array_content_key, make_tree
 from jeanplot.knn.density import knn_density, knn_density_chunked
 from jeanplot.knn.gaussian import (
     balance_weights_by_density,
@@ -8,6 +8,7 @@ from jeanplot.knn.gaussian import (
 )
 
 __all__ = [
+    "array_content_key",
     "make_tree",
     "knn_density",
     "knn_density_chunked",
