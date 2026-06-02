@@ -71,6 +71,11 @@ class SmoothPanel3D(PlotPanel):
     ylims: tuple[float | None, float | None] = (None, None)
     zlims: tuple[float | None, float | None] = (None, None)
     vlims: tuple[float | None, float | None] = (None, None)
+    # Slice-grid color scale, independent of the cube's `vlims`. Defaults to
+    # (None, None) so every slice auto-scales to its own value range, using
+    # `slice_vlim_quantiles` for full per-slice contrast (no floor/range clamp).
+    slice_vlims: tuple[float | None, float | None] = (None, None)
+    slice_vlim_quantiles: tuple[float | None, float | None] = (0.02, 0.98)
     projection_angle: float = 45.0
     projection_diag_coef: float = 0.5
     slice_show_colorbar: bool = True
@@ -79,7 +84,10 @@ class SmoothPanel3D(PlotPanel):
     slice_title_pad: float = 3.0
     cube_show_inner_spines: bool = False
     cube_show_slice_ticks: bool = False
-    cube_show_front_face_ticks: bool = False
+    cube_show_front_face_ticks: bool = True
+    # Resolve the cube's symbolic contour levels from this field instead of
+    # `plot_data` (e.g. clip a prediction cube at the ground-truth iso-level).
+    cube_contour_reference_plot_data: PlotData | None = None
     cube_smooth_2d_params: dict | None = Field(
         default_factory=lambda: {
             "draw_colorbar": False,
@@ -133,6 +141,7 @@ class SmoothPanel3D(PlotPanel):
             show_inner_spines=self.cube_show_inner_spines,
             show_slice_ticks=self.cube_show_slice_ticks,
             show_front_face_ticks=self.cube_show_front_face_ticks,
+            contour_reference_plot_data=self.cube_contour_reference_plot_data,
             smooth_2d_params=self.cube_smooth_2d_params,
             colorbar_params=self.cube_colorbar_params,
             draw_colorbar=False,
@@ -142,7 +151,6 @@ class SmoothPanel3D(PlotPanel):
         for i, z in enumerate(zs):
             r, c = i // cols, i % cols
             is_left = c == 0
-            is_right = c == cols - 1
             is_bottom = r == rows - 1
             title_label = _format_z_label(float(z), self.rescaler)
             slice_panels.append(
@@ -152,8 +160,11 @@ class SmoothPanel3D(PlotPanel):
                     zslice=[float(z)],
                     xlims=self.xlims,
                     ylims=self.ylims,
-                    vlims=self.vlims,
-                    draw_colorbar=(self.slice_show_colorbar and is_right),
+                    vlims=self.slice_vlims,
+                    vlim_quantiles=self.slice_vlim_quantiles,
+                    vlim_min_floor=None,
+                    vlim_min_range=None,
+                    draw_colorbar=self.slice_show_colorbar,
                     draw_xlabel=is_bottom,
                     draw_ylabel=is_left,
                     title=title_label,
@@ -228,6 +239,9 @@ class CubeStackPanel(PlotPanel):
     show_front_face_ticks: bool = False
     smooth_2d_params: dict | None = None
     colorbar_params: dict | None = None
+    # When set, symbolic contour levels are resolved from this field instead of
+    # `plot_data` (lets a prediction cube clip at the ground-truth iso-level).
+    contour_reference_plot_data: PlotData | None = None
     cube_edge_props: dict | None = None
     xaxis_labelpad: int = 20
     yaxis_labelpad: int = 24
@@ -240,6 +254,8 @@ class CubeStackPanel(PlotPanel):
     def draw(self, ax) -> PlotFunctionResult | None:
         from jeanplot.plots.smooth_3d import smooth_3d
 
+        ref = self.contour_reference_plot_data
+        contour_reference = (ref.x, ref.y) if ref is not None else None
         return smooth_3d(
             X=self.plot_data.x,
             Y=self.plot_data.y,
@@ -249,6 +265,7 @@ class CubeStackPanel(PlotPanel):
             ax=[ax],
             zslices=self.zslices,
             xlims=self.xlims, ylims=self.ylims, zlims=self.zlims, vlims=self.vlims,
+            contour_reference=contour_reference,
             draw_colorbar=self.draw_colorbar,
             cube_edge_props=self.cube_edge_props,
             projection_angle=self.projection_angle,
