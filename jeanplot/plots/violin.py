@@ -9,7 +9,8 @@ from scipy.optimize import minimize
 
 from jeanplot.plots.heatmap import make_xy_grid
 
-from jeanplot.plots.smooth_kernel import build_tree, knn_stats, weighted_kde_1d
+from jeanplot.plots.smooth_kernel import weighted_kde_1d
+from jeanplot.splat import ConditionalSplat
 from jeanplot.plots.ticks import setup_transformed_axis
 
 
@@ -78,55 +79,42 @@ def _compute_voxel_distributions(
     *,
     knn_stats_params,
 ):
-    tree = build_tree(X)
-    y_mean, iw = knn_stats(
-        query_points,
-        y=Y[:, None],
-        tree=tree,
-        stats=["mean", "iw"],
-        **knn_stats_params,
+    """Per-voxel local distribution of Y as ``(value_grid, pdf)`` — a weighted
+    sample equivalent to the old (neighbour values, weights) lists."""
+    X = np.asarray(X, dtype=np.float64)
+    Y = np.asarray(Y, dtype=np.float64).ravel()
+    q = np.asarray(query_points, dtype=np.float64)
+    d = X.shape[1]
+    kw = dict(knn_stats_params)
+    res = int(np.clip(round(len(q) ** (1.0 / d)), 16, 96))
+    cs = ConditionalSplat.fit(
+        X,
+        Y,
+        bounds=[(float(X[:, i].min()), float(X[:, i].max())) for i in range(d)],
+        resolution=res,
+        radius=float(kw.get("radius", 0.1)),
+        sigma_in_radius=float(kw.get("sigma_in_radius", 3.0)),
+        min_points=int(kw.get("min_points", 1)),
+        value_range=(float(Y.min()), float(Y.max())),
+        n_value_bins=int(kw.get("n_value_bins", 64)),
+        rebalance_values=float(kw.get("rebalance_values", 0.0)),
     )
+    vg, pdf = cs.pdf_at(q)
+    counts = cs.count_at(q)
 
-    y_mean = np.asarray(y_mean).reshape(-1)
-    idx, w = iw
-    idx = np.asarray(idx)
-    w = np.asarray(w)
-
-    voxel_means = []
-    voxel_values = []
-    voxel_weights = []
-    voxel_counts = []
-
-    for i in range(len(query_points)):
-        valid = np.isfinite(w[i]) & (w[i] > 0)
-        if not np.any(valid):
+    voxel_means, voxel_values, voxel_weights, voxel_counts = [], [], [], []
+    for i in range(len(q)):
+        row = pdf[i]
+        if not np.isfinite(row).all() or row.sum() <= 0:
             continue
-
-        ii = idx[i, valid].astype(int)
-        ww = w[i, valid].astype(float)
-        wsum = float(np.sum(ww))
-        if wsum <= 0:
-            continue
-        ww = ww / wsum
-        vv = Y[ii]
-
-        ym = float(y_mean[i])
-        if not np.isfinite(ym):
-            continue
-        if not np.isfinite(vv).any():
-            continue
-
-        voxel_means.append(ym)
-        voxel_values.append(vv)
-        voxel_weights.append(ww)
-        voxel_counts.append(int(valid.sum()))
-
-    means_arr = np.asarray(voxel_means, dtype=float)
-    means_tree = build_tree(means_arr[:, None]) if len(means_arr) > 0 else None
+        voxel_means.append(float(row @ vg))
+        voxel_values.append(vg)
+        voxel_weights.append(row)
+        voxel_counts.append(float(counts[i]))
 
     return {
-        "means": means_arr,
-        "means_tree": means_tree,
+        "means": np.asarray(voxel_means, dtype=float),
+        "means_tree": None,
         "values": voxel_values,
         "weights": voxel_weights,
         "counts": np.asarray(voxel_counts, dtype=float),
@@ -144,24 +132,16 @@ def _tick_aggregation_from_voxels(
     if len(means) == 0:
         return None
 
-    means_tree = voxel_data.get("means_tree")
-    if means_tree is None:
+    # voxels whose conditional mean sits near the tick, gaussian-weighted by
+    # |mean - tick| (1D analogue of the old kNN gather over voxel means).
+    radius = float(tick_knn_stats_params.get("radius", 0.1))
+    sigma = radius / float(tick_knn_stats_params.get("sigma_in_radius", 3.0))
+    dist = np.abs(means - float(tick))
+    idx = np.where(dist <= radius)[0]
+    if idx.size == 0:
         return None
 
-    idx, w = knn_stats(
-        np.asarray([[float(tick)]], dtype=float),
-        tree=means_tree,
-        stats="iw",
-        **tick_knn_stats_params,
-    )
-    idx = np.asarray(idx[0], dtype=int)
-    w = np.asarray(w[0], dtype=float)
-    valid = np.isfinite(w) & (w > 0)
-    if not np.any(valid):
-        return None
-
-    idx = idx[valid]
-    tick_weights = w[valid]
+    tick_weights = np.exp(-0.5 * (dist[idx] / sigma) ** 2)
     if voxel_weight_mode == "count":
         tick_weights = tick_weights * voxel_data["counts"][idx]
 

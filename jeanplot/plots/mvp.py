@@ -13,7 +13,8 @@ from numpy.typing import NDArray as NdArray
 from jeanplot.data import Rescaler
 from jeanplot.stats import rmse, r_squared
 from jeanplot.plots.ticks import setup_transformed_axis
-from jeanplot.plots.smooth_kernel import build_tree, knn_stats, weighted_kde_1d
+from jeanplot.plots.smooth_kernel import build_tree, smooth_stats
+from jeanplot.splat import ConditionalSplat
 
 DataRescaler = Rescaler  # alias preserved for forward compatibility
 
@@ -69,21 +70,26 @@ def _draw_pit_inset(
 # ── conditional violin whiskers ──────────────────────────────────────────
 
 
-def _violin_half_kde(
-    values: NdArray,
-    weights: NdArray,
-    kde_points: int = 80,
-) -> tuple[NdArray, NdArray] | None:
-    """Compute weighted KDE, return (y_grid, density) or None on failure."""
-    return weighted_kde_1d(values, weights, kde_points=kde_points, pad_frac=0.15)
+def _violin_cs(cond: NdArray, val: NdArray, knn_kw: dict, kde_points: int) -> ConditionalSplat:
+    lo, hi = float(cond.min()), float(cond.max())
+    return ConditionalSplat.fit(
+        cond[:, None],
+        val,
+        bounds=[(lo, hi)],
+        resolution=128,
+        radius=float(knn_kw.get("radius", 0.05)),
+        sigma_in_radius=float(knn_kw.get("sigma_in_radius", 3.0)),
+        min_points=int(knn_kw.get("min_points", 10)),
+        value_range=(float(val.min()), float(val.max())),
+        n_value_bins=kde_points,
+        rebalance_values=float(knn_kw.get("rebalance_values", 0.0)),
+    )
 
 
 def _draw_violins(
     ax,
     measured: NdArray,
     predicted: NdArray,
-    tree_measured,
-    tree_predicted,
     knn_kw: dict,
     dense_mask: NdArray,
     eval_x: NdArray,
@@ -107,31 +113,18 @@ def _draw_violins(
     if violin_width is None:
         violin_width = (dense_x[-1] - dense_x[0]) / (n_violins + 2) * 0.45
 
+    cs_right = _violin_cs(measured, predicted, knn_kw, kde_points)
+    cs_left = _violin_cs(predicted, measured, knn_kw, kde_points)
+
     for t in positions:
-        query = np.array([[t]])
-
-        # right half: P(predicted | measured ≈ t)
-        iw_m = knn_stats(query, tree=tree_measured, stats="iw", **knn_kw)
-        idx_m, w_m = iw_m[0][0], iw_m[1][0]
-        valid_m = np.isfinite(w_m) & (w_m > 0)
-
-        # left half: P(measured | predicted ≈ t)
-        iw_p = knn_stats(query, tree=tree_predicted, stats="iw", **knn_kw)
-        idx_p, w_p = iw_p[0][0], iw_p[1][0]
-        valid_p = np.isfinite(w_p) & (w_p > 0)
-
-        if valid_m.sum() < 10 or valid_p.sum() < 10:
+        r_grid, r_pdf = cs_right.pdf_at([[t]])
+        l_grid, l_pdf = cs_left.pdf_at([[t]])
+        r_dens, l_dens = r_pdf[0], l_pdf[0]
+        if not (np.isfinite(r_dens).all() and np.isfinite(l_dens).all()):
             continue
-
-        right = _violin_half_kde(predicted[idx_m[valid_m]], w_m[valid_m], kde_points)
-        left = _violin_half_kde(measured[idx_p[valid_p]], w_p[valid_p], kde_points)
-        if right is None or left is None:
-            continue
-
-        # normalize both to same max width
-        r_grid, r_dens = right
-        l_grid, l_dens = left
         peak = max(r_dens.max(), l_dens.max())
+        if peak <= 0:
+            continue
         r_dens = r_dens / peak * violin_width
         l_dens = l_dens / peak * violin_width
 
@@ -386,10 +379,10 @@ def _draw_sample_bands(
         q_hi_vals = np.quantile(model_samples, q_hi, axis=0)
 
         y_lo = np.asarray(
-            knn_stats(query, y=q_lo_vals[:, None], tree=tree, stats="mean", **knn_kw)
+            smooth_stats(query, y=q_lo_vals[:, None], tree=tree, stats="mean", **knn_kw)
         ).ravel()
         y_hi = np.asarray(
-            knn_stats(query, y=q_hi_vals[:, None], tree=tree, stats="mean", **knn_kw)
+            smooth_stats(query, y=q_hi_vals[:, None], tree=tree, stats="mean", **knn_kw)
         ).ravel()
         y_lo[~dense_mask] = np.nan
         y_hi[~dense_mask] = np.nan
@@ -610,13 +603,13 @@ def measured_vs_predicted(
 
     query = eval_x[:, None]
     eval_density = (
-        np.asarray(knn_stats(query, tree=tree, stats="density", **knn_stats_params)).ravel()
+        np.asarray(smooth_stats(query, tree=tree, stats="density", **knn_stats_params)).ravel()
         if needs_eval_density
         else None
     )
     if needs_data_density:
         data_density = np.asarray(
-            knn_stats(measured[:, None], tree=tree, stats="density", **knn_stats_params)
+            smooth_stats(measured[:, None], tree=tree, stats="density", **knn_stats_params)
         ).ravel()
         density_threshold = np.quantile(data_density[np.isfinite(data_density)], density_cutoff_q)
         dense_mask_at_measured = data_density >= density_threshold
@@ -710,7 +703,7 @@ def measured_vs_predicted(
                 # Local std of residuals over the eval grid; gives a
                 # smooth σ(x) for free.
                 sigma = np.asarray(
-                    knn_stats(
+                    smooth_stats(
                         eval_x[:, None],
                         y=residuals,
                         tree=tree,
@@ -765,13 +758,10 @@ def measured_vs_predicted(
 
     # --- conditional violins ---
     if show_violins:
-        tree_predicted = build_tree(predicted[:, None])
         _draw_violins(
             ax,
             measured,
             predicted,
-            tree,
-            tree_predicted,
             knn_stats_params,
             dense_mask,
             eval_x,
@@ -1082,7 +1072,7 @@ def measured_vs_predicted(
         from scipy.ndimage import gaussian_filter1d as _g1d
 
         residuals = (predicted - measured)[:, None]
-        res_mean, res_std = knn_stats(
+        res_mean, res_std = smooth_stats(
             query,
             y=residuals,
             tree=tree,

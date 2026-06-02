@@ -1,7 +1,7 @@
 import numpy as np
 
 from jeanplot.plots.heatmap import make_xy_grid
-from jeanplot.splat import SplatField
+from jeanplot.splat import ConditionalSplat, SplatField
 
 
 BOUNDS = [(0.0, 1.0), (0.0, 1.0)]
@@ -165,6 +165,31 @@ def test_flat_xy_matches_make_xy_grid_order():
         iy = int(round(xy[p, 1] * (RES - 1)))
         a, b = flat[p], lat[ix, iy]
         assert (np.isnan(a) and np.isnan(b)) or np.isclose(a, b)
+
+
+def test_conditional_splat_recovers_distribution():
+    rng = np.random.default_rng(8)
+    cond = rng.uniform(0, 1, (60000, 1))
+    val = cond[:, 0] + rng.normal(0, 0.05, 60000)
+    cs = ConditionalSplat.fit(
+        cond,
+        val,
+        bounds=[(0.0, 1.0)],
+        resolution=60,
+        radius=0.08,
+        value_range=(-0.2, 1.2),
+        n_value_bins=80,
+        min_points=10,
+    )
+    q = np.array([[0.2], [0.5], [0.8]])
+    assert np.allclose(cs.mean_at(q), [0.2, 0.5, 0.8], atol=0.02)
+    qt = cs.quantiles_at(q, [0.1, 0.5, 0.9])
+    assert np.allclose(qt[:, 1], [0.2, 0.5, 0.8], atol=0.03)
+    spread = qt[:, 2] - qt[:, 0]  # ~ 2*1.28*sigma, widened by bandwidth
+    assert np.all((spread > 0.1) & (spread < 0.22))
+    _, pdf = cs.pdf_at(q)
+    assert np.allclose(pdf.sum(1), 1.0)
+    assert not np.isfinite(cs.mean_at(np.array([[5.0]])))[0]
 
 
 def test_multi_output_one_pass():
