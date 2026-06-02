@@ -1,25 +1,17 @@
-"""Smooth heatmap kernel: knn_grid + shared rendering of smooth heatmaps.
+"""Smooth heatmap kernel: splat-backed grid/stat smoothers + shared rendering.
 
-Adapted from biocomp `plotting_smooth_2d.py` and pieces of `plotting_core.py`
-(build_tree, knn_stats). KNN primitives are now in `jeanplot.knn`.
+`smooth_grid` / `smooth_grid_gradient` / `smooth_stats` delegate to
+`jeanplot.splat`; `build_tree` survives only as a data holder (`tree.data`) for
+the `smooth_stats(tree=...)` call convention.
 """
 
-import os
 import threading
 from typing import Literal
 
 import numpy as np
 
 from jeanplot.data import PlotFunctionResult
-from jeanplot.knn import (
-    array_content_key,
-    get_gaussian_weighted_knn,
-    get_knn_mean_and_variance,
-    get_knn_mean_only,
-    knn_density_chunked,
-    make_tree,
-)
-from jeanplot.knn.gaussian import balance_weights_by_density, weighted_gather
+from jeanplot.knn import array_content_key, knn_density_chunked, make_tree
 from jeanplot.plots.colorbar import colorbar
 from jeanplot.plots.heatmap import heatmap, make_xy_grid
 from jeanplot.plots.ticks import setup_transformed_axis
@@ -31,129 +23,11 @@ _TREE_CACHE_MAX = 32
 _TREE_CACHE_LOCK = threading.Lock()
 
 
-# Shared, byte-budgeted LRU cache of the y-independent KNN prep. Entries are
-# large (n_query x k) arrays, so the cap is in bytes, not count: one k=7000
-# grid prep is ~10 GB. Sized to retain the working set across panels that share
-# a query (e.g. ground-truth vs prediction over the same grid) when those panels
-# render adjacently. Override via JEANPLOT_KNN_PREP_CACHE_GB.
-_PREP_CACHE: dict = {}
-_PREP_CACHE_BUDGET = int(float(os.environ.get("JEANPLOT_KNN_PREP_CACHE_GB", "16")) * 1e9)
-_PREP_CACHE_BYTES = 0
-_PREP_CACHE_LOCK = threading.Lock()
-
-
-def _prep_nbytes(prep) -> int:
-    return sum(a.nbytes for a in prep if hasattr(a, "nbytes"))
-
-
-# quantile(densities, 0) is the global minimum, set by the single most isolated
-# point; capping rebalancing there lets one sparse outlier dominate its whole
-# neighbourhood. Floor the quantile prob so strength=1.0 caps at a low percentile
-# instead of the absolute minimum.
-_REBALANCE_Q_FLOOR = 0.02
-
-
-def _rebalance_weights(indices, weights, densities, rc, rc_mode, rv, rv_mode):
-    """Density-rebalanced (value_weights, centroid_weights) — SSOT for both the
-    fresh-query and caller-supplied-iw paths."""
-
-    def reb(strength, mode):
-        cap = float(np.quantile(densities, max(1.0 - strength, _REBALANCE_Q_FLOOR)))
-        return balance_weights_by_density(indices, weights, densities, cap=cap, mode=mode)
-
-    has = densities is not None
-    centroid_w = reb(rc, rc_mode) if has and rc > 0.0 else weights
-    iw_weights = reb(rv, rv_mode) if has and rv > 0.0 else weights
-    return iw_weights, centroid_w
-
-
-def _cached_iw_prep(
-    xquery,
-    tree,
-    k,
-    min_points,
-    kdensity,
-    query_kw,
-    densities,
-    rebalance_centroids,
-    rebalance_centroids_mode,
-    rebalance_values,
-    rebalance_values_mode,
-):
-    """(indices, value_weights, centroid_weights) for xquery.
-
-    The neighbour query + density rebalancing depend only on (tree, query points,
-    params), never on y or the requested stat — so a value heatmap, gradient map,
-    and quiver over the same grid share one query instead of three.
-    """
-    kw = tuple(
-        (kk, array_content_key(v) if isinstance(v, np.ndarray) else v)
-        for kk, v in sorted(query_kw.items())
-    )
-    xk = array_content_key(xquery)
-    key = (
-        None
-        if xk is None or any(isinstance(query_kw[kk], np.ndarray) and v is None for kk, v in kw)
-        else (
-            id(tree),
-            xk,
-            int(k),
-            int(min_points),
-            int(kdensity),
-            kw,
-            rebalance_centroids,
-            rebalance_centroids_mode,
-            rebalance_values,
-            rebalance_values_mode,
-        )
-    )
-    if key is not None:
-        with _PREP_CACHE_LOCK:
-            hit = _PREP_CACHE.pop(key, None)
-            if hit is not None:
-                _PREP_CACHE[key] = hit  # reinsert: most-recently-used
-                return hit
-
-    indices, weights = get_gaussian_weighted_knn(
-        xquery, tree, k=k, min_points=min_points, **query_kw
-    )
-    iw_weights, centroid_w = _rebalance_weights(
-        indices,
-        weights,
-        densities,
-        rebalance_centroids,
-        rebalance_centroids_mode,
-        rebalance_values,
-        rebalance_values_mode,
-    )
-    prep = (indices, iw_weights, centroid_w)
-
-    if key is not None:
-        global _PREP_CACHE_BYTES
-        nbytes = _prep_nbytes(prep)
-        with _PREP_CACHE_LOCK:
-            while _PREP_CACHE and _PREP_CACHE_BYTES + nbytes > _PREP_CACHE_BUDGET:
-                evicted = _PREP_CACHE.pop(next(iter(_PREP_CACHE)))
-                _PREP_CACHE_BYTES -= _prep_nbytes(evicted)
-            if nbytes <= _PREP_CACHE_BUDGET:
-                _PREP_CACHE[key] = prep
-                _PREP_CACHE_BYTES += nbytes
-    return prep
-
-
 def clear_knn_caches():
-    """Drop cached trees, grids, and KNN prep arrays (release the large prep
-    arrays between unrelated batch figures)."""
-    global _PREP_CACHE_BYTES
-    from jeanplot.knn.gaussian import clear_mean_ggw_cache
-
+    """Drop cached trees and smooth grids (release between batch figures)."""
     with _TREE_CACHE_LOCK:
         _TREE_CACHE.clear()
-    with _PREP_CACHE_LOCK:
-        _PREP_CACHE.clear()
-        _PREP_CACHE_BYTES = 0
     _SMOOTH_GRID_CACHE.clear()
-    clear_mean_ggw_cache()
 
 
 def build_tree(x):
@@ -176,163 +50,6 @@ def build_tree(x):
                 _TREE_CACHE.pop(next(iter(_TREE_CACHE)))
             _TREE_CACHE[key] = tree
     return tree
-
-
-def knn_stats(
-    xquery,
-    y=None,
-    tree=None,
-    iw=None,
-    k=500,
-    min_points=20,
-    stats: str | list[str] = "iw",
-    weight_by_densities: bool = False,
-    kdensity: int = 50,
-    density_power: float = 0.0,
-    density_floor_q: float | None = 0.01,
-    density_cap_q: float | None = 0.99,
-    rebalance_centroids: float = 0.0,
-    rebalance_centroids_mode: Literal["smooth", "hard"] = "hard",
-    rebalance_values: float = 0.0,
-    rebalance_values_mode: Literal["smooth", "hard"] = "smooth",
-    use_jax=None,
-    **kw,
-):
-    # use_jax is accepted but ignored — jeanplot's KNN backends are configured
-    # via env vars (BIOCOMP_KNN_BACKEND / JEANPLOT_KNN_BACKEND). Kept for
-    # back-compat with biocomp callers that pass `use_jax=False` explicitly.
-    _ = use_jax
-    if isinstance(stats, str):
-        stats = [stats]
-
-    if tree is None and iw is None:
-        tree = build_tree(xquery)
-
-    densities = None
-    if weight_by_densities or rebalance_centroids > 0.0 or rebalance_values > 0.0:
-        from jeanplot.knn.density import per_point_knn_density
-
-        X_ref = kw.get("X_ref", None)
-        densities = per_point_knn_density(tree=tree, X_ref=X_ref, kdensity=kdensity)
-
-    if weight_by_densities:
-        if density_floor_q is not None:
-            kw["density_floor"] = float(np.quantile(densities, density_floor_q))
-        if density_cap_q is not None:
-            kw["density_cap"] = float(np.quantile(densities, density_cap_q))
-        kw["densities"] = densities
-        kw["density_power"] = density_power
-
-    do_rebalance_values = rebalance_values > 0.0 and densities is not None
-    if not iw and stats == ["mean"] and not do_rebalance_values:
-        return get_knn_mean_only(xquery, y, tree=tree, k=k, min_points=min_points, **kw)
-
-    if iw is None:
-        indices, iw_weights, centroid_w = _cached_iw_prep(
-            xquery,
-            tree,
-            k,
-            min_points,
-            kdensity,
-            kw,
-            densities,
-            rebalance_centroids,
-            rebalance_centroids_mode,
-            rebalance_values,
-            rebalance_values_mode,
-        )
-    else:
-        indices, weights = iw
-        iw_weights, centroid_w = _rebalance_weights(
-            indices,
-            weights,
-            densities,
-            rebalance_centroids,
-            rebalance_centroids_mode,
-            rebalance_values,
-            rebalance_values_mode,
-        )
-    iw = (indices, iw_weights)
-
-    need_var = {"variance", "std"} & set(stats)
-    need_mv = {"mean", "variance", "std"} & set(stats)
-    if need_mv and not need_var and y is not None and y.ndim == 2:
-        mean, var = weighted_gather(iw[0], iw[1], y), None
-    elif need_mv:
-        mean, var = get_knn_mean_and_variance(
-            xquery,
-            y,
-            iw=iw,
-            k=k,
-            min_points=min_points,
-            compute_variance=bool(need_var),
-            **kw,
-        )
-    else:
-        mean, var = None, None
-
-    def _centroid():
-        pts = np.asarray(getattr(tree, "data", None))
-        if pts is None:
-            raise ValueError("centroid stats require a tree exposing `.data`")
-        return weighted_gather(indices, centroid_w, pts)
-
-    def calc(s):
-        if s == "iw":
-            return iw
-        if s == "density":
-            weights = iw[1]
-            valid = np.isfinite(weights[:, 0])
-            out = weights.sum(axis=1)
-            if not valid.all():
-                out = out.copy()
-                out[~valid] = 0.0
-            return out
-        if s == "quantile":
-            from jeanplot.knn.jax_kernel import get_knn_quantile
-
-            return get_knn_quantile(xquery, y, iw=iw, k=k, min_points=min_points, **kw)
-        if s == "mean":
-            return mean
-        if s == "variance":
-            return var
-        if s == "std":
-            return np.sqrt(var)
-        if s == "centroid":
-            return _centroid()
-        if s == "centroid_offset":
-            return np.linalg.norm(_centroid() - np.asarray(xquery), axis=1)
-        if s == "grad":
-            # weighted local-linear regression slope: Cov_w(x,x)^-1 · Cov_w(x,y).
-            # Unbiased for the true gradient regardless of sample density (unlike
-            # Cov_w(x,y)/σ², which assumes Var_w(x)=σ² and collapses in dense regions).
-            pts = np.asarray(getattr(tree, "data", None))
-            if pts is None:
-                raise ValueError("grad stat requires a tree exposing `.data`")
-            pts = pts[:, :2]
-            yy = np.asarray(y)
-            yy = yy if yy.ndim == 2 else yy[:, None]
-            ix, w = iw
-            mx = weighted_gather(ix, w, pts)
-            cxy = weighted_gather(ix, w, pts * yy) - mx * weighted_gather(ix, w, yy)
-            m2 = weighted_gather(
-                ix, w, np.column_stack([pts[:, 0] ** 2, pts[:, 0] * pts[:, 1], pts[:, 1] ** 2])
-            )
-            cxx = np.empty((len(mx), 2, 2))
-            cxx[:, 0, 0] = m2[:, 0] - mx[:, 0] ** 2
-            cxx[:, 1, 1] = m2[:, 2] - mx[:, 1] ** 2
-            cxx[:, 0, 1] = cxx[:, 1, 0] = m2[:, 1] - mx[:, 0] * mx[:, 1]
-            ridge = 1e-9 + 1e-6 * (cxx[:, 0, 0] + cxx[:, 1, 1])
-            cxx[:, 0, 0] += ridge
-            cxx[:, 1, 1] += ridge
-            grad = np.full_like(cxy, np.nan)
-            ok = np.isfinite(cxy).all(1) & np.isfinite(cxx).all((1, 2))
-            grad[ok] = np.linalg.solve(cxx[ok], cxy[ok][..., None])[..., 0]
-            return grad
-        raise ValueError(f"Unknown stat: {s}")
-
-    res = tuple([calc(s) for s in stats])
-    return res[0] if len(res) == 1 else res
 
 
 _SMOOTH_GRID_CACHE: dict = {}
@@ -527,7 +244,9 @@ def smooth_grid_gradient(
     return _cache_store((xy, grad), key)
 
 
-_SPLAT_STATS = frozenset({"mean", "variance", "std", "density", "centroid", "centroid_offset", "grad"})
+_SPLAT_STATS = frozenset(
+    {"mean", "variance", "std", "density", "centroid", "centroid_offset", "grad"}
+)
 
 
 def smooth_stats(
@@ -557,7 +276,11 @@ def smooth_stats(
     free = [i for i in range(d) if spans[i] > 1e-9] or [0]
     held = [i for i in range(d) if i not in free]
     order = free + held
-    bounds = [(float(q[:, i].min()), float(q[:, i].max())) for i in free]
+    r = tp["radius"]
+    bounds = []
+    for i in free:  # pad a degenerate (single-point) free dim so the lattice is well-posed
+        lo, hi = float(q[:, i].min()), float(q[:, i].max())
+        bounds.append((lo - r, hi + r) if hi - lo < 1e-9 else (lo, hi))
     zslice = q[0, held] if held else None
     if resolution is None:
         span = max(hi - lo for lo, hi in bounds)
@@ -728,7 +451,6 @@ def weighted_kde_1d(
 
 __all__ = [
     "build_tree",
-    "knn_stats",
     "smooth_stats",
     "knn_density_chunked",
     "smooth_grid",
