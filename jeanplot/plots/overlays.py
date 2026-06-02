@@ -6,7 +6,7 @@ replaced by jeanplot equivalents.
 
 import numpy as np
 
-from jeanplot.plots.smooth_kernel import build_tree, knn_stats
+from jeanplot.plots.smooth_kernel import build_tree, smooth_stats
 
 
 def diagonal_xy(X, angle_deg=45.0):
@@ -151,7 +151,7 @@ def plot_slice_chords(
         if n_input > 1:
             query = np.hstack([query, np.tile(slices[i], (query.shape[0], 1))])
         knn_mean = np.asarray(
-            knn_stats(query, Y, tree=tree, stats=["mean"], **knn_stats_params)
+            smooth_stats(query, Y, tree=tree, stats=["mean"], **knn_stats_params)
         ).reshape(-1)
         finite = np.isfinite(knn_mean)
         if not finite.any():
@@ -225,7 +225,7 @@ def plot_addition_vs_removal_overlay(
             requested = ["mean", "variance"]
             if offset_cutoff is not None:
                 requested.append("centroid_offset")
-            knn_result = knn_stats(query, Y_lat, tree=tree, stats=requested, **knn_stats_params)
+            knn_result = smooth_stats(query, Y_lat, tree=tree, stats=requested, **knn_stats_params)
             if offset_cutoff is not None:
                 knn_mean, _knn_var, knn_offset = knn_result
                 boundary = np.asarray(knn_offset) > offset_cutoff
@@ -294,7 +294,7 @@ def plot_linearity_reference(
         if n_input > 1:
             query = np.hstack([query, np.tile(slices[i], (query.shape[0], 1))])
         knn_mean = np.asarray(
-            knn_stats(query, Y, tree=tree, stats=["mean"], **knn_stats_params)
+            smooth_stats(query, Y, tree=tree, stats=["mean"], **knn_stats_params)
         ).reshape(-1)
         finite = np.isfinite(knn_mean)
         if finite.sum() < 2:

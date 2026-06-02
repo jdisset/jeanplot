@@ -12,7 +12,7 @@ import numpy as np
 
 from jeanplot.data import PlotFunctionResult
 from jeanplot.plots.heatmap import DEFAULT_CMAP_NAME
-from jeanplot.plots.smooth_kernel import build_tree, knn_stats
+from jeanplot.plots.smooth_kernel import build_tree, smooth_stats
 from jeanplot.plots.ticks import format_powers, setup_transformed_axis
 
 NdArray = np.ndarray
@@ -247,7 +247,7 @@ def smooth_1d(
         requested = ["mean", "variance"]
         if offset_cutoff is not None:
             requested.append("centroid_offset")
-        knn_result = knn_stats(query, Y, tree=tree, stats=requested, **knn_stats_params)
+        knn_result = smooth_stats(query, Y, tree=tree, stats=requested, **knn_stats_params)
         if offset_cutoff is not None:
             knn_mean, knn_variance, knn_offset = knn_result
             boundary = (np.asarray(knn_offset) > offset_cutoff).reshape(-1, 1)

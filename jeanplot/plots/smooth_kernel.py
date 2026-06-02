@@ -527,6 +527,50 @@ def smooth_grid_gradient(
     return _cache_store((xy, grad), key)
 
 
+_SPLAT_STATS = frozenset({"mean", "variance", "std", "density", "centroid", "centroid_offset", "grad"})
+
+
+def smooth_stats(
+    xquery,
+    y=None,
+    tree=None,
+    data=None,
+    stats: str | list[str] = "mean",
+    smooth_params=None,
+    resolution=None,
+    **params,
+):
+    """Splat stats at arbitrary query points. The query's varying dims become the
+    lattice; constant (slice) dims are gaussian-banded. SSOT for the bare
+    per-query `knn_stats` paths (mean/std/density/centroid/grad)."""
+    single = isinstance(stats, str)
+    stats_l = [stats] if single else list(stats)
+    assert all(s in _SPLAT_STATS for s in stats_l), f"smooth_stats: non-splat stat {stats_l}"
+    X = np.asarray(data if data is not None else tree.data, dtype=np.float64)
+    q = np.asarray(xquery, dtype=np.float64)
+    if q.ndim == 1:
+        q = q[:, None]
+    d = X.shape[1]
+    tp = _translate_smooth_params(smooth_params if smooth_params is not None else params)
+
+    spans = q.max(0) - q.min(0)
+    free = [i for i in range(d) if spans[i] > 1e-9] or [0]
+    held = [i for i in range(d) if i not in free]
+    order = free + held
+    bounds = [(float(q[:, i].min()), float(q[:, i].max())) for i in free]
+    zslice = q[0, held] if held else None
+    if resolution is None:
+        span = max(hi - lo for lo, hi in bounds)
+        cell = tp["radius"] / tp["sigma_in_radius"] / 2.0
+        resolution = int(np.clip(np.ceil(span / max(cell, 1e-9)), 32, 256))
+
+    field = SplatField.fit(
+        X[:, order], y, bounds=bounds, resolution=resolution, zslice=zslice, stats=stats_l, **tp
+    )
+    out = tuple(field.at(q[:, free], s) for s in stats_l)
+    return out[0] if single else out
+
+
 def knn_grid(*args, **kwargs):
     """Deprecated alias for `smooth_grid` (knn_stats_params kwarg still accepted)."""
     return smooth_grid(*args, **kwargs)
@@ -685,6 +729,7 @@ def weighted_kde_1d(
 __all__ = [
     "build_tree",
     "knn_stats",
+    "smooth_stats",
     "knn_density_chunked",
     "smooth_grid",
     "smooth_grid_gradient",

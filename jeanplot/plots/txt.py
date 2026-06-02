@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from jeanplot.plots.ascii_heatmap import heatmap_with_labels
-from jeanplot.plots.smooth_kernel import build_tree, knn_stats
+from jeanplot.plots.smooth_kernel import build_tree, smooth_stats
 
 NdArray = np.ndarray
 
@@ -45,7 +45,7 @@ def _knn_grid(x, y, xlims, ylims, zslice=None, grid_resolution=100, knn_stats_pa
         xquery = xy
 
     tree = build_tree(x_clean)
-    output_values, _ = knn_stats(
+    output_values, _ = smooth_stats(
         xquery, y_clean, tree=tree, stats=["mean", "density"], **knn_stats_params
     )
     return xy, output_values.squeeze()
@@ -119,7 +119,7 @@ def smooth_1d_txt(
         if n_input > 1 and slices is not None:
             query = np.hstack([query, np.tile(slices[i], (query.shape[0], 1))])
 
-        knn_mean, _ = knn_stats(query, Y, tree=tree, stats=["mean", "variance"], **knn_stats_params)
+        knn_mean, _ = smooth_stats(query, Y, tree=tree, stats=["mean", "variance"], **knn_stats_params)
         label = ""
         if n_input > 1 and slices is not None:
             for j in range(n_input - 1):
