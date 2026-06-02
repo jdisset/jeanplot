@@ -11,7 +11,7 @@ from typing import Literal
 import numpy as np
 
 from jeanplot.data import PlotFunctionResult
-from jeanplot.knn import array_content_key, knn_density_chunked, make_tree
+from jeanplot.knn import array_content_key, make_tree
 from jeanplot.plots.colorbar import colorbar
 from jeanplot.plots.heatmap import heatmap, make_xy_grid
 from jeanplot.plots.ticks import setup_transformed_axis
@@ -294,16 +294,6 @@ def smooth_stats(
     return out[0] if single else out
 
 
-def knn_grid(*args, **kwargs):
-    """Deprecated alias for `smooth_grid` (knn_stats_params kwarg still accepted)."""
-    return smooth_grid(*args, **kwargs)
-
-
-def knn_grid_gradient(*args, **kwargs):
-    """Deprecated alias for `smooth_grid_gradient`."""
-    return smooth_grid_gradient(*args, **kwargs)
-
-
 def _resolve_lims(X, xlims, ylims):
     dx = [X[:, 0].min(), X[:, 0].max()]
     dy = [X[:, 1].min(), X[:, 1].max()]
@@ -452,11 +442,8 @@ def weighted_kde_1d(
 __all__ = [
     "build_tree",
     "smooth_stats",
-    "knn_density_chunked",
     "smooth_grid",
     "smooth_grid_gradient",
-    "knn_grid",
-    "knn_grid_gradient",
     "weighted_kde_1d",
     "_resolve_lims",
     "_finite_xy",

@@ -33,15 +33,13 @@ def _ball_kernel(cell, radius):
     return (r2 <= radius**2).astype(np.float64)
 
 
-def _deposit(coords, payloads, origin, cell, shape):
-    """Bilinear (cloud-in-cell) scatter of every payload column into a padded
-    lattice. Returns (prod(shape), n_channels) accumulated in C order."""
+def cic_corners(coords, origin, cell, shape):
+    """Cloud-in-cell: yield ``(flat_idx, weight)`` for each of the 2^d cell
+    corners a point splats into (C-order over ``shape``; out-of-range → w=0)."""
     n, d = coords.shape
     f = (coords - origin) / cell
     base = np.floor(f).astype(np.int64)
     frac = f - base
-    ncells = int(np.prod(shape))
-    out = np.zeros((ncells, payloads.shape[1]))
     for corner in range(1 << d):
         flat = np.zeros(n, dtype=np.int64)
         w = np.ones(n)
@@ -52,7 +50,14 @@ def _deposit(coords, payloads, origin, cell, shape):
             w = w * (frac[:, ax] if bit else 1.0 - frac[:, ax])
             valid &= (cidx >= 0) & (cidx < shape[ax])
             flat = flat * shape[ax] + np.clip(cidx, 0, shape[ax] - 1)
-        w = w * valid
+        yield flat, w * valid
+
+
+def _deposit(coords, payloads, origin, cell, shape):
+    """Scatter every payload column into a padded lattice (prod(shape), n_ch)."""
+    ncells = int(np.prod(shape))
+    out = np.zeros((ncells, payloads.shape[1]))
+    for flat, w in cic_corners(coords, origin, cell, shape):
         for ch in range(payloads.shape[1]):
             out[:, ch] += np.bincount(flat, weights=w * payloads[:, ch], minlength=ncells)
     return out
@@ -80,13 +85,12 @@ def splat_point_density(X, *, radius, sigma_in_radius=3.0, res=64):
 class SplatField:
     """Moment-buffer kernel smoother over a d-dim lattice (d in {1,2,3})."""
 
-    def __init__(self, buffers, axes, n_eff, n_outs, sigma_in_radius):
+    def __init__(self, buffers, axes, n_eff, n_outs):
         self._b = buffers
         self._axes = axes
         self._n_eff = n_eff
         self.ndim = len(axes)
         self.n_outs = n_outs
-        self.sigma_in_radius = sigma_in_radius
 
     @classmethod
     def fit(
@@ -186,16 +190,8 @@ class SplatField:
                 cols.append((f"Cx{k}", wc_eff * sp[:, k]))
 
         names = [c[0] for c in cols]
-        if sp.shape[0] == 0:
-            payload = np.zeros((0, len(cols)))
-        else:
-            payload = np.column_stack([c[1] for c in cols])
-        dep = (
-            _deposit(sp, payload, origin, cell, pshape)
-            if sp.shape[0]
-            else np.zeros((int(np.prod(pshape)), len(cols)))
-        )
-        dep = dep.reshape(*pshape, len(cols))
+        payload = np.column_stack([c[1] for c in cols])
+        dep = _deposit(sp, payload, origin, cell, pshape).reshape(*pshape, len(cols))
 
         crop = tuple(slice(margin, margin + res) for _ in range(d))
         buffers = {}
@@ -214,7 +210,7 @@ class SplatField:
         n_eff = fftconvolve(dep[..., cnt_idx], ball, mode="same")[crop]
         n_eff = np.where(n_eff >= max(min_points, 1), n_eff, np.nan)
         axes = tuple(np.linspace(lo, hi, res) for lo, hi in bounds)
-        return cls(buffers, axes, n_eff, n_outs, sigma_in_radius)
+        return cls(buffers, axes, n_eff, n_outs)
 
     def _support(self):
         return np.isfinite(self._n_eff)

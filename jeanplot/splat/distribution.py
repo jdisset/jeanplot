@@ -8,7 +8,13 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import gaussian_filter
 from scipy.signal import fftconvolve
 
-from jeanplot.splat.core import _balance_factor, _ball_kernel, _cap, splat_point_density
+from jeanplot.splat.core import (
+    _balance_factor,
+    _ball_kernel,
+    _cap,
+    cic_corners,
+    splat_point_density,
+)
 
 
 class ConditionalSplat:
@@ -62,30 +68,17 @@ class ConditionalSplat:
         ncells = int(np.prod(pshape))
         nb = n_value_bins
 
-        H = np.zeros(ncells * nb)
+        H = np.zeros((ncells, nb))
         cnt = np.zeros(ncells)
         if X.shape[0]:
-            f = (X - origin) / cell
-            base = np.floor(f).astype(np.int64)
-            frac = f - base
             vf = (Y - vlo) / vcell
             vb = np.clip(np.floor(vf).astype(np.int64), 0, nb - 1)
             vt = np.clip(vf - vb, 0.0, 1.0)
-            for corner in range(1 << d):
-                sflat = np.zeros(X.shape[0], dtype=np.int64)
-                sw = np.ones(X.shape[0])
-                valid = np.ones(X.shape[0], dtype=bool)
-                for ax in range(d):
-                    bit = (corner >> ax) & 1
-                    cidx = base[:, ax] + bit
-                    sw = sw * (frac[:, ax] if bit else 1.0 - frac[:, ax])
-                    valid &= (cidx >= 0) & (cidx < pshape[ax])
-                    sflat = sflat * pshape[ax] + np.clip(cidx, 0, pshape[ax] - 1)
-                sw = sw * valid
+            for sflat, sw in cic_corners(X, origin, cell, pshape):
                 cnt += np.bincount(sflat, weights=sw, minlength=ncells)
                 for voff, vw in ((0, 1.0 - vt), (1, vt)):
                     vbin = np.clip(vb + voff, 0, nb - 1)
-                    np.add.at(H.reshape(ncells, nb), (sflat, vbin), sw * vw * w)
+                    np.add.at(H, (sflat, vbin), sw * vw * w)
 
         H = H.reshape(*pshape, nb)
         sig = list(sigma / cell) + [0.0]
