@@ -12,7 +12,9 @@
 #     <<{+<}:
 #       PlotPanel: { rescaler: ... }   # domain-specific overrides
 
-!set_default vlim_min_floor: 0.0
+# null = color min auto-tracks the data (q01). Set a float to floor it (e.g. 0.0
+# to anchor non-negative data at zero).
+!set_default vlim_min_floor: null
 !set_default vlim_min_range: 0.1
 !set_default paper_axes_size: [2.5, 2.0]
 !set_default paper_cmap_value: bc_blues
@@ -43,6 +45,18 @@ _body_paper_only:
     SmoothPanel2D:
       vlim_min_floor: ${vlim_min_floor}
       vlim_min_range: ${vlim_min_range}
+
+  # Cube faces: same palette as 2D, otsu-thresholded + clipped to the lowest
+  # contour so only the signal blob is filled (rest shows through the stack).
+  CubeStackPanel:
+    smooth_2d_params:
+      heatmap_params:
+        cmap: ${paper_cmap_value}
+        contours: ["otsu:0.65"]
+        clip_to_lowest_contour: true
+        contours_linewidth: 0.2
+        opacity: 0.35
+        show_image: true
 
   Figure:
     dpi: 600

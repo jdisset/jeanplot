@@ -470,8 +470,8 @@ rules: !cascade:jstyle_fill
       curve_type: !SimpleBezierCurve
         start_mode: vector
         end_mode: vector
-        start_vector: [30, 0]
-        end_vector: [25, 0]
+        start_vector: [25, 0]
+        end_vector: [-10, 0]
       end_cap: !LineEndCircle
         fill_color: ${theme.comp_connection_color}
         stroke_width: 0
