@@ -60,12 +60,13 @@ def smooth_2d(
     draw_colorbar_label=True,
     colorbar_params: dict | None = None,
     knn_grid_params: dict | None = None,
+    smooth_grid_params: dict | None = None,
     heatmap_params: dict | None = None,
     setup_transformed_axis_params: dict | None = None,
 ) -> PlotFunctionResult:
     if isinstance(ax, list | tuple):
         ax = ax[0]
-    knn_grid_params = dict(knn_grid_params or {})
+    knn_grid_params = dict(smooth_grid_params or knn_grid_params or {})
     xlims, ylims = _resolve_lims(X, xlims, ylims)
     X, Y = _finite_xy(X, Y)
     zslice = np.asarray(zslice) if zslice is not None else None
@@ -115,11 +116,12 @@ def knn_gradient_grid(
     xlims,
     ylims,
     knn_grid_params: dict | None = None,
+    smooth_grid_params: dict | None = None,
     space: Literal["raw", "latent"] = "latent",
     rescaler=None,
     method: Literal["local_linear", "finite_diff"] = "local_linear",
 ) -> KnnGradientField:
-    knn_grid_params = dict(knn_grid_params or {})
+    knn_grid_params = dict(smooth_grid_params or knn_grid_params or {})
     resolution = knn_grid_params.get("grid_resolution", 200)
     x1_lat = np.linspace(xlims[0], xlims[1], resolution)
     x2_lat = np.linspace(ylims[0], ylims[1], resolution)
@@ -206,14 +208,17 @@ def smooth_grad_magnitude_2d(
     xaxis_labelpad=None,
     yaxis_labelpad=None,
     knn_grid_params: dict | None = None,
+    smooth_grid_params: dict | None = None,
     heatmap_params: dict | None = None,
     colorbar_params: dict | None = None,
     gradient_method: Literal["local_linear", "finite_diff"] = "local_linear",
 ) -> PlotFunctionResult:
-    knn_grid_params = dict(knn_grid_params or {})
+    knn_grid_params = dict(smooth_grid_params or knn_grid_params or {})
     xlims, ylims = _resolve_lims(X, xlims, ylims)
     X, Y = _finite_xy(X, Y)
-    field = knn_gradient_grid(X, Y, xlims, ylims, knn_grid_params, space, rescaler, gradient_method)
+    field = knn_gradient_grid(
+        X, Y, xlims, ylims, knn_grid_params, space=space, rescaler=rescaler, method=gradient_method
+    )
     magnitude = np.sqrt(field.gx**2 + field.gy**2)
     resolution = knn_grid_params.get("grid_resolution", 200)
     return _render_smooth_heatmap(
@@ -253,6 +258,7 @@ def gradient_field_2d(
     xlims=(0, 1),
     ylims=(None, None),
     knn_grid_params: dict | None = None,
+    smooth_grid_params: dict | None = None,
     space: Literal["raw", "latent"] = "latent",
     quiver_resolution: int = 22,
     normalize_arrows: bool = False,
@@ -279,7 +285,7 @@ def gradient_field_2d(
         Y,
         xlims,
         ylims,
-        knn_grid_params=knn_grid_params,
+        knn_grid_params=smooth_grid_params or knn_grid_params,
         space=space,
         rescaler=rescaler,
         method=gradient_method,

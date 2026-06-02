@@ -77,6 +77,7 @@ def smooth_1d_txt(
     res: int = 80,
     height: int = 20,
     knn_stats_params=None,
+    smooth_params=None,
     **_,
 ) -> TextPlotResult:
     try:
@@ -87,8 +88,7 @@ def smooth_1d_txt(
             title=title or "",
         )
 
-    if knn_stats_params is None:
-        knn_stats_params = {}
+    knn_stats_params = dict(smooth_params or knn_stats_params or {})
     knn_radius = knn_stats_params.get("radius", 0.075)
     knn_stats_params = {**knn_stats_params, "radius": knn_radius}
     knn_stats_params.pop("avg_method", None)
@@ -160,10 +160,10 @@ def smooth_2d_txt(
     xres: int = 64,
     yres: int = 32,
     knn_grid_params=None,
+    smooth_grid_params=None,
     **_,
 ) -> TextPlotResult:
-    if knn_grid_params is None:
-        knn_grid_params = {}
+    knn_grid_params = dict(smooth_grid_params or knn_grid_params or {})
 
     data_xlims = [X[:, 0].min(), X[:, 0].max()]
     data_ylims = [X[:, 1].min(), X[:, 1].max()]
@@ -189,7 +189,7 @@ def smooth_2d_txt(
         ylims,
         zslice=zslice,
         grid_resolution=max(xres, yres),
-        knn_stats_params=knn_grid_params.get("knn_stats_params", {}),
+        knn_stats_params=knn_grid_params.get("smooth_params") or knn_grid_params.get("knn_stats_params", {}),
     )
 
     grid_size = int(np.sqrt(len(output_values)))
@@ -236,12 +236,12 @@ def smooth_3d_txt(
     title=None,
     smooth_2d_params=None,
     knn_grid_params=None,
+    smooth_grid_params=None,
     **_,
 ) -> TextPlotResult:
     if smooth_2d_params is None:
         smooth_2d_params = {}
-    if knn_grid_params is None:
-        knn_grid_params = {}
+    knn_grid_params = dict(smooth_grid_params or knn_grid_params or {})
 
     ylims = xlims if ylims == (None, None) else ylims
     zlims = xlims if zlims == (None, None) else zlims
@@ -259,6 +259,7 @@ def smooth_3d_txt(
         "xtitle",
         "ytitle",
         "knn_grid_params",
+        "smooth_grid_params",
     }
     s2d_params = {k: v for k, v in smooth_2d_params.items() if k not in explicit_keys}
 

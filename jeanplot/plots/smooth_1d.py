@@ -176,6 +176,7 @@ def smooth_1d(
     errorbar_props: list[dict] | dict | None = None,
     colors: list[Any] | None = None,
     knn_stats_params: dict | None = None,
+    smooth_params: dict | None = None,
     max_centroid_offset_frac: float = 0.0,
     legend_kwargs: dict | None = None,
     head_fit_frac: float = 0.0,
@@ -190,8 +191,7 @@ def smooth_1d(
     slope_props: dict | None = None,
     slope_fmt: str = r"$\alpha={:.2g}$",
 ):
-    if knn_stats_params is None:
-        knn_stats_params = {}
+    knn_stats_params = dict(smooth_params or knn_stats_params or {})
     knn_radius = knn_stats_params.get("radius", 0.075)
     knn_stats_params["radius"] = knn_radius
     knn_stats_params.pop("avg_method", None)
