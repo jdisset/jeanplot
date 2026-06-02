@@ -1,5 +1,7 @@
 """ScatterPanel3D + GridHistogramPanel."""
 
+from typing import Any
+
 from pydantic import Field
 
 from jeanplot.data import IdentityRescaler, PlotData, PlotFunctionResult
@@ -19,11 +21,13 @@ class GridHistogramPanel(PlotPanel):
     use_log_density: bool = True
     margins: float = 0.01
     noise_smooth: float = 0.25
+    cmap: Any = None  # cmap name or Colormap; None -> DEFAULT_DENSITY_CMAP
     colorbar_params: dict = Field(default_factory=dict)
 
     def draw(self, ax) -> PlotFunctionResult | None:
         rescaler = self.rescaler if self.rescaler is not None else IdentityRescaler()
         im, _cbar = grid_histogram(
+            cmap=self.cmap,
             X=self.plot_data.x,
             Y=self.plot_data.y,
             input_names=self.plot_data.input_names,
