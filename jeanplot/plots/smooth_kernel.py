@@ -4,6 +4,7 @@ Adapted from biocomp `plotting_smooth_2d.py` and pieces of `plotting_core.py`
 (build_tree, knn_stats). KNN primitives are now in `jeanplot.knn`.
 """
 
+import os
 import threading
 from typing import Literal
 
@@ -22,18 +23,34 @@ from jeanplot.knn.gaussian import balance_weights_by_density, weighted_gather
 from jeanplot.plots.colorbar import colorbar
 from jeanplot.plots.heatmap import heatmap, make_xy_grid
 from jeanplot.plots.ticks import setup_transformed_axis
+from jeanplot.splat import SplatField
 
 
 _TREE_CACHE: dict = {}
-_TREE_CACHE_MAX = 8
+_TREE_CACHE_MAX = 32
 _TREE_CACHE_LOCK = threading.Lock()
 
 
-# Shared, LRU-bounded cache of the y-independent KNN prep. Large (n_query x k)
-# arrays, so kept small.
+# Shared, byte-budgeted LRU cache of the y-independent KNN prep. Entries are
+# large (n_query x k) arrays, so the cap is in bytes, not count: one k=7000
+# grid prep is ~10 GB. Sized to retain the working set across panels that share
+# a query (e.g. ground-truth vs prediction over the same grid) when those panels
+# render adjacently. Override via JEANPLOT_KNN_PREP_CACHE_GB.
 _PREP_CACHE: dict = {}
-_PREP_CACHE_MAX = 8
+_PREP_CACHE_BUDGET = int(float(os.environ.get("JEANPLOT_KNN_PREP_CACHE_GB", "16")) * 1e9)
+_PREP_CACHE_BYTES = 0
 _PREP_CACHE_LOCK = threading.Lock()
+
+
+def _prep_nbytes(prep) -> int:
+    return sum(a.nbytes for a in prep if hasattr(a, "nbytes"))
+
+
+# quantile(densities, 0) is the global minimum, set by the single most isolated
+# point; capping rebalancing there lets one sparse outlier dominate its whole
+# neighbourhood. Floor the quantile prob so strength=1.0 caps at a low percentile
+# instead of the absolute minimum.
+_REBALANCE_Q_FLOOR = 0.02
 
 
 def _rebalance_weights(indices, weights, densities, rc, rc_mode, rv, rv_mode):
@@ -41,7 +58,7 @@ def _rebalance_weights(indices, weights, densities, rc, rc_mode, rv, rv_mode):
     fresh-query and caller-supplied-iw paths."""
 
     def reb(strength, mode):
-        cap = float(np.quantile(densities, 1.0 - strength))
+        cap = float(np.quantile(densities, max(1.0 - strength, _REBALANCE_Q_FLOOR)))
         return balance_weights_by_density(indices, weights, densities, cap=cap, mode=mode)
 
     has = densities is not None
@@ -112,21 +129,31 @@ def _cached_iw_prep(
     prep = (indices, iw_weights, centroid_w)
 
     if key is not None:
+        global _PREP_CACHE_BYTES
+        nbytes = _prep_nbytes(prep)
         with _PREP_CACHE_LOCK:
-            if len(_PREP_CACHE) >= _PREP_CACHE_MAX:
-                _PREP_CACHE.pop(next(iter(_PREP_CACHE)))
-            _PREP_CACHE[key] = prep
+            while _PREP_CACHE and _PREP_CACHE_BYTES + nbytes > _PREP_CACHE_BUDGET:
+                evicted = _PREP_CACHE.pop(next(iter(_PREP_CACHE)))
+                _PREP_CACHE_BYTES -= _prep_nbytes(evicted)
+            if nbytes <= _PREP_CACHE_BUDGET:
+                _PREP_CACHE[key] = prep
+                _PREP_CACHE_BYTES += nbytes
     return prep
 
 
 def clear_knn_caches():
     """Drop cached trees, grids, and KNN prep arrays (release the large prep
     arrays between unrelated batch figures)."""
+    global _PREP_CACHE_BYTES
+    from jeanplot.knn.gaussian import clear_mean_ggw_cache
+
     with _TREE_CACHE_LOCK:
         _TREE_CACHE.clear()
     with _PREP_CACHE_LOCK:
         _PREP_CACHE.clear()
-    _KNN_GRID_CACHE.clear()
+        _PREP_CACHE_BYTES = 0
+    _SMOOTH_GRID_CACHE.clear()
+    clear_mean_ggw_cache()
 
 
 def build_tree(x):
@@ -308,26 +335,26 @@ def knn_stats(
     return res[0] if len(res) == 1 else res
 
 
-_KNN_GRID_CACHE: dict = {}
-_KNN_GRID_CACHE_MAX = 8
+_SMOOTH_GRID_CACHE: dict = {}
+_SMOOTH_GRID_CACHE_MAX = 128
 
 
-def _knn_grid_cache_key(
+def _smooth_grid_cache_key(
     x,
     y,
     xlims,
     ylims,
     zslice,
-    is_density_plot,
+    kind,
     grid_resolution,
-    knn_stats_params,
-    max_centroid_offset_frac=0.0,
-    query_mode="grid",
-    query_seed=0,
+    sp,
+    max_centroid_offset_frac,
+    query_mode,
+    query_seed,
 ):
     kx = array_content_key(x)
-    ky = array_content_key(y)
-    if kx is None or ky is None:
+    ky = array_content_key(y) if y is not None else None
+    if kx is None or (y is not None and ky is None):
         return None
     kz = array_content_key(np.asarray(zslice)) if zslice is not None else None
     return (
@@ -336,50 +363,59 @@ def _knn_grid_cache_key(
         tuple(xlims) if xlims is not None else None,
         tuple(ylims) if ylims is not None else None,
         kz,
-        is_density_plot if isinstance(is_density_plot, str) else bool(is_density_plot),
+        kind,
         int(grid_resolution),
-        tuple(sorted((knn_stats_params or {}).items())),
+        tuple(sorted((sp or {}).items())),
         float(max_centroid_offset_frac),
         str(query_mode),
         int(query_seed),
     )
 
 
-def _grid_query(x, y, xlims, ylims, zslice, grid_resolution, query_mode, query_seed):
-    mask = np.all(np.isfinite(x), axis=1) if x.ndim > 1 else np.isfinite(x)
-    mask = mask & (np.all(np.isfinite(y), axis=1) if y.ndim > 1 else np.isfinite(y))
-    x_clean, y_clean = (x, y) if mask.all() else (x[mask], y[mask])
+def _translate_smooth_params(sp):
+    """Map the legacy `knn_stats_params` / `smooth_params` vocabulary onto
+    `SplatField.fit` kwargs. `k`/`kdensity` (gather-only) are ignored."""
+    sp = dict(sp or {})
+    return dict(
+        radius=float(sp.get("radius", 0.1)),
+        sigma_in_radius=float(sp.get("sigma_in_radius", 3.0)),
+        min_points=int(sp.get("min_points", 20)),
+        rebalance_values=float(sp.get("rebalance_values", 0.0)),
+        rebalance_values_mode=sp.get("rebalance_values_mode", "smooth"),
+        rebalance_centroids=float(sp.get("rebalance_centroids", 0.0)),
+        rebalance_centroids_mode=sp.get("rebalance_centroids_mode", "hard"),
+    )
 
+
+def _resolve_bounds(xlims, ylims):
     xmin, xmax = xlims
-    ymin, ymax = ylims or xlims
+    ymin, ymax = ylims if ylims and ylims[0] is not None else xlims
+    return (xmin, xmax), (ymin, ymax)
+
+
+def _cache_store(out, key):
+    if key is not None:
+        if len(_SMOOTH_GRID_CACHE) >= _SMOOTH_GRID_CACHE_MAX:
+            _SMOOTH_GRID_CACHE.pop(next(iter(_SMOOTH_GRID_CACHE)))
+        _SMOOTH_GRID_CACHE[key] = out
+    return out
+
+
+def _smooth_query(field, stat, query_mode, xb, yb, grid_resolution, query_seed):
     if query_mode == "uniform":
         rng = np.random.default_rng(int(query_seed))
         n = int(grid_resolution) ** 2
-        xy = np.column_stack([rng.uniform(xmin, xmax, n), rng.uniform(ymin, ymax, n)]).astype(
+        xy = np.column_stack([rng.uniform(xb[0], xb[1], n), rng.uniform(yb[0], yb[1], n)]).astype(
             np.float64
         )
-    else:
-        xy = make_xy_grid(
-            xmin, xmax, xres=grid_resolution, ymin=ymin, ymax=ymax, yres=grid_resolution
-        )
-
-    if len(x_clean) and x_clean.shape[1] > 2:
-        assert zslice is not None and zslice.shape == (x_clean.shape[1] - 2,), (
-            f"zslice.shape = {None if zslice is None else zslice.shape} != {x_clean.shape[1] - 2}"
-        )
-        xquery = np.hstack([xy, [zslice] * xy.shape[0]])
-    else:
-        xquery = xy
-    return xy, xquery, x_clean, y_clean
+        return xy, field.at(xy, stat)
+    xy = make_xy_grid(
+        xb[0], xb[1], xres=grid_resolution, ymin=yb[0], ymax=yb[1], yres=grid_resolution
+    )
+    return xy, field.flat_xy(stat)
 
 
-def _centroid_boundary_mask(offset, knn_stats_params, frac):
-    radius = float(knn_stats_params.get("radius", 0.1))
-    sigma_in_radius = float(knn_stats_params.get("sigma_in_radius", 3.0))
-    return np.asarray(offset) > frac * (radius / sigma_in_radius)
-
-
-def knn_grid(
+def smooth_grid(
     x,
     y,
     xlims,
@@ -387,76 +423,72 @@ def knn_grid(
     zslice=None,
     is_density_plot=False,
     grid_resolution=200,
+    smooth_params=None,
     knn_stats_params=None,
     max_centroid_offset_frac: float = 0.0,
     query_mode: Literal["grid", "uniform"] = "grid",
     query_seed: int = 0,
 ):
-    """KNN-smoothed (X, Y) at query points covering xlims × ylims."""
-    if knn_stats_params is None:
-        knn_stats_params = {}
-
-    cache_key = _knn_grid_cache_key(
+    """Splat-smoothed (X, Y) over xlims × ylims. SSOT grid smoother."""
+    sp = smooth_params if smooth_params is not None else knn_stats_params
+    primary = "density" if is_density_plot else "mean"
+    key = _smooth_grid_cache_key(
         x,
         y,
         xlims,
         ylims,
         zslice,
-        is_density_plot,
+        primary,
         grid_resolution,
-        knn_stats_params,
+        sp,
         max_centroid_offset_frac,
         query_mode,
         query_seed,
     )
-    if cache_key is not None:
-        cached = _KNN_GRID_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+    if key is not None and key in _SMOOTH_GRID_CACHE:
+        return _SMOOTH_GRID_CACHE[key]
 
-    xy, xquery, x_clean, y_clean = _grid_query(
-        x, y, xlims, ylims, zslice, grid_resolution, query_mode, query_seed
+    xb, yb = _resolve_bounds(xlims, ylims)
+    tp = _translate_smooth_params(sp)
+    stats = [primary] + (["centroid_offset"] if max_centroid_offset_frac > 0.0 else [])
+    field = SplatField.fit(
+        np.asarray(x),
+        None if is_density_plot else y,
+        bounds=[xb, yb],
+        resolution=grid_resolution,
+        zslice=np.asarray(zslice) if zslice is not None else None,
+        stats=stats,
+        **tp,
     )
-    if len(x_clean) == 0:
-        return xy, np.full(xy.shape[0], np.nan)
-
-    tree = build_tree(x_clean)
-    primary = "density" if is_density_plot else "mean"
-    requested = [primary, "centroid_offset"] if max_centroid_offset_frac > 0.0 else primary
-    result = knn_stats(xquery, y_clean, tree=tree, stats=requested, **knn_stats_params)
+    xy, vals = _smooth_query(field, primary, query_mode, xb, yb, grid_resolution, query_seed)
+    vals = np.asarray(vals)
+    if vals.ndim == 2 and vals.shape[1] == 1:
+        vals = vals[:, 0]
     if max_centroid_offset_frac > 0.0:
-        output_values, offset = result
-        boundary = _centroid_boundary_mask(offset, knn_stats_params, max_centroid_offset_frac)
-        output_values = np.where(boundary, np.nan, output_values.squeeze())
-    else:
-        output_values = result.squeeze()
-
-    if output_values.shape != (xy.shape[0],):
-        raise ValueError(f"output_values.shape = {output_values.shape} != {xy.shape[0]}")
-
-    if cache_key is not None:
-        if len(_KNN_GRID_CACHE) >= _KNN_GRID_CACHE_MAX:
-            _KNN_GRID_CACHE.pop(next(iter(_KNN_GRID_CACHE)))
-        _KNN_GRID_CACHE[cache_key] = (xy, output_values)
-    return xy, output_values
+        _, offset = _smooth_query(
+            field, "centroid_offset", query_mode, xb, yb, grid_resolution, query_seed
+        )
+        thresh = max_centroid_offset_frac * (tp["radius"] / tp["sigma_in_radius"])
+        vals = np.where(np.asarray(offset) > thresh, np.nan, vals)
+    return _cache_store((xy, vals), key)
 
 
-def knn_grid_gradient(
+def smooth_grid_gradient(
     x,
     y,
     xlims,
     ylims,
     zslice=None,
     grid_resolution=200,
+    smooth_params=None,
     knn_stats_params=None,
     max_centroid_offset_frac: float = 0.0,
     query_mode: Literal["grid", "uniform"] = "grid",
     query_seed: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Weighted local-linear-regression gradient at grid points: (xy, grad[:, :2])."""
-    knn_stats_params = knn_stats_params or {}
-
-    cache_key = _knn_grid_cache_key(
+    sp = smooth_params if smooth_params is not None else knn_stats_params
+    key = _smooth_grid_cache_key(
         x,
         y,
         xlims,
@@ -464,38 +496,45 @@ def knn_grid_gradient(
         zslice,
         "grad",
         grid_resolution,
-        knn_stats_params,
+        sp,
         max_centroid_offset_frac,
         query_mode,
         query_seed,
     )
-    if cache_key is not None:
-        cached = _KNN_GRID_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+    if key is not None and key in _SMOOTH_GRID_CACHE:
+        return _SMOOTH_GRID_CACHE[key]
 
-    xy, xquery, x_clean, y_clean = _grid_query(
-        x, y, xlims, ylims, zslice, grid_resolution, query_mode, query_seed
+    xb, yb = _resolve_bounds(xlims, ylims)
+    tp = _translate_smooth_params(sp)
+    stats = ["grad"] + (["centroid_offset"] if max_centroid_offset_frac > 0.0 else [])
+    field = SplatField.fit(
+        np.asarray(x),
+        y,
+        bounds=[xb, yb],
+        resolution=grid_resolution,
+        zslice=np.asarray(zslice) if zslice is not None else None,
+        stats=stats,
+        **tp,
     )
-    if len(x_clean) == 0:
-        return xy, np.full((xy.shape[0], 2), np.nan)
-
-    tree = build_tree(x_clean)
+    xy, grad = _smooth_query(field, "grad", query_mode, xb, yb, grid_resolution, query_seed)
+    grad = np.asarray(grad)
     if max_centroid_offset_frac > 0.0:
-        grad, offset = knn_stats(
-            xquery, y_clean, tree=tree, stats=["grad", "centroid_offset"], **knn_stats_params
+        _, offset = _smooth_query(
+            field, "centroid_offset", query_mode, xb, yb, grid_resolution, query_seed
         )
-        boundary = _centroid_boundary_mask(offset, knn_stats_params, max_centroid_offset_frac)
-        grad = np.where(boundary[:, None], np.nan, grad)
-    else:
-        grad = knn_stats(xquery, y_clean, tree=tree, stats="grad", **knn_stats_params)
+        thresh = max_centroid_offset_frac * (tp["radius"] / tp["sigma_in_radius"])
+        grad = np.where((np.asarray(offset) > thresh)[:, None], np.nan, grad)
+    return _cache_store((xy, grad), key)
 
-    out = (xy, np.asarray(grad))
-    if cache_key is not None:
-        if len(_KNN_GRID_CACHE) >= _KNN_GRID_CACHE_MAX:
-            _KNN_GRID_CACHE.pop(next(iter(_KNN_GRID_CACHE)))
-        _KNN_GRID_CACHE[cache_key] = out
-    return out
+
+def knn_grid(*args, **kwargs):
+    """Deprecated alias for `smooth_grid` (knn_stats_params kwarg still accepted)."""
+    return smooth_grid(*args, **kwargs)
+
+
+def knn_grid_gradient(*args, **kwargs):
+    """Deprecated alias for `smooth_grid_gradient`."""
+    return smooth_grid_gradient(*args, **kwargs)
 
 
 def _resolve_lims(X, xlims, ylims):
@@ -647,6 +686,8 @@ __all__ = [
     "build_tree",
     "knn_stats",
     "knn_density_chunked",
+    "smooth_grid",
+    "smooth_grid_gradient",
     "knn_grid",
     "knn_grid_gradient",
     "weighted_kde_1d",

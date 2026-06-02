@@ -14,8 +14,8 @@ from jeanplot.plots.smooth_kernel import (
     _finite_xy,
     _render_smooth_heatmap,
     _resolve_lims,
-    knn_grid,
-    knn_grid_gradient,
+    smooth_grid,
+    smooth_grid_gradient,
 )
 
 T = TypeVar("T")
@@ -70,7 +70,7 @@ def smooth_2d(
     X, Y = _finite_xy(X, Y)
     zslice = np.asarray(zslice) if zslice is not None else None
     resolution = knn_grid_params.get("grid_resolution", 200)
-    input_coords, output_values = knn_grid(
+    input_coords, output_values = smooth_grid(
         X,
         Y,
         xlims,
@@ -125,7 +125,7 @@ def knn_gradient_grid(
     x2_lat = np.linspace(ylims[0], ylims[1], resolution)
 
     if method == "finite_diff":  # legacy: central differences of the smoothed value grid
-        input_coords, value = knn_grid(X, Y, xlims, ylims, **knn_grid_params)
+        input_coords, value = smooth_grid(X, Y, xlims, ylims, **knn_grid_params)
         y_lat = np.asarray(value).reshape(resolution, resolution)
         if space == "raw":
             assert rescaler is not None, "rescaler required for space='raw'"
@@ -138,12 +138,12 @@ def knn_gradient_grid(
         gx = _nan_aware_gradient(y_field, x1_axis, axis=1)
         return KnnGradientField(input_coords, gx, gy, x1_lat, x2_lat, xlims, ylims)
 
-    input_coords, grad = knn_grid_gradient(X, Y, xlims, ylims, **knn_grid_params)
+    input_coords, grad = smooth_grid_gradient(X, Y, xlims, ylims, **knn_grid_params)
     gx = grad[:, 0].reshape(resolution, resolution)
     gy = grad[:, 1].reshape(resolution, resolution)
     if space == "raw":
         assert rescaler is not None, "rescaler required for space='raw'"
-        _, value = knn_grid(X, Y, xlims, ylims, **knn_grid_params)
+        _, value = smooth_grid(X, Y, xlims, ylims, **knn_grid_params)
 
         def d(u, e=1e-4):  # chain-rule factor d(inv)/du of the (smooth) rescaler
             u = np.asarray(u, float)
