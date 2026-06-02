@@ -478,6 +478,11 @@ For testing layouts, `jeanplot.testing` ships `MockRenderer`, `render_to_svg`, `
 `jeanplot/knn/`:
 - KNN tree backends — picks `usearch`, `pykdtree`, or `scipy` based on what's installed.
 - Density estimators, Gaussian-weighted KNN with optional numba acceleration, optional JAX kernels for differentiable use.
+- **Shared neighbour-query cache.** `knn_stats` caches the y-independent prep (query +
+  density rebalancing) by (tree, query points, params), so panels over the same grid
+  (value heatmap, gradient map, quiver) share *one* query. LRU-bounded (arrays are large);
+  `smooth_kernel.clear_knn_caches()` releases them between batch figures. Results are
+  exact/deterministic on the `pykdtree`/`scipy` backends; `usearch` is approximate (HNSW).
 
 `jeanplot/color/`:
 - `load_palettes(path)`, `register_palettes(palettes)`, `closest_name(name)` for fuzzy name matching.

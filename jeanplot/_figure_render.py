@@ -27,6 +27,20 @@ def _iter_panels(root: Component) -> Iterator[PlotPanel]:
         yield from _iter_panels(c)
 
 
+def _knn_group_key(p: PlotPanel) -> tuple:
+    # Geometry-only signature (no data identity), so panels that issue the same
+    # Y-independent KNN query over different Y (ground-truth vs prediction) sort
+    # adjacent and share the neighbour-query cache. Stable sort keeps a
+    # deterministic intra-group order.
+    return (
+        type(p).__name__,
+        repr(getattr(p, "xlims", None)),
+        repr(getattr(p, "ylims", None)),
+        repr(getattr(p, "zlims", None)),
+        repr(getattr(p, "zslice", getattr(p, "zslices", None))),
+    )
+
+
 def _iter_debug_components(root: Component) -> Iterator[Component]:
     if getattr(root, "debug", False):
         yield root
@@ -93,8 +107,21 @@ def render_figure(fig: Figure) -> Any:
         for panel in drawable:
             panel._axes = mfig.add_axes(_panel_bbox(panel, root_w, root_h))
 
+        # Draw order is invisible to the output (each panel owns its axes), but
+        # pulling each panel that shares a KNN query signature next to the first
+        # panel with that signature lets the shared neighbour-query cache hit
+        # (e.g. prediction reuses ground-truth's weights over the same grid).
+        # Group-leader stable sort: a duplicate only jumps past panels that
+        # don't share its signature, so same-region compositing is preserved.
+        leader: dict = {}
+        for i, p in enumerate(drawable):
+            leader.setdefault(_knn_group_key(p), i)
+        draw_order = sorted(
+            enumerate(drawable), key=lambda iv: (leader[_knn_group_key(iv[1])], iv[0])
+        )
+
         with step("draw"):
-            for panel in drawable:
+            for _, panel in draw_order:
                 assert panel._axes is not None, f"panel {panel.id} has no axes"
                 with step(f"panel {type(panel).__name__}"):
                     res = panel.draw(panel._axes)

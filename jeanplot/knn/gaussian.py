@@ -1,7 +1,74 @@
+import hashlib
+import os
+import threading
 from typing import Literal
 
 import numpy as np
 from jeanplot.knn.tree import _query, KNN_WORKERS, KNN_MEAN_CHUNK_SIZE
+
+
+# Byte-budgeted cache of the y-independent (indices, weights) from the chunked
+# mean path. Lets ground-truth and prediction panels over the same grid share
+# the neighbour query (they differ only in y). Mutation-safe: callers normalise
+# weights in place, so hits hand back a fresh copy. Override with
+# JEANPLOT_KNN_MEAN_CACHE_GB.
+# The cached value pins the `tree` alongside its (indices, weights): the key
+# uses id(tree), and ephemeral trees get GC'd and their id reused, so without
+# the pin a recycled id collides with a live entry and hands back indices for a
+# different, differently-sized training set (out-of-bounds gather -> garbage).
+_MEAN_GGW_CACHE: dict = {}
+_MEAN_GGW_BYTES = 0
+_MEAN_GGW_BUDGET = int(float(os.environ.get("JEANPLOT_KNN_MEAN_CACHE_GB", "8")) * 1e9)
+_MEAN_GGW_LOCK = threading.Lock()
+
+
+def clear_mean_ggw_cache():
+    global _MEAN_GGW_BYTES
+    with _MEAN_GGW_LOCK:
+        _MEAN_GGW_CACHE.clear()
+        _MEAN_GGW_BYTES = 0
+
+
+def _ggw_param_key(kw):
+    def v_key(v):
+        if isinstance(v, np.ndarray):
+            return hashlib.blake2b(np.ascontiguousarray(v).view(np.uint8), digest_size=8).digest()
+        return v
+
+    return tuple((k, v_key(v)) for k, v in sorted(kw.items()))
+
+
+def _ggw_unnormed_cached(x, tree, kw):
+    """`get_gaussian_weighted_knn(..., normed_w=False)` with content caching.
+
+    Returns a copy of the weights (mutated downstream by the mean normalise);
+    indices are read-only downstream and shared."""
+    xb = np.ascontiguousarray(x)
+    key = (
+        id(tree),
+        hashlib.blake2b(xb.view(np.uint8), digest_size=16).digest(),
+        _ggw_param_key(kw),
+    )
+    with _MEAN_GGW_LOCK:
+        hit = _MEAN_GGW_CACHE.pop(key, None)
+        if hit is not None:
+            _MEAN_GGW_CACHE[key] = hit  # MRU
+    if hit is not None:
+        return hit[0], hit[1].copy()
+
+    indices, weights = get_gaussian_weighted_knn(x, tree=tree, normed_w=False, **kw)
+    nbytes = indices.nbytes + weights.nbytes
+    if nbytes <= _MEAN_GGW_BUDGET:
+        global _MEAN_GGW_BYTES
+        with _MEAN_GGW_LOCK:
+            while _MEAN_GGW_CACHE and _MEAN_GGW_BYTES + nbytes > _MEAN_GGW_BUDGET:
+                ek = next(iter(_MEAN_GGW_CACHE))
+                ei, ew, _ = _MEAN_GGW_CACHE.pop(ek)
+                _MEAN_GGW_BYTES -= ei.nbytes + ew.nbytes
+            _MEAN_GGW_CACHE[key] = (indices, weights, tree)
+            _MEAN_GGW_BYTES += nbytes
+        return indices, weights.copy()
+    return indices, weights
 
 
 try:
@@ -370,11 +437,9 @@ def get_knn_mean_only(x, y, tree=None, iw=None, **kw):
         chunks = []
         for start in range(0, x.shape[0], chunk_size):
             stop = min(start + chunk_size, x.shape[0])
-            indices, weights = get_gaussian_weighted_knn(
-                x[start:stop], tree=tree, normed_w=False, **kw
-            )
+            indices, weights = _ggw_unnormed_cached(x[start:stop], tree, kw)
             chunks.append(_knn_mean_from_indices_weights(indices, weights, y))
         return np.concatenate(chunks, axis=0)
 
-    indices, weights = get_gaussian_weighted_knn(x, tree=tree, normed_w=False, **kw)
+    indices, weights = _ggw_unnormed_cached(x, tree, kw)
     return _knn_mean_from_indices_weights(indices, weights, y)

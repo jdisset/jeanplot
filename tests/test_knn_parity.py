@@ -61,3 +61,23 @@ def test_parity_against_biocomp():
     _, w_a = get_gaussian_weighted_knn(x[:50], tree=tree_a, **kw)
     _, w_b = bio_knn.get_gaussian_weighted_knn(x[:50], tree=tree_b, **kw)
     np.testing.assert_allclose(np.nan_to_num(w_a), np.nan_to_num(w_b), atol=1e-5)
+
+
+def test_mean_cache_pins_tree_against_id_reuse():
+    """The chunked-mean cache keys on id(tree). Ephemeral trees get GC'd and
+    their id reused; without pinning the tree in the cached value, a recycled
+    id collides with a live entry and hands back indices for a different,
+    differently-sized training set (out-of-bounds gather -> garbage). The fix
+    pins the tree, so the cached entry must retain it."""
+    from jeanplot.knn.gaussian import (
+        _MEAN_GGW_CACHE,
+        _ggw_unnormed_cached,
+        clear_mean_ggw_cache,
+    )
+
+    clear_mean_ggw_cache()
+    x, _ = _sample(n=200)
+    tree = make_tree(x)
+    _ggw_unnormed_cached(x, tree, dict(k=20, radius=0.5, min_points=2))
+    assert any(tree is entry[-1] for entry in _MEAN_GGW_CACHE.values())
+    clear_mean_ggw_cache()

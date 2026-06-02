@@ -55,7 +55,7 @@ class _UsearchTree:
     `n` (sentinel) index. Distances are true L2.
     """
 
-    __slots__ = ("_index", "_n")
+    __slots__ = ("_index", "_n", "data")
 
     def __init__(self, x: np.ndarray):
         n, d = x.shape
@@ -73,6 +73,7 @@ class _UsearchTree:
         )
         self._index = idx
         self._n = n
+        self.data = x
 
     def query(self, x, k, distance_upper_bound=None, **_):
         n = self._n
