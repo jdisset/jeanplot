@@ -1,37 +1,54 @@
-"""Small statistical helpers used by panel rendering code.
+"""Elementary regression metrics — SSOT for the generic formulas.
 
-Mirrors `biocomp.metric_utils` for the bits that the drawing functions need.
-Kept tiny on purpose; biocomp keeps its own canonical version.
+These are the canonical, dependency-light (numpy only) kernels. `biocomp`
+re-imports them rather than redefining. All ignore non-finite pairs and return
+nan when there's nothing valid to compute. Domain-specific metrics (grid stats,
+nRMSE, distributional objectives, pearson p-value) live in `biocomp.metric_utils`
+on top of these.
 """
 
 import numpy as np
 
+EPS = 1e-9
 
-def rmse(y, yhat):
-    return float(np.sqrt(np.mean((np.asarray(y) - np.asarray(yhat)) ** 2)))
+
+def _masked(y, yhat):
+    y = np.asarray(y).ravel()
+    yhat = np.asarray(yhat).ravel()
+    m = np.isfinite(y) & np.isfinite(yhat)
+    return y[m], yhat[m]
 
 
 def mse(y, yhat):
-    return float(np.mean((np.asarray(y) - np.asarray(yhat)) ** 2))
+    y, yhat = _masked(y, yhat)
+    return float(np.mean((y - yhat) ** 2)) if y.size else float("nan")
+
+
+def rmse(y, yhat):
+    return float(np.sqrt(mse(y, yhat)))
 
 
 def mae(y, yhat):
-    return float(np.mean(np.abs(np.asarray(y) - np.asarray(yhat))))
+    y, yhat = _masked(y, yhat)
+    return float(np.mean(np.abs(y - yhat))) if y.size else float("nan")
+
+
+def max_error(y, yhat):
+    y, yhat = _masked(y, yhat)
+    return float(np.max(np.abs(y - yhat))) if y.size else float("nan")
 
 
 def r_squared(y, yhat):
-    y = np.asarray(y)
-    yhat = np.asarray(yhat)
+    y, yhat = _masked(y, yhat)
+    if not y.size:
+        return float("nan")
     ss_res = float(np.sum((y - yhat) ** 2))
     ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-    if ss_tot == 0:
-        return 0.0
-    return 1.0 - ss_res / ss_tot
+    return 1.0 - ss_res / ss_tot if ss_tot > EPS else float("nan")
 
 
 def pearson_r(y, yhat):
-    y = np.asarray(y).ravel()
-    yhat = np.asarray(yhat).ravel()
-    if y.size < 2:
-        return 0.0
-    return float(np.corrcoef(y, yhat)[0, 1])
+    """Correlation coefficient only (nan if <2 valid pairs). For the p-value too,
+    use biocomp.metric_utils.pearson_r."""
+    y, yhat = _masked(y, yhat)
+    return float(np.corrcoef(y, yhat)[0, 1]) if y.size >= 2 else float("nan")
