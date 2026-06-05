@@ -3,7 +3,7 @@ import numpy as np
 import copy
 import logging
 
-from jeanplot.core.path_utils import find_component_by_path
+from jeanplot.core.tree_adapter import resolve_component
 from jeanplot.core.connection_routing import find_best_anchor_pair
 from jeanplot.core.curve import (
     CurveDefinition,
@@ -74,18 +74,7 @@ class Connection(Overlay):
         if not self.parent:
             self._log_debug(f"cannot resolve {which} path '{path}' without parent.")
             return None
-        try:
-            root = self.parent
-            while root.parent is not None:
-                root = root.parent
-            resolved = find_component_by_path(root, path)
-            if resolved:
-                return resolved
-            else:
-                return None
-        except ValueError as e:
-            self._log_debug(f"error resolving {which} path '{path}': {e}")
-            return None
+        return resolve_component(self, path)
 
     def _get_component_center_world(self, component: Component) -> tuple[float, float] | None:
         if not component:

@@ -1,5 +1,4 @@
 from jeanplot.core.style_engine import JStyle, jstyle
-from jeanplot.core.style_selector import Selector, Specificity
 
 
 def closest_attr(component, attrs=("marker", "part_name"), default=None):
@@ -46,8 +45,6 @@ def palette_value(component, table, attrs=None, default=None, channel=None):
 
 
 __all__ = [
-    "Specificity",
-    "Selector",
     "JStyle",
     "jstyle",
     "closest_attr",

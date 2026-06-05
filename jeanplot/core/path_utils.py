@@ -1,11 +1,7 @@
 from typing import Sequence
 import numpy as np
-import logging
 
-from jeanplot.core.component import Component
 from jeanplot.core.debug import debug_print
-
-logger = logging.getLogger(__name__)
 
 EPSILON = 1e-6
 
@@ -48,63 +44,6 @@ def is_on_segment(
     if dot_product > squared_length + tol * tol:
         return False
     return True
-
-
-def _find_recursive(root: Component, target_id: str) -> Component | None:
-    """recursively search for a component with the given id anywhere in the tree."""
-    if getattr(root, "id", None) == target_id:
-        return root
-    children = []
-    if hasattr(root, "children"):
-        children.extend(root.children)
-    if hasattr(root, "anchor_points"):
-        children.extend([a for a in root.anchor_points if a not in children])
-    for child in children:
-        found = _find_recursive(child, target_id)
-        if found:
-            return found
-    return None
-
-
-def find_component_by_path(root: Component, path: str) -> Component | None:
-    """find component by path relative to root.
-
-    Supports:
-    - "parent/child/grandchild" - direct descent
-    - "//component_id/child" - recursive search for first component, then descend
-    """
-    if not path:
-        return None
-
-    if path.startswith("//"):
-        path = path[2:]
-        parts = [p for p in path.split("/") if p]
-        if not parts:
-            return None
-        current = _find_recursive(root, parts[0])
-        if not current:
-            return None
-        parts = parts[1:]
-    else:
-        parts = [p for p in path.split("/") if p]
-        current = root
-
-    for i, part_id in enumerate(parts):
-        children = []
-        if hasattr(current, "children"):
-            children.extend(current.children)
-        if hasattr(current, "anchor_points"):
-            children.extend([a for a in current.anchor_points if a not in children])
-
-        found = next((c for c in children if getattr(c, "id", None) == part_id), None)
-        if found is None:
-            current_id = getattr(current, "id", "<no_id>")
-            avail_ids = [getattr(c, "id", None) for c in children if c]
-            raise ValueError(
-                f"comp '{part_id}' not in children/anchors ({avail_ids}) of '{current_id}' at part {i + 1} of '{path}'"
-            )
-        current = found
-    return current
 
 
 def _simplify_orthogonal_path(points: list[tuple[float, float]]) -> list[tuple[float, float]]:

@@ -1,4 +1,5 @@
 """Tests for Connection and curve types."""
+
 import pytest
 from jeanplot import (
     Container,
@@ -158,7 +159,7 @@ class TestAnchors:
 
         conn = Connection(
             id="conn",
-            start_component="box1/right",
+            start_component="right",
             end_component="box2",
         )
         parent.add_child(conn)

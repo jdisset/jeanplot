@@ -15,11 +15,11 @@ from pydantic_core import PydanticUndefined
 
 from jeanplot import DEFAULT_TYPES
 
-# data inputs / tree wiring / runtime state -- never a style knob
+# data inputs / tree wiring / runtime state -- never a style knob. `attached_to` is
+# excluded: it is now a theme-owned float target (see common/theme.yaml metric-cell).
 _SKIP = {
     "parent",
     "anchor_points",
-    "attached_to",
     "attachment_offset",
     "renderer_options",
     "plot_data",

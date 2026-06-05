@@ -52,6 +52,7 @@ class SourceAnnotation(Container):
         super().model_post_init(*args, **kwargs)
         if self.axis_tag:
             from jeanplot.core.text import Text
+
             axis = Text(
                 id=f"{self.id}_axis_tag" if self.id else None,
                 text=self.axis_tag,
@@ -84,6 +85,7 @@ class SourceAnnotation(Container):
 
 class GeneticSchematic(Container):
     """Grid-based genetic circuit schematic driven by CircuitData."""
+
     data: CircuitData
     grid_gap: tuple[float, float] = (40.0, 20.0)
     orientation: Literal["row", "column"] = "column"
@@ -141,8 +143,12 @@ class GeneticSchematic(Container):
             for tu_id in source.tu_ids:
                 source_by_tu[tu_id] = source.id
             source_info[source.id] = _SourceSummary(
-                source.marker, source.source_type, source.ratios, source.marker_ratio,
-                source.tag_label, source.axis_tag,
+                source.marker,
+                source.source_type,
+                source.ratios,
+                source.marker_ratio,
+                source.tag_label,
+                source.axis_tag,
             )
 
         rows_dict: dict[int, list[TranscriptionUnit]] = {}
@@ -173,7 +179,9 @@ class GeneticSchematic(Container):
             source_id = source_by_tu.get(first_tu_id)
             info = source_info.get(source_id, _EMPTY_SOURCE) if source_id else _EMPTY_SOURCE
 
-            if self.show_sources and (info.marker or info.ratios or info.tag_label or info.axis_tag):
+            if self.show_sources and (
+                info.marker or info.ratios or info.tag_label or info.axis_tag
+            ):
                 wrapper = SourceAnnotation(
                     id=f"source_{source_id}",
                     source_id=source_id,
@@ -197,14 +205,17 @@ class GeneticSchematic(Container):
         from jeanplot.core.svg import LineEndFlat
 
         for interaction in self.data.interactions:
-            if not (self._tu_components.get(interaction.source_tu) and self._tu_components.get(interaction.target_tu)):
+            if not (
+                self._tu_components.get(interaction.source_tu)
+                and self._tu_components.get(interaction.target_tu)
+            ):
                 continue
 
             curve = SimpleBezierCurve() if self.connection_style == "bezier" else OrthogonalCurve()
             conn = Connection(
                 id=f"conn_{interaction.id}",
-                start_component=f"//{interaction.source_tu}/{interaction.source_part}",
-                end_component=f"//{interaction.target_tu}/{interaction.target_part}",
+                start_component=f"/**[id={interaction.source_tu}] > [id={interaction.source_part}]",
+                end_component=f"/**[id={interaction.target_tu}] > [id={interaction.target_part}]",
                 style_class=[f"interaction-{interaction.interaction_type}"],
                 is_overlay=True,
             ).with_defaults(

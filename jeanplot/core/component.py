@@ -97,15 +97,9 @@ class Component(DebugMixin, CascadeLeaf):
                 )
                 return
 
-            from jeanplot.core.path_utils import find_component_by_path
+            from jeanplot.core.tree_adapter import resolve_component
 
-            try:
-                root = self
-                while root.parent is not None:
-                    root = root.parent
-                self._resolved_attach_target = find_component_by_path(root, self.attached_to)
-            except ValueError as e:
-                self._log_debug(f"_resolve_attachment: string resolution error: {e}")
+            self._resolved_attach_target = resolve_component(self, self.attached_to)
 
     def compute_local_matrix(self) -> np.ndarray:
         """3x3 matrix relative to the component's reference point."""

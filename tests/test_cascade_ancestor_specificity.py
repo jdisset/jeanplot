@@ -13,11 +13,17 @@ Covers two bug classes encountered when authoring the default jeanplot theme:
    regardless of source order. CSS doesn't distinguish, but for jeanplot's
    scene-graph use case "closer ancestor wins" matches authorial intent."""
 
-from pydantic import Field
+from dracon import get_inexactness, parse_locator
 
-from jeanplot import Component, Container, Text, BoxStyle, jstyle
-from jeanplot.core.style_selector import Selector
+from jeanplot import Container, Text, jstyle
+from jeanplot.core.tree_adapter import ComponentTreeAdapter
 from jeanplot.gene.elements import ERN, FluoMarker, UorfGroup
+
+_ADAPTER = ComponentTreeAdapter()
+
+
+def _inexactness(selector: str, component) -> tuple[int, int]:
+    return get_inexactness(component, parse_locator(selector), _ADAPTER)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,19 +106,19 @@ def _build_outer_middle_inner_text() -> tuple[Outer, Text]:
 
 def test_get_inexactness_immediate_parent_is_zero():
     outer, leaf = _build_outer_middle_inner_text()
-    skip, mro = Selector("Inner Text").get_inexactness(leaf)
+    skip, mro = _inexactness("Inner Text", leaf)
     assert (skip, mro) == (0, 0), "immediate-parent ancestor match should be (0, 0)"
 
 
 def test_get_inexactness_grandparent_has_skip_one():
     outer, leaf = _build_outer_middle_inner_text()
-    skip, mro = Selector("Middle Text").get_inexactness(leaf)
+    skip, mro = _inexactness("Middle Text", leaf)
     assert skip == 1, "grandparent match must show skip=1 (Inner was skipped)"
 
 
 def test_get_inexactness_two_skips_for_great_grandparent():
     outer, leaf = _build_outer_middle_inner_text()
-    skip, mro = Selector("Outer Text").get_inexactness(leaf)
+    skip, mro = _inexactness("Outer Text", leaf)
     assert skip == 2
 
 
@@ -121,10 +127,12 @@ def test_immediate_parent_selector_beats_grandparent_via_source_order():
     ancestor-skip tiebreaker, `Inner Text` (skip=0) must beat `Middle Text`
     (skip=1) even when Middle is declared LATER in the source — proving the
     tiebreaker isn't just relying on source order."""
-    jstyle.update({
-        "Inner": {"Text": {"font_size": 11}},
-        "Middle": {"Text": {"font_size": 22}},  # later in source order
-    })
+    jstyle.update(
+        {
+            "Inner": {"Text": {"font_size": 11}},
+            "Middle": {"Text": {"font_size": 22}},  # later in source order
+        }
+    )
     try:
         outer, leaf = _build_outer_middle_inner_text()
         jstyle.apply(outer)  # apply from Outer down
@@ -135,10 +143,12 @@ def test_immediate_parent_selector_beats_grandparent_via_source_order():
 
 def test_grandparent_selector_beats_great_grandparent_via_source_order():
     """Same shape, deeper: `Middle Text` (skip=1) beats `Outer Text` (skip=2)."""
-    jstyle.update({
-        "Middle": {"Text": {"font_size": 33}},
-        "Outer":  {"Text": {"font_size": 44}},  # later in source order
-    })
+    jstyle.update(
+        {
+            "Middle": {"Text": {"font_size": 33}},
+            "Outer": {"Text": {"font_size": 44}},  # later in source order
+        }
+    )
     try:
         outer, leaf = _build_outer_middle_inner_text()
         jstyle.apply(outer)
@@ -150,10 +160,12 @@ def test_grandparent_selector_beats_great_grandparent_via_source_order():
 def test_immediate_parent_beats_grandparent_for_disjoint_properties():
     """If `Inner Text` and `Middle Text` each set DIFFERENT props, both should
     apply — but where they overlap, Inner Text wins."""
-    jstyle.update({
-        "Middle": {"Text": {"font_size": 50, "color": "red"}},
-        "Inner":  {"Text": {"font_size": 60}},
-    })
+    jstyle.update(
+        {
+            "Middle": {"Text": {"font_size": 50, "color": "red"}},
+            "Inner": {"Text": {"font_size": 60}},
+        }
+    )
     try:
         outer, leaf = _build_outer_middle_inner_text()
         jstyle.apply(outer)
@@ -167,10 +179,12 @@ def test_skip_dominates_mro_when_both_differ():
     """`Container Text` (skip=0, mro=1 — Inner inherits Container) vs
     `Middle Text` (skip=1, mro=0 — Middle is exact class). Skip dominates,
     so the snug-but-inherited rule wins over the distant-but-exact one."""
-    jstyle.update({
-        "Container": {"Text": {"font_size": 70}},  # snug + inherited
-        "Middle":    {"Text": {"font_size": 80}},  # distant + exact
-    })
+    jstyle.update(
+        {
+            "Container": {"Text": {"font_size": 70}},  # snug + inherited
+            "Middle": {"Text": {"font_size": 80}},  # distant + exact
+        }
+    )
     try:
         outer, leaf = _build_outer_middle_inner_text()
         jstyle.apply(outer)
@@ -191,11 +205,13 @@ def test_fluomarker_label_inside_tu_picks_up_geneticpart_text_rule():
     minimal real-shaped theme that the snug rule wins."""
     from jeanplot.gene.elements import TranscriptionUnit
 
-    jstyle.update({
-        "TranscriptionUnit": {"Text": {"font_size": 5, "color": "#999"}},  # distant
-        "GeneticPart":       {"Text": {"font_size": 30}},                  # snug-inherited
-        "FluoMarker":        {"Text": {"color": "#9b6600"}},               # snug-exact
-    })
+    jstyle.update(
+        {
+            "TranscriptionUnit": {"Text": {"font_size": 5, "color": "#999"}},  # distant
+            "GeneticPart": {"Text": {"font_size": 30}},  # snug-inherited
+            "FluoMarker": {"Text": {"color": "#9b6600"}},  # snug-exact
+        }
+    )
     try:
         fm = FluoMarker(id="fm_in_tu", part_name="eYFP")
         tu = TranscriptionUnit(id="tu", children=[fm])

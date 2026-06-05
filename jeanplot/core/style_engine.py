@@ -6,10 +6,11 @@ from typing import Any, Sequence, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
-from dracon import CascadeStrategy, register_cascade_strategy
+from dracon import make_locator_cascade_strategy, register_cascade_strategy
 from dracon.symbols import CallableSymbol
 
 from jeanplot.core.style_dialect import parse_jstyle_rule_tree, parse_selector_key
+from jeanplot.core.tree_adapter import COMPONENT_ADAPTER
 
 logger = logging.getLogger(__name__)
 
@@ -26,30 +27,16 @@ def _model_type_of(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
-def _jstyle_specificity(sel, component):
-    """CSS specificity, then tiebreakers preferring snug selector chains:
-    fewer ancestor-skips first, then closer MRO matches. Both negated so the
-    sort (ascending) puts more-specific rules later."""
-    skip, mro = sel.get_inexactness(component)
-    return (tuple(sel.specificity), -skip, -mro)
-
-
-_JSTYLE_STRATEGY = CascadeStrategy(
-    name="jstyle",
-    input_params=("component",),
-    parse=parse_selector_key,
-    matches=lambda sel, component: sel.matches(component),
-    specificity=_jstyle_specificity,
+# selection + specificity + merge are all dracon's now (the locator's CSS specificity
+# then snug-chain tiebreak: fewer ancestor-skips, closer MRO). Only the parse stays
+# local, so `_looks_like_selector` decides selector-vs-config keys.
+_JSTYLE_STRATEGY = make_locator_cascade_strategy(
+    "jstyle", adapter=COMPONENT_ADAPTER, input_param="component", parse=parse_selector_key
+)
+_JSTYLE_FILL_STRATEGY = make_locator_cascade_strategy(
+    "jstyle_fill", adapter=COMPONENT_ADAPTER, input_param="component", parse=parse_selector_key
 )
 register_cascade_strategy(_JSTYLE_STRATEGY)
-
-_JSTYLE_FILL_STRATEGY = CascadeStrategy(
-    name="jstyle_fill",
-    input_params=("component",),
-    parse=parse_selector_key,
-    matches=lambda sel, component: sel.matches(component),
-    specificity=_jstyle_specificity,
-)
 register_cascade_strategy(_JSTYLE_FILL_STRATEGY)
 
 

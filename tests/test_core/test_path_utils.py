@@ -1,5 +1,5 @@
 """Tests for path utilities and vector helpers."""
-import pytest
+
 import numpy as np
 from numpy.testing import assert_allclose
 
@@ -8,11 +8,11 @@ from jeanplot.core.path_utils import (
     normalize_vector,
     is_collinear,
     is_on_segment,
-    find_component_by_path,
     create_orthogonal_path,
     create_rounded_orthogonal_path,
     _simplify_orthogonal_path,
 )
+from jeanplot.core.tree_adapter import resolve_component
 
 
 class TestNormalizeVector:
@@ -103,46 +103,38 @@ class TestIsOnSegment:
         assert not is_on_segment(off, start, end)
 
 
-class TestFindComponentByPath:
-    """find_component_by_path navigation."""
+class TestResolveComponent:
+    """resolve_component: locator pull over the live Component tree."""
 
-    def test_find_direct_child(self):
-        """Finds direct child by ID."""
+    def test_bare_id_finds_direct_child(self):
+        """Bare id is descendant-by-id sugar -> finds a direct child."""
         parent = Container(id="parent")
         child = Container(id="child")
         parent.add_child(child)
-        result = find_component_by_path(parent, "child")
-        assert result is child
+        assert resolve_component(parent, "child") is child
 
-    def test_find_nested_child(self):
-        """Finds nested child via path."""
+    def test_bare_id_finds_nested_descendant(self):
+        """Bare id resolves a deep descendant regardless of depth."""
         root = Container(id="root")
         mid = Container(id="mid")
         leaf = Container(id="leaf")
         root.add_child(mid)
         mid.add_child(leaf)
-        result = find_component_by_path(root, "mid/leaf")
-        assert result is leaf
+        assert resolve_component(root, "leaf") is leaf
 
-    def test_empty_path_returns_none(self):
-        """Empty path returns None."""
+    def test_id_locator_scopes_under_ancestor(self):
+        """A full locator scopes the child match under a specific ancestor id."""
         root = Container(id="root")
-        result = find_component_by_path(root, "")
-        assert result is None
+        mid = Container(id="mid")
+        leaf = Container(id="leaf")
+        root.add_child(mid)
+        mid.add_child(leaf)
+        assert resolve_component(root, "/**[id=mid] > [id=leaf]") is leaf
 
-    def test_missing_child_raises(self):
-        """Missing child raises ValueError."""
+    def test_missing_returns_none(self):
+        """No match returns None (no raise)."""
         root = Container(id="root")
-        with pytest.raises(ValueError, match="not in children"):
-            find_component_by_path(root, "nonexistent")
-
-    def test_missing_nested_raises(self):
-        """Missing nested child raises ValueError."""
-        root = Container(id="root")
-        child = Container(id="child")
-        root.add_child(child)
-        with pytest.raises(ValueError, match="not in children"):
-            find_component_by_path(root, "child/missing")
+        assert resolve_component(root, "nonexistent") is None
 
 
 class TestCreateOrthogonalPath:
@@ -151,8 +143,10 @@ class TestCreateOrthogonalPath:
     def test_horizontal_direct(self):
         """Direct horizontal path."""
         path = create_orthogonal_path(
-            start=(0, 0), end=(100, 0),
-            start_dir_out=(1, 0), end_dir_out=(-1, 0),
+            start=(0, 0),
+            end=(100, 0),
+            start_dir_out=(1, 0),
+            end_dir_out=(-1, 0),
         )
         assert (0, 0) in path
         assert (100, 0) in path
@@ -160,8 +154,10 @@ class TestCreateOrthogonalPath:
     def test_vertical_direct(self):
         """Direct vertical path."""
         path = create_orthogonal_path(
-            start=(0, 0), end=(0, 100),
-            start_dir_out=(0, 1), end_dir_out=(0, -1),
+            start=(0, 0),
+            end=(0, 100),
+            start_dir_out=(0, 1),
+            end_dir_out=(0, -1),
         )
         assert (0, 0) in path
         assert (0, 100) in path
@@ -169,8 +165,10 @@ class TestCreateOrthogonalPath:
     def test_coincident_points(self):
         """Coincident start/end returns both."""
         path = create_orthogonal_path(
-            start=(50, 50), end=(50, 50),
-            start_dir_out=(1, 0), end_dir_out=(-1, 0),
+            start=(50, 50),
+            end=(50, 50),
+            start_dir_out=(1, 0),
+            end_dir_out=(-1, 0),
         )
         assert len(path) == 2
         assert_allclose(path[0], (50, 50))
@@ -179,16 +177,20 @@ class TestCreateOrthogonalPath:
     def test_one_turn_path(self):
         """L-shaped path has corner."""
         path = create_orthogonal_path(
-            start=(0, 0), end=(50, 50),
-            start_dir_out=(1, 0), end_dir_out=(0, -1),
+            start=(0, 0),
+            end=(50, 50),
+            start_dir_out=(1, 0),
+            end_dir_out=(0, -1),
         )
         assert len(path) >= 3
 
     def test_with_checkpoints(self):
         """Path respects checkpoints."""
         path = create_orthogonal_path(
-            start=(0, 0), end=(100, 100),
-            start_dir_out=(1, 0), end_dir_out=(-1, 0),
+            start=(0, 0),
+            end=(100, 100),
+            start_dir_out=(1, 0),
+            end_dir_out=(-1, 0),
             checkpoints=[(50, 50)],
         )
         # should pass through or near checkpoint

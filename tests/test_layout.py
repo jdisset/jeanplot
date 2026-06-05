@@ -23,7 +23,7 @@ from jeanplot import (
     jstyle,
     set_debug,
 )
-from jeanplot.core.path_utils import find_component_by_path
+from jeanplot.core.tree_adapter import resolve_component
 
 set_debug(False)
 
@@ -827,9 +827,9 @@ def test_complex_layout():
     assert_allclose(
         pos_ib1, (exp_ib1_x, exp_ib1_y), err_msg="Inner Box 1 (Overlay) position mismatch"
     )
-    assert inner_box1._dimensions == Size(
-        width=IBOXW, height=IBOXH
-    ), "Inner Box 1 dimensions mismatch"
+    assert inner_box1._dimensions == Size(width=IBOXW, height=IBOXH), (
+        "Inner Box 1 dimensions mismatch"
+    )
 
     # Inner_box2 Assertions (Layout Child inside Box8)
     pos_ib2 = get_world_origin(inner_box2)
@@ -838,9 +838,9 @@ def test_complex_layout():
     exp_ib2_x = pos_b8[0] + local_ib2_x
     exp_ib2_y = pos_b8[1] + local_ib2_y
     assert_allclose(pos_ib2, (exp_ib2_x, exp_ib2_y), err_msg="Inner Box 2 position mismatch")
-    assert inner_box2._dimensions == Size(
-        width=IBOXW, height=IBOXH
-    ), "Inner Box 2 dimensions mismatch"
+    assert inner_box2._dimensions == Size(width=IBOXW, height=IBOXH), (
+        "Inner Box 2 dimensions mismatch"
+    )
 
     # Inner_box3 Assertions (Layout Child inside Box8)
     pos_ib3 = get_world_origin(inner_box3)
@@ -849,9 +849,9 @@ def test_complex_layout():
     exp_ib3_x = pos_b8[0] + local_ib3_x
     exp_ib3_y = pos_b8[1] + local_ib3_y
     assert_allclose(pos_ib3, (exp_ib3_x, exp_ib3_y), err_msg="Inner Box 3 position mismatch")
-    assert inner_box3._dimensions == Size(
-        width=IBOXW, height=IBOXH
-    ), "Inner Box 3 dimensions mismatch"
+    assert inner_box3._dimensions == Size(width=IBOXW, height=IBOXH), (
+        "Inner Box 3 dimensions mismatch"
+    )
 
 
 def test_simple_attachment_no_offset():
@@ -1007,7 +1007,7 @@ def test_attachment_string_path_nested():
         id="attached",
         min_dimensions=Size(width=ATTACHED_SIZE, height=ATTACHED_SIZE),
         style=BoxStyle(background_color="lightgreen"),
-        attached_to="parent/child-target",
+        attached_to="child-target",
         attachment_offset=Offset(relative=(0.5, 0.5), reference_relative=(0.5, 0.5)),
     )
 
@@ -1024,7 +1024,7 @@ def test_attachment_string_path_nested():
     renderer.render_component(ax, root)  # keep commented unless debugging interactively
 
     # Assertions
-    resolved_child = find_component_by_path(root, "parent/child-target")
+    resolved_child = resolve_component(root, "child-target")
     assert resolved_child is child, "Child target not found by path"
 
     pos_parent = get_world_origin(parent)
@@ -1165,8 +1165,8 @@ def test_connection_with_anchors():
 
     conn = Connection(
         id="conn_anchors",
-        start_component="box_a/anchor_a",
-        end_component="box_b/anchor_b",
+        start_component="anchor_a",
+        end_component="anchor_b",
         curve_type=OrthogonalCurve(start_length=5.0, end_length=5.0),  # Explicit default length
         color="black",
         line_width=2,
@@ -1239,9 +1239,9 @@ def test_connection_with_anchors():
         active_curve.start_length, 25.0, err_msg="Start length mismatch (from anchor min_segment)"
     )
 
-    assert (
-        active_curve.end_direction == "auto"
-    ), f"Expected end_direction 'auto' (anchor had no direction), got '{active_curve.end_direction}'"
+    assert active_curve.end_direction == "auto", (
+        f"Expected end_direction 'auto' (anchor had no direction), got '{active_curve.end_direction}'"
+    )
     assert_allclose(active_curve.end_length, 5.0, err_msg="End length mismatch (default expected)")
 
 
@@ -1329,9 +1329,9 @@ def test_overlay_container_internal_layout():
     assert inner_text._dimensions.width == pytest.approx(actual_text_width)
     assert inner_text._dimensions.height == pytest.approx(actual_text_height)
 
-    assert hasattr(
-        inner_text, "_layout_origin_in_parent"
-    ), "Inner text should have layout origin stored"
+    assert hasattr(inner_text, "_layout_origin_in_parent"), (
+        "Inner text should have layout origin stored"
+    )
     assert_allclose(
         inner_text._layout_origin_in_parent,
         (exp_text_local_x, exp_text_local_y),
