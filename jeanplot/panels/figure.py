@@ -23,6 +23,10 @@ class Figure(Container):
     subtitle: str | None = None
     subtitle_kwargs: dict = Field(default_factory=dict)
     theme: Any | None = None
+    # Per-figure theme deltas, deep-merged onto `theme` at render (overrides win, via
+    # `merge_jstyle_rules`). A real attribute to layer a jstyle subtree into — no
+    # sentinel `!define` var needed: `!MyFigure { theme_overrides: {Sel: {prop: v}} }`.
+    theme_overrides: Any | None = None
 
     _mpl_figure: Any = PrivateAttr(default=None)
 

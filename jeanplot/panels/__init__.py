@@ -1,5 +1,6 @@
 from jeanplot.panels.base import PlotPanel, Colorbar
 from jeanplot.panels.figure import Figure
+from jeanplot.panels.smooth_spec import SmoothGrid, SmoothKernel
 from jeanplot.panels.smooth_1d import SmoothPanel1D
 from jeanplot.panels.smooth_2d import (
     SmoothPanel2D,
@@ -29,6 +30,8 @@ __all__ = [
     "PlotPanel",
     "Colorbar",
     "Figure",
+    "SmoothGrid",
+    "SmoothKernel",
     "SmoothPanel1D",
     "SmoothPanel2D",
     "SmoothGradMagnitudePanel2D",

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import matplotlib as mpl
+import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 
@@ -68,13 +69,121 @@ def _component_bbox(
     return (ox / root_w, 1.0 - (oy + h) / root_h, w / root_w, h / root_h)
 
 
+def _iter_all_components(root: Component) -> Iterator[Component]:
+    yield root
+    for c in getattr(root, "children", None) or []:
+        yield from _iter_all_components(c)
+
+
+def _line_style(style: Any):
+    """Map a BoxStyle's border_style/dash_sequence to a matplotlib linestyle."""
+    seq = getattr(style, "dash_sequence", None)
+    if seq:
+        return (float(getattr(style, "dash_offset", 0.0) or 0.0), tuple(seq))
+    return {"solid": "-", "dashed": (0, (4, 2)), "dotted": (0, (1, 1.6))}.get(
+        getattr(style, "border_style", "solid"), "-"
+    )
+
+
+def _draw_chrome(fig: Figure, mfig: Any, root_w: float, root_h: float) -> None:
+    """Draw container/cell backgrounds + borders (the figure path otherwise only
+    draws PlotPanel leaves, so a Table's cell borders / row backgrounds would never
+    show). Per-side borders (CellStyle.border_top/right/bottom/left, where ``False``
+    hides a side) become real table grid lines; ``border_style``/``dash_sequence``
+    dash them; ``corner_radius`` rounds a full (four-sided) box's corners."""
+    bg_patches: list = []
+    border_segs: list[tuple] = []
+    rounded: list[tuple] = []
+    for c in _iter_all_components(fig):
+        if isinstance(c, PlotPanel) or not getattr(c, "show", True):
+            continue
+        style = getattr(c, "style", None)
+        if style is None or c._dimensions.width <= 0 or c._dimensions.height <= 0:
+            continue
+        x, y, w, h = _component_bbox(c, root_w, root_h)
+        bg = getattr(style, "background_color", None)
+        bc = getattr(style, "border_color", None)
+        bw = float(getattr(style, "border_width", 0) or 0)
+        # CellStyle exposes per-side toggles (None/True = draw, False = hide); plain
+        # BoxStyle has none of these -> all four sides draw.
+        top = getattr(style, "border_top", None) is not False
+        right = getattr(style, "border_right", None) is not False
+        bottom = getattr(style, "border_bottom", None) is not False
+        left = getattr(style, "border_left", None) is not False
+        cr = float(getattr(style, "corner_radius", 0) or 0)
+
+        if cr > 0 and top and right and bottom and left:
+            # rounded full box: one FancyBboxPatch in inch space (aspect-correct
+            # rounding regardless of the figure's w/h ratio).
+            rounded.append((x * root_w, y * root_h, w * root_w, h * root_h, bg, bc, bw, cr, style))
+            continue
+
+        if bg:
+            bg_patches.append(mpatches.Rectangle((x, y), w, h, facecolor=bg, edgecolor="none"))
+        if bc and bw > 0:
+            ls = _line_style(style)
+            x1, y1 = x + w, y + h
+            for on, seg in (
+                (top, ((x, y1), (x1, y1))),
+                (bottom, ((x, y), (x1, y))),
+                (left, ((x, y), (x, y1))),
+                (right, ((x1, y), (x1, y1))),
+            ):
+                if on:
+                    border_segs.append((seg, bc, bw, ls))
+    # backgrounds first (under the axes), then borders (over the gaps between axes)
+    for p in bg_patches:
+        p.set_transform(mfig.transFigure)
+        p.set_zorder(0)
+        mfig.add_artist(p)
+    for xi, yi, wi, hi, bg, bc, bw, cr, style in rounded:
+        cr = min(cr, wi / 2.0, hi / 2.0)
+        patch = mpatches.FancyBboxPatch(
+            (xi + cr, yi + cr),
+            wi - 2 * cr,
+            hi - 2 * cr,
+            boxstyle=mpatches.BoxStyle("round", pad=cr, rounding_size=cr),
+            facecolor=bg or "none",
+            edgecolor=bc if (bc and bw > 0) else "none",
+            linewidth=bw,
+            linestyle=_line_style(style),
+            transform=mfig.dpi_scale_trans,
+            mutation_aspect=1.0,
+            zorder=0 if bg else 2,
+        )
+        mfig.add_artist(patch)
+    for (p0, p1), bc, bw, ls in border_segs:
+        line = mlines.Line2D(
+            [p0[0], p1[0]],
+            [p0[1], p1[1]],
+            transform=mfig.transFigure,
+            color=bc,
+            lw=bw,
+            linestyle=ls,
+            solid_capstyle="projecting",
+            zorder=2,
+        )
+        mfig.add_artist(line)
+
+
 def _draw_debug_overlays(fig: Figure, mfig: Any, root_w: float, root_h: float) -> None:
     """outline every component with debug=True (figure path bypasses render_debug)."""
+
     def rect(x, y, w, h, ls, lw):
-        mfig.add_artist(mpatches.Rectangle(
-            (x, y), w, h, transform=mfig.transFigure,
-            fill=False, ec="red", ls=ls, lw=lw, zorder=10000,
-        ))
+        mfig.add_artist(
+            mpatches.Rectangle(
+                (x, y),
+                w,
+                h,
+                transform=mfig.transFigure,
+                fill=False,
+                ec="red",
+                ls=ls,
+                lw=lw,
+                zorder=10000,
+            )
+        )
+
     for c in _iter_debug_components(fig):
         if c._dimensions.width <= 0 or c._dimensions.height <= 0:
             continue
@@ -82,12 +191,25 @@ def _draw_debug_overlays(fig: Figure, mfig: Any, root_w: float, root_h: float) -
         rect(x, y, w, h, "--", 0.5)
         if isinstance(c, PlotPanel) and c.is_drawable and not c.is_overlay:
             rect(*_panel_bbox(c, root_w, root_h), ":", 0.4)
-        mfig.text(x, y + h, c.id or type(c).__name__, transform=mfig.transFigure,
-                  fontsize=5, color="red", va="bottom", ha="left", zorder=10001)
+        mfig.text(
+            x,
+            y + h,
+            c.id or type(c).__name__,
+            transform=mfig.transFigure,
+            fontsize=5,
+            color="red",
+            va="bottom",
+            ha="left",
+            zorder=10001,
+        )
 
 
 def render_figure(fig: Figure) -> Any:
-    if fig.theme is not None:
+    if fig.theme_overrides is not None:
+        from jeanplot.core.style_engine import merge_jstyle_rules
+
+        jstyle.update(merge_jstyle_rules(fig.theme if fig.theme is not None else {}, fig.theme_overrides))
+    elif fig.theme is not None:
         jstyle.update(fig.theme)
     jstyle.apply(fig)
 
@@ -139,6 +261,7 @@ def render_figure(fig: Figure) -> Any:
                     continue
                 overlay.draw(parent_ax)
 
+        _draw_chrome(fig, mfig, root_w, root_h)
         _draw_debug_overlays(fig, mfig, root_w, root_h)
 
         if fig.subtitle:

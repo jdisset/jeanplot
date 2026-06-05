@@ -1,10 +1,46 @@
-from typing import Iterator, Literal, TypeVar, Annotated
+from typing import Any, Iterator, Literal, TypeVar, Annotated
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr, model_validator
 import numpy as np
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+class CascadeLeaf(BaseModel):
+    """Cascade-selectable config node: carries only what the jstyle selector engine
+    needs (class name, parent chain, id/style_class, user-set tracking), no layout
+    weight. Promote a buried config dict to a `CascadeLeaf` subclass so a bare
+    `LeafType:` rule reaches it like any panel. `Component` is itself one."""
+
+    model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True)
+
+    id: str | None = None
+    style_class: list[str] = Field(default_factory=list)
+    parent: Any = Field(default=None, repr=False)  # repr=False: parent back-ref would cycle
+    _user_set_fields: set[str] = PrivateAttr(default_factory=set)
+
+    def model_post_init(self, _context):
+        object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
+
+    @property
+    def params(self) -> dict[str, Any]:
+        """Config payload for a consuming fn: non-identity fields, nested leaves flattened
+        via their own `.params`. Drops None and empty nested leaves, so an un-styled leaf
+        yields `{}` and the fn keeps its own defaults."""
+        out: dict[str, Any] = {}
+        for name in type(self).model_fields:
+            if name in ("id", "style_class", "parent"):
+                continue
+            v = getattr(self, name)
+            if isinstance(v, CascadeLeaf):
+                v = v.params
+                if not v:
+                    continue
+            elif v is None:
+                continue
+            out[name] = v
+        return out
 
 
 def normalize_color(color: str | tuple | None) -> str | None:

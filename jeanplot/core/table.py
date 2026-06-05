@@ -49,15 +49,22 @@ class TableCell(Container):
     _row_index: int = PrivateAttr(default=0)
     _col_index: int = PrivateAttr(default=0)
     _is_header: bool = PrivateAttr(default=False)
+    _styling: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def apply_styles(self):
-        # override parent apply_styles so style stays CellStyle
-        jstyle.apply(self)
-        if not isinstance(self.style, CellStyle):
-            # jstyle may have replaced with a BoxStyle; coerce back
-            current_style_dict = self.style.model_dump()
-            self.style = CellStyle(**current_style_dict)
+        # jstyle.apply mutates fields; under validate_assignment every setattr re-fires
+        # this validator. Guard so a direct cell-field set (debug, whole `style`) applies
+        # the cascade once instead of recursing. (style stays CellStyle, not BoxStyle.)
+        if self._styling:
+            return self
+        self._styling = True
+        try:
+            jstyle.apply(self)
+            if not isinstance(self.style, CellStyle):
+                self.style = CellStyle(**self.style.model_dump())
+        finally:
+            self._styling = False
         return self
 
     def measure_and_layout(self, renderer=None) -> Size:
@@ -236,13 +243,27 @@ class Table(Container):
     border_spacing: float = 0
 
     _num_columns: int = PrivateAttr(default=0)
+    _built_signature: tuple | None = PrivateAttr(default=None)
+
+    def _build_signature(self) -> tuple:
+        # Identity of the inputs that define the row/cell structure. `data` and
+        # `column_styles` are validated as lists of model instances, so reassigning
+        # either yields a fresh object (new id); in-place growth is caught by len.
+        return (id(self.data), len(self.data), id(self.column_styles), self.header_rows)
 
     @model_validator(mode="after")
     def build_table(self):
+        # Idempotent: `validate_assignment=True` re-fires every model_validator on any
+        # field assignment, but rebuilding is destructive (it discards the TableRows
+        # that hold computed column widths). Skip when the structural inputs are
+        # unchanged, so the built table survives a Figure's measure/layout cycle.
+        if self._built_signature == self._build_signature() and self.children:
+            return self
         # clear in place to avoid assignment-validation recursion
         self.children.clear()
         if not self.data:
             self._num_columns = 0
+            self._built_signature = self._build_signature()
             return self
 
         max_effective_cols = 0
@@ -324,8 +345,12 @@ class Table(Container):
                     else CellStyle()
                 )
 
+                # exclude_unset: only carry fields actually set on the column default or
+                # the cell, so the rest stay fillable by the jstyle cascade. A full dump
+                # would mark every field user-set and the fill strategy would skip them.
                 merged_style_dict = self._merge_styles(
-                    base_style.model_dump(), cell.style.model_dump()
+                    base_style.model_dump(exclude_unset=True),
+                    cell.style.model_dump(exclude_unset=True),
                 )
                 cell.style = CellStyle(**merged_style_dict)
 
@@ -345,11 +370,14 @@ class Table(Container):
             pad = self.style.padding
             bump = self.border_spacing / 2
             self.style.padding = BoxInset(
-                top=pad.top + bump, right=pad.right + bump,
-                bottom=pad.bottom + bump, left=pad.left + bump,
+                top=pad.top + bump,
+                right=pad.right + bump,
+                bottom=pad.bottom + bump,
+                left=pad.left + bump,
             )
             self.layout.gap = self.border_spacing
 
+        self._built_signature = self._build_signature()
         return self
 
     def _merge_styles(self, base: dict, overlay: dict) -> dict:

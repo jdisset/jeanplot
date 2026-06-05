@@ -128,8 +128,11 @@ def test_smooth_panel_2d_signature_matches_function_kwargs():
     sig = inspect.signature(SmoothPanel2D.__panel_fn__)
     fn_params = set(sig.parameters) - {"X", "Y", "input_names", "output_name", "ax"}
     panel_fields = set(SmoothPanel2D.model_fields)
+    # `smooth_grid_params` is promoted to the `smooth_grid` CascadeLeaf field (bridged at draw)
+    promoted = {"smooth_grid_params": "smooth_grid"}
     for p in fn_params:
-        assert p in panel_fields, f"smooth_2d kwarg '{p}' missing from SmoothPanel2D"
+        target = promoted.get(p, p)
+        assert target in panel_fields, f"smooth_2d kwarg '{p}' missing from SmoothPanel2D"
 
 
 def test_smooth_panel_2d_yaml_load():

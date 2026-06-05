@@ -218,7 +218,6 @@ rules: !cascade:jstyle_fill
       color: !fluo_swatch bright
       blur_radius: 15
       resolution: 0.01
-      z_index: 1
     Text:
       color: !fluo_swatch dark
       font_size: 8
@@ -265,7 +264,6 @@ rules: !cascade:jstyle_fill
       color: !class_swatch bright
       blur_radius: 12
       resolution: 0.01
-      z_index: 1
 
   BiasNode:
     style.background_color: "#bbb"
@@ -274,7 +272,6 @@ rules: !cascade:jstyle_fill
       color: !class_swatch bright
       blur_radius: 12
       resolution: 0.01
-      z_index: 1
 
   ERNNode:
     min_dimensions: !Size { width: 70, height: 70 }
@@ -387,7 +384,6 @@ rules: !cascade:jstyle_fill
       color: !class_swatch bright
       blur_radius: 10
       resolution: 0.01
-      z_index: 1
 
   AggregationNode[collapsed][bias_connected]:
     TUNode:

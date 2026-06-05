@@ -11,7 +11,7 @@ import numpy as np
 from pydantic import Field
 
 from jeanplot.core.container import Container
-from jeanplot.core.models import LayoutConstraints
+from jeanplot.core.models import BoxInset, BoxStyle, LayoutConstraints, Size
 from jeanplot.data import PlotData, PlotFunctionResult
 from jeanplot.panels.base import PlotPanel
 from jeanplot.panels.smooth_2d import SmoothPanel2D
@@ -22,7 +22,21 @@ def _format_z_label(z_latent: float, rescaler=None, prefix: str = "z=") -> str:
     if rescaler is None:
         return f"{prefix}{float(z_latent):.2f}"
     from jeanplot.plots.ticks import format_powers
+
     return f"{prefix}{format_powers(float(rescaler.inv(float(z_latent))), n_decimals=0)}"
+
+
+def _split_userset(parent: Any, spec: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split {child_kw: parent_field} into (user-set, default) kwargs by whether the
+    parent field was explicitly set. User-set lims are passed at construction so they
+    stay locked and beat the theme; the rest are applied via `with_defaults` so they're
+    cascade-fillable (e.g. `SmoothPanel3D[id=prediction] CubeStackPanel: {vlims: ...}`
+    reaches a cube that is built here, before the render-time cascade runs)."""
+    user: dict[str, Any] = {}
+    default: dict[str, Any] = {}
+    for child_kw, pfield in spec.items():
+        (user if pfield in parent.model_fields_set else default)[child_kw] = getattr(parent, pfield)
+    return user, default
 
 
 class CubeView(PlotPanel):
@@ -114,26 +128,68 @@ class SmoothPanel3D(PlotPanel):
         rows, cols = self.slice_grid
         n_slices = rows * cols
 
+        # Uniform per-cell reservations (inches): a title strip on top, a colorbar on
+        # the right, x/y tick-label room on the bottom/left. Kept IDENTICAL on every
+        # cell so the equal flex weights below give every slice the same plot area at
+        # any final panel size. (Size-dependent weights only equalize at one exact
+        # size, which is why the bottom row drifted.) Which cells actually draw tick
+        # labels is decided by show_labels below, not by changing their size.
+        gap = 0.05
+        # Per-cell padding is uniform (title strip on top, colorbar on the right, a
+        # hairline elsewhere) so the equal flex weights below give every slice the
+        # same plot area at any panel size. The bottom-row x labels and left-column y
+        # labels live in the GRID container's margin (grid_pad), NOT per-cell padding,
+        # so interior cells don't each waste a tick band -- that's what keeps the
+        # slices large while staying equal.
+        pad_title, pad_cbar, pad_edge = 0.16, 0.30, 0.03
+        pad_xaxis, pad_yaxis = 0.40, 0.44
+        cell_pad = BoxStyle(
+            padding=BoxInset(top=pad_title, right=pad_cbar, bottom=pad_edge, left=pad_edge)
+        )
+        grid_pad = BoxStyle(padding=BoxInset(bottom=pad_xaxis, left=pad_yaxis))
+        # Hug the heatmap with a thin, tall colorbar so it costs little width.
+        slice_colorbar_params = {"position": (1.04, 0.08), "size": (0.05, 0.84)}
+
+        # axes_size sizes the per-cell min_dimensions so the panel honors the size the
+        # caller asked for (per_network_row's per-cell width x panel_scale). The equal
+        # weights drive the actual cell sizes; this just sets a sensible floor.
+        if "axes_size" in self.model_fields_set:
+            w, h = self.axes_size.width, self.axes_size.height
+            grid_w = w * (1.0 - self.cube_frac_w) - pad_yaxis
+            grid_h = h - pad_xaxis
+            cell_w = max(0.3, (grid_w - gap * (cols - 1)) / cols - (pad_edge + pad_cbar))
+            cell_h = max(0.3, (grid_h - gap * (rows - 1)) / rows - (pad_title + pad_edge))
+            cube_size = {"axes_size": Size(width=w * self.cube_frac_w, height=h)}
+            cell_size = {"axes_size": Size(width=cell_w, height=cell_h)}
+        else:
+            cube_size = {}
+            cell_size = {}
+
         if self.slice_zvalues is not None:
             zs = np.asarray(self.slice_zvalues, dtype=float)
-            assert zs.size == n_slices, f"slice_zvalues has {zs.size} entries, expected R*C={n_slices}"
+            assert zs.size == n_slices, (
+                f"slice_zvalues has {zs.size} entries, expected R*C={n_slices}"
+            )
         else:
             zs = np.linspace(self.slice_zrange[0], self.slice_zrange[1], n_slices)
 
         cube_zs: list[float] = (
-            list(self.stack_zslices) if self.stack_zslices is not None
-            else list(self.zslices) if self.zslices is not None
+            list(self.stack_zslices)
+            if self.stack_zslices is not None
+            else list(self.zslices)
+            if self.zslices is not None
             else list(np.linspace(self.stack_zrange[0], self.stack_zrange[1], self.stack_n_slices))
         )
 
+        cube_user, cube_def = _split_userset(
+            self, {"xlims": "xlims", "ylims": "ylims", "zlims": "zlims", "vlims": "vlims"}
+        )
         cube = CubeStackPanel(
             plot_data=self.plot_data,
             rescaler=self.rescaler,
             zslices=[cube_zs],
-            xlims=self.xlims,
-            ylims=self.ylims,
-            zlims=self.zlims,
-            vlims=self.vlims,
+            **cube_user,
+            **cube_size,
             projection_angle=self.projection_angle,
             projection_diag_coef=self.projection_diag_coef,
             title=self.title,
@@ -146,40 +202,58 @@ class SmoothPanel3D(PlotPanel):
             colorbar_params=self.cube_colorbar_params,
             draw_colorbar=False,
         )
+        cube.with_defaults(**cube_def)
 
+        slice_user, slice_def = _split_userset(
+            self, {"xlims": "xlims", "ylims": "ylims", "vlims": "slice_vlims"}
+        )
         slice_panels: list[SmoothPanel2D] = []
         for i, z in enumerate(zs):
             r, c = i // cols, i % cols
             is_left = c == 0
             is_bottom = r == rows - 1
             title_label = _format_z_label(float(z), self.rescaler)
-            slice_panels.append(
-                SmoothPanel2D(
-                    plot_data=self.plot_data,
-                    rescaler=self.rescaler,
-                    zslice=[float(z)],
-                    xlims=self.xlims,
-                    ylims=self.ylims,
-                    vlims=self.slice_vlims,
-                    vlim_quantiles=self.slice_vlim_quantiles,
-                    vlim_min_floor=None,
-                    vlim_min_range=None,
-                    draw_colorbar=self.slice_show_colorbar,
-                    draw_xlabel=is_bottom,
-                    draw_ylabel=is_left,
-                    title=title_label,
-                    title_kwargs={
-                        "pad": self.slice_title_pad,
-                        "color": self.slice_title_color,
-                        "fontsize": self.slice_title_fontsize,
-                    },
-                )
+            sp = SmoothPanel2D(
+                plot_data=self.plot_data,
+                rescaler=self.rescaler,
+                zslice=[float(z)],
+                **slice_user,
+                **cell_size,
+                style=cell_pad,
+                vlim_quantiles=self.slice_vlim_quantiles,
+                vlim_min_floor=None,
+                vlim_min_range=None,
+                # Per-slice colorbar: each slice auto-scales to its own range, so every
+                # cell needs its own scale. The label would just repeat the output name
+                # in every cell, so it's left off.
+                draw_colorbar=self.slice_show_colorbar,
+                draw_colorbar_label=False,
+                colorbar_params=slice_colorbar_params,
+                draw_xlabel=is_bottom,
+                draw_ylabel=is_left,
+                # Shared-axes grid: only the bottom row / left column show tick labels;
+                # interior cells suppress them (draw_x/ylabel toggle only the axis
+                # title, not the ticks).
+                setup_transformed_axis_params={
+                    "setup_xaxis_params": {"show_labels": is_bottom},
+                    "setup_yaxis_params": {"show_labels": is_left},
+                },
+                # Title sits in the reserved top strip, above the heatmap (not over it).
+                title=title_label,
+                title_inside=False,
+                title_kwargs={
+                    "color": self.slice_title_color,
+                    "fontsize": self.slice_title_fontsize,
+                    "pad": self.slice_title_pad,
+                },
             )
+            sp.with_defaults(**slice_def)
+            slice_panels.append(sp)
         slice_rows = [
             Container(
                 layout=LayoutConstraints(
                     direction="row",
-                    gap=0.05,
+                    gap=gap,
                     align_items="stretch",
                     main_axis_weights=[1.0] * cols,
                 ),
@@ -188,9 +262,10 @@ class SmoothPanel3D(PlotPanel):
             for r in range(rows)
         ]
         slice_grid_container = Container(
+            style=grid_pad,
             layout=LayoutConstraints(
                 direction="column",
-                gap=0.05,
+                gap=gap,
                 align_items="stretch",
                 main_axis_weights=[1.0] * rows,
             ),
@@ -251,11 +326,26 @@ class CubeStackPanel(PlotPanel):
     ztitle: str | None = None
     vtitle: str | None = None
 
+    def _face_smooth_grid_params(self) -> dict | None:
+        """Cube faces are SmoothPanel2D: resolve one against the cascade so the shared
+        smoothing rules (+ `CubeStackPanel SmoothGrid` specializations) reach its leaf."""
+        from jeanplot.core.style import jstyle
+        from jeanplot.panels.smooth_2d import SmoothPanel2D
+
+        face = SmoothPanel2D(plot_data=self.plot_data, is_drawable=False)
+        face.parent = self
+        jstyle.apply_one(face)
+        return face.smooth_grid.params
+
     def draw(self, ax) -> PlotFunctionResult | None:
         from jeanplot.plots.smooth_3d import smooth_3d
 
         ref = self.contour_reference_plot_data
         contour_reference = (ref.x, ref.y) if ref is not None else None
+        smooth_2d_params = dict(self.smooth_2d_params or {})
+        sgp = self._face_smooth_grid_params()
+        if sgp is not None:
+            smooth_2d_params["smooth_grid_params"] = sgp
         return smooth_3d(
             X=self.plot_data.x,
             Y=self.plot_data.y,
@@ -264,7 +354,10 @@ class CubeStackPanel(PlotPanel):
             rescaler=self.rescaler,
             ax=[ax],
             zslices=self.zslices,
-            xlims=self.xlims, ylims=self.ylims, zlims=self.zlims, vlims=self.vlims,
+            xlims=self.xlims,
+            ylims=self.ylims,
+            zlims=self.zlims,
+            vlims=self.vlims,
             contour_reference=contour_reference,
             draw_colorbar=self.draw_colorbar,
             cube_edge_props=self.cube_edge_props,
@@ -274,8 +367,10 @@ class CubeStackPanel(PlotPanel):
             show_inner_spines=self.show_inner_spines,
             show_slice_ticks=self.show_slice_ticks,
             show_front_face_ticks=self.show_front_face_ticks,
-            smooth_2d_params=self.smooth_2d_params,
-            xtitle=self.xtitle, ytitle=self.ytitle, ztitle=self.ztitle,
+            smooth_2d_params=smooth_2d_params,
+            xtitle=self.xtitle,
+            ytitle=self.ytitle,
+            ztitle=self.ztitle,
             title=self.title,
             xaxis_labelpad=self.xaxis_labelpad,
             yaxis_labelpad=self.yaxis_labelpad,

@@ -39,7 +39,12 @@ class Container(Component):
         is_already_present = any(child is c for c in self.children)
         if not is_already_present:
             self.children.append(child)
-        child.parent = self
+        # Guard: `parent` is a validated field, so reassigning it (even to the same
+        # value) re-runs every model_validator on the child. For a Table that means
+        # build_table re-fires and wipes its computed column widths. Only assign when
+        # it actually changes.
+        if child.parent is not self:
+            child.parent = self
         if isinstance(child, AnchorComponent):
             is_in_anchors = any(child is a for a in self.anchor_points)
             if not is_in_anchors:
@@ -63,7 +68,11 @@ class Container(Component):
         original_children_ids = {id(c) for c in self.children if c}
 
         for child_obj_id, child in all_children_map.items():
-            child.parent = self
+            # Only assign when it actually changes: `parent` is validated, so a
+            # redundant reassignment re-runs every model_validator on the child each
+            # layout pass (and would re-fire Table.build_table, wiping column widths).
+            if child.parent is not self:
+                child.parent = self
             is_overlay_or_attached = child.is_overlay or child.attached_to
 
             if is_overlay_or_attached:

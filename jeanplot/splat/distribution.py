@@ -9,11 +9,9 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import fftconvolve
 
 from jeanplot.splat.core import (
-    _balance_factor,
     _ball_kernel,
-    _cap,
     cic_corners,
-    splat_point_density,
+    rebalance_weights,
 )
 
 
@@ -51,10 +49,10 @@ class ConditionalSplat:
         m = np.all(np.isfinite(X), axis=1) & np.isfinite(Y)
         X, Y = X[m, :d], Y[m]
 
-        w = np.ones(X.shape[0])
-        if X.shape[0] and rebalance_values > 0.0:
-            dens = splat_point_density(X, radius=radius, sigma_in_radius=sigma_in_radius)
-            w = _balance_factor(dens, _cap(dens, rebalance_values), rebalance_values_mode == "hard")
+        w, _ = rebalance_weights(
+            X, radius=radius, sigma_in_radius=sigma_in_radius,
+            rebalance_values=rebalance_values, rebalance_values_mode=rebalance_values_mode,
+        )
 
         vlo, vhi = (float(Y.min()), float(Y.max())) if value_range is None else value_range
         vhi = vhi if vhi > vlo else vlo + 1.0

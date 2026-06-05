@@ -22,6 +22,9 @@ class PlotPanel(Container):
     rescaler: Any | None = None
     title: str | None = None
     title_kwargs: dict = Field(default_factory=dict)
+    # Draw the title inside the axes (e.g. a z-slice label) instead of above it, so
+    # it reserves no top room. The draw still positions it via title_kwargs (y/loc).
+    title_inside: bool = False
     xtitle: str | None = None
     ytitle: str | None = None
     vtitle: str | None = None
@@ -35,9 +38,9 @@ class PlotPanel(Container):
 
     @property
     def effective_padding(self) -> BoxInset:
-        """style.padding, with top bumped to TITLE_ROOM when there's a title."""
+        """style.padding, with top bumped to TITLE_ROOM when there's a title above."""
         p = self.safe_style.padding
-        if self.title and p.top < TITLE_ROOM:
+        if self.title and not self.title_inside and p.top < TITLE_ROOM:
             return BoxInset(top=TITLE_ROOM, right=p.right, bottom=p.bottom, left=p.left)
         return p
 

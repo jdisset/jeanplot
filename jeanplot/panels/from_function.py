@@ -78,8 +78,12 @@ def panel_from(
     base: type = PlotPanel,
     plot_data_keys: tuple[str, ...] = _DEFAULT_PLOT_DATA_KEYS,
     field_overrides: dict[str, Any] | None = None,
+    cascade_leaf_params: dict[str, type] | None = None,
     txt_fn=None,
 ) -> type:
+    """`cascade_leaf_params={fn_dict_param: CascadeLeaf}`: replace a dict-valued fn
+    param with a typed, cascade-selectable leaf field (param name sans `_params`); its
+    `.params` is bridged back into the fn call at draw, so the fn stays dict-driven."""
     sig = inspect.signature(fn)
     _check_param_kinds(sig, fn.__name__)
     try:
@@ -87,13 +91,16 @@ def panel_from(
     except Exception:
         hints = {}
 
+    leaf_params = cascade_leaf_params or {}
+    leaf_field = {p: (p[:-7] if p.endswith("_params") else p) for p in leaf_params}
+
     base_fields = set(base.model_fields)
     pd_routed = {k for k in plot_data_keys if k in sig.parameters}
     own_fields: dict[str, tuple[Any, Any]] = {}
     inherited: set[str] = set()
 
     for pname, param in sig.parameters.items():
-        if pname in _SENTINEL or pname in pd_routed:
+        if pname in _SENTINEL or pname in pd_routed or pname in leaf_params:
             continue
         if pname in base_fields:
             inherited.add(pname)
@@ -101,6 +108,9 @@ def panel_from(
         annot = _normalize_annot(hints.get(pname, Any))
         default = param.default if param.default is not inspect.Parameter.empty else ...
         own_fields[pname] = (annot, default)
+
+    for pname, leaf_type in leaf_params.items():
+        own_fields[leaf_field[pname]] = (leaf_type, pydantic.Field(default_factory=leaf_type))
 
     if field_overrides:
         for k, v in field_overrides.items():
@@ -124,6 +134,8 @@ def panel_from(
                 pd = self.plot_data
                 assert pd is not None, f"{cls_name}: plot_data is required for {fn.__name__}"
                 kwargs[pname] = getattr(pd, _PLOT_DATA_SOURCE[pname])
+            elif pname in leaf_params:
+                kwargs[pname] = getattr(self, leaf_field[pname]).params
             elif pname in own_keys or pname in inherited:
                 kwargs[pname] = getattr(self, pname)
         if has_rescaler_param and kwargs.get("rescaler") is None:
@@ -154,6 +166,8 @@ def panel_from(
                     if pd is None:
                         continue
                     kwargs[pname] = getattr(pd, _PLOT_DATA_SOURCE[pname])
+                elif pname in leaf_params:
+                    kwargs[pname] = getattr(self, leaf_field[pname]).params
                 elif hasattr(self, pname):
                     kwargs[pname] = getattr(self, pname)
             return str(txt_fn(**kwargs))

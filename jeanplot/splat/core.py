@@ -21,6 +21,49 @@ def _balance_factor(dens, cap, hard):
     return cap / (dens + cap + _EPS)
 
 
+_WEIGHTS_CACHE: dict = {}
+_WEIGHTS_CACHE_MAX = 16
+
+
+def clear_weights_cache():
+    _WEIGHTS_CACHE.clear()
+
+
+def rebalance_weights(
+    X, *, radius, sigma_in_radius=3.0,
+    rebalance_values=0.0, rebalance_values_mode="smooth",
+    rebalance_centroids=0.0, rebalance_centroids_mode="hard",
+):
+    """Per-point (wv, wc) rebalance weights from tree-free density. Pure in its
+    args, so cube slices/faces over one cloud share the density + quantile +
+    balance work (recomputed redundantly per fit otherwise)."""
+    from jeanplot.knn import array_content_key
+
+    n = X.shape[0]
+    if not n or (rebalance_values <= 0.0 and rebalance_centroids <= 0.0):
+        return np.ones(n), np.ones(n)
+    ckey = array_content_key(X)
+    key = (
+        ckey, round(radius, 12), round(sigma_in_radius, 12),
+        round(rebalance_values, 12), rebalance_values_mode,
+        round(rebalance_centroids, 12), rebalance_centroids_mode,
+    ) if ckey else None
+    if key is not None and key in _WEIGHTS_CACHE:
+        return _WEIGHTS_CACHE[key]
+    dens = splat_point_density(X, radius=radius, sigma_in_radius=sigma_in_radius)
+    wv = np.ones(n)
+    wc = np.ones(n)
+    if rebalance_values > 0.0:
+        wv = _balance_factor(dens, _cap(dens, rebalance_values), rebalance_values_mode == "hard")
+    if rebalance_centroids > 0.0:
+        wc = _balance_factor(dens, _cap(dens, rebalance_centroids), rebalance_centroids_mode == "hard")
+    if key is not None:
+        if len(_WEIGHTS_CACHE) >= _WEIGHTS_CACHE_MAX:
+            _WEIGHTS_CACHE.pop(next(iter(_WEIGHTS_CACHE)))
+        _WEIGHTS_CACHE[key] = (wv, wc)
+    return wv, wc
+
+
 def _cap(dens, strength):
     return float(np.quantile(dens, max(1.0 - strength, _Q_FLOOR)))
 
@@ -63,10 +106,28 @@ def _deposit(coords, payloads, origin, cell, shape):
     return out
 
 
+_DENSITY_CACHE: dict = {}
+_DENSITY_CACHE_MAX = 16
+
+
+def clear_density_cache():
+    _DENSITY_CACHE.clear()
+
+
 def splat_point_density(X, *, radius, sigma_in_radius=3.0, res=64):
     """Tree-free KDE proxy at each point: deposit unit mass, blur, sample back.
-    Scale-arbitrary (only relative density feeds the rebalance cap ratio)."""
+    Scale-arbitrary (only relative density feeds the rebalance cap ratio).
+
+    Content-memoized: the density depends only on (cloud, radius, sigma, res),
+    so cube slices/faces reusing the same cloud share one computation.
+    """
+    from jeanplot.knn import array_content_key
+
     X = np.asarray(X, dtype=np.float64)
+    ckey = array_content_key(X)
+    key = (ckey, round(radius, 12), round(sigma_in_radius, 12), int(res)) if ckey else None
+    if key is not None and key in _DENSITY_CACHE:
+        return _DENSITY_CACHE[key]
     d = X.shape[1]
     sigma = radius / sigma_in_radius
     lo = X.min(axis=0) - radius
@@ -79,7 +140,12 @@ def splat_point_density(X, *, radius, sigma_in_radius=3.0, res=64):
     buf = gaussian_filter(buf, sig_cells, truncate=sigma_in_radius, mode="constant")
     axes = tuple(np.linspace(lo[k], hi[k], res) for k in range(d))
     interp = RegularGridInterpolator(axes, buf, method="linear", bounds_error=False, fill_value=0.0)
-    return np.asarray(interp(X))
+    out = np.asarray(interp(X))
+    if key is not None:
+        if len(_DENSITY_CACHE) >= _DENSITY_CACHE_MAX:
+            _DENSITY_CACHE.pop(next(iter(_DENSITY_CACHE)))
+        _DENSITY_CACHE[key] = out
+    return out
 
 
 class SplatField:
@@ -130,18 +196,11 @@ class SplatField:
         n_outs = Y.shape[1] if Y is not None else 1
 
         # rebalance from tree-free density on the full (pre-band) cloud
-        wv = np.ones(X.shape[0])
-        wc = np.ones(X.shape[0])
-        if X.shape[0] and (rebalance_values > 0.0 or rebalance_centroids > 0.0):
-            dens = splat_point_density(X, radius=radius, sigma_in_radius=sigma_in_radius)
-            if rebalance_values > 0.0:
-                wv = _balance_factor(
-                    dens, _cap(dens, rebalance_values), rebalance_values_mode == "hard"
-                )
-            if rebalance_centroids > 0.0:
-                wc = _balance_factor(
-                    dens, _cap(dens, rebalance_centroids), rebalance_centroids_mode == "hard"
-                )
+        wv, wc = rebalance_weights(
+            X, radius=radius, sigma_in_radius=sigma_in_radius,
+            rebalance_values=rebalance_values, rebalance_values_mode=rebalance_values_mode,
+            rebalance_centroids=rebalance_centroids, rebalance_centroids_mode=rebalance_centroids_mode,
+        )
 
         sp = X[:, :d]
         base_w = np.ones(X.shape[0])
@@ -194,15 +253,13 @@ class SplatField:
         dep = _deposit(sp, payload, origin, cell, pshape).reshape(*pshape, len(cols))
 
         crop = tuple(slice(margin, margin + res) for _ in range(d))
-        buffers = {}
         cnt_idx = names.index("cnt")
-        for j, nm in enumerate(names):
-            if nm == "cnt":
-                continue
-            blurred = gaussian_filter(
-                dep[..., j], sig_cells, truncate=sigma_in_radius, mode="constant"
-            )
-            buffers[nm] = blurred[crop]
+        # blur all moment channels in one pass (sigma=0 on the channel axis is
+        # a no-op there, so this is identical to per-channel gaussian_filter)
+        blurred = gaussian_filter(
+            dep, (*sig_cells, 0.0), truncate=sigma_in_radius, mode="constant"
+        )[crop]
+        buffers = {nm: blurred[..., j] for j, nm in enumerate(names) if nm != "cnt"}
 
         # min_points counts points within `radius` (hard) -> top-hat ball
         # convolution, NOT the gaussian soft-count (sigma=radius/3 undercounts).

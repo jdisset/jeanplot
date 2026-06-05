@@ -5,11 +5,9 @@ from typing import Any, Annotated, Sequence, TYPE_CHECKING
 if TYPE_CHECKING:
     from jeanplot.core.renderer import BaseRenderer
 from pydantic import (
-    BaseModel,
     Field,
     model_validator,
     PrivateAttr,
-    ConfigDict,
     BeforeValidator,
 )
 import numpy as np
@@ -18,7 +16,7 @@ from functools import partial
 import math
 import logging
 
-from jeanplot.core.models import Transform, Size, BoxStyle, Offset
+from jeanplot.core.models import CascadeLeaf, Transform, Size, BoxStyle, Offset
 from jeanplot.core.debug import DebugMixin
 from jeanplot.core.style import jstyle
 
@@ -33,13 +31,9 @@ def size_from_sequence(seq: tuple | list | Size) -> Size:
 ValidatedSize = Annotated[Size, BeforeValidator(size_from_sequence)]
 
 
-class Component(DebugMixin, BaseModel):
+class Component(DebugMixin, CascadeLeaf):
     """base visual element with position, size, style, and transformation."""
 
-    model_config = ConfigDict(validate_assignment=True, arbitrary_types_allowed=True)
-
-    id: str | None = None
-    style_class: list[str] = Field(default_factory=list)
     show: bool = True
     debug: bool = False
     is_overlay: bool = False
@@ -65,10 +59,6 @@ class Component(DebugMixin, BaseModel):
     _natural_dimensions: Size = PrivateAttr(default_factory=Size)
     _layout_origin_in_parent: tuple[float, float] = PrivateAttr(default=(0.0, 0.0))
     _resolved_attach_target: Component | None = PrivateAttr(default=None)
-    _user_set_fields: set[str] = PrivateAttr(default_factory=set)
-
-    def model_post_init(self, _context):
-        object.__setattr__(self, "_user_set_fields", set(self.model_fields_set))
 
     def with_defaults(self, **defaults: Any) -> "Component":
         for k, v in defaults.items():

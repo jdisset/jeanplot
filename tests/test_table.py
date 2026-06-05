@@ -2,10 +2,58 @@ import numpy as np
 import pytest
 from lxml import etree
 
-from jeanplot.core.models import Offset, Size
+from jeanplot.core.models import LayoutConstraints, Offset, Size
 from jeanplot import Container
 from jeanplot.core.renderer.svg import SVGRenderer
 from jeanplot.core.table import CellStyle, ColumnStyle, Table, TableCell
+from jeanplot.panels.base import PlotPanel
+from jeanplot.panels.figure import Figure
+
+
+class _SizedPanel(PlotPanel):
+    def draw(self, ax):  # noqa: D401
+        pass
+
+
+_SizedPanel.model_rebuild(force=True)
+
+
+def test_table_survives_figure_layout_cycle():
+    """A Table nested in a Figure keeps its aligned column widths.
+
+    Regression: the Figure's measure/layout cycle reassigned the Table's `parent`
+    each pass, re-firing build_table (which rebuilt the rows and wiped the computed
+    column widths), collapsing every cell to width 0. Guarded now by the parent
+    identity check + idempotent build_table.
+    """
+    def cells():
+        return [
+            _SizedPanel(axes_size=Size(width=1.6, height=1.0)),
+            _SizedPanel(axes_size=Size(width=2.4, height=1.0)),
+        ]
+
+    table = Table(
+        data=[cells(), cells(), cells()],
+        column_styles=[ColumnStyle(width="auto"), ColumnStyle(width="auto")],
+    )
+    fig = Figure(children=[table], layout=LayoutConstraints(direction="column"))
+    fig.measure_and_layout(None)
+
+    rows = table.children
+    assert all(len(r.children) == 2 for r in rows)
+    widths = [[round(c._dimensions.width, 3) for c in r.children] for r in rows]
+    # every cell has real width, and column c is identical across all rows
+    assert all(w[0] > 0 and w[1] > 0 for w in widths)
+    assert len({w[0] for w in widths}) == 1
+    assert len({w[1] for w in widths}) == 1
+
+
+def test_table_build_is_idempotent_under_revalidation():
+    """Reassigning an unrelated field doesn't rebuild rows (preserves identity)."""
+    table = Table(data=[["a", "b"], ["c", "d"]])
+    rows_before = list(table.children)
+    table.id = "tbl"  # triggers validate_assignment -> all model_validators re-run
+    assert [id(r) for r in table.children] == [id(r) for r in rows_before]
 
 
 def test_table_column_widths_shrink_when_overflowing():

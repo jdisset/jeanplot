@@ -14,6 +14,18 @@ from jeanplot.core.style_dialect import parse_jstyle_rule_tree, parse_selector_k
 logger = logging.getLogger(__name__)
 
 
+def _model_type_of(annotation: Any) -> type[BaseModel] | None:
+    """The BaseModel subclass in a field annotation (unwrapping `X | None`), else None."""
+    if get_origin(annotation) is Union or isinstance(annotation, types.UnionType):
+        return next(
+            (a for a in get_args(annotation) if inspect.isclass(a) and issubclass(a, BaseModel)),
+            None,
+        )
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
+
+
 def _jstyle_specificity(sel, component):
     """CSS specificity, then tiebreakers preferring snug selector chains:
     fewer ancestor-skips first, then closer MRO matches. Both negated so the
@@ -146,7 +158,26 @@ class JStyle:
             if isinstance(value, BaseModel):
                 value = value.model_copy(deep=True)  # cascade rule is a spec, not a singleton
             self._set_property(component, path, value, clobber=clobber)
+        self._apply_leaves(component)
         return component
+
+    def _apply_leaves(self, component: Any):
+        """Resolve a component's `CascadeLeaf` config fields (e.g. `SmoothGrid`) against
+        the cascade with the component as parent, so a bare `LeafType:` rule reaches them.
+        Component-typed fields (parent/children/anchors) are tree, not config -- `apply`
+        owns those; skip them to avoid walking back up the tree."""
+        from jeanplot.core.component import Component
+        from jeanplot.core.models import CascadeLeaf
+
+        if not isinstance(component, BaseModel):
+            return
+        for name in type(component).model_fields:
+            if name == "parent":  # back-reference, not a config child -- would recurse forever
+                continue
+            leaf = getattr(component, name, None)
+            if isinstance(leaf, CascadeLeaf) and not isinstance(leaf, Component):
+                leaf.parent = component
+                self.apply_one(leaf)
 
     def apply(self, component: Any):
         if component is None:
@@ -253,23 +284,7 @@ class JStyle:
             ):
                 field_info = type(target_obj).model_fields.get(attr_to_set)
                 if field_info and hasattr(field_info, "annotation"):
-                    target_type = field_info.annotation
-                    origin = get_origin(target_type)
-                    if origin is Union or isinstance(target_type, types.UnionType):
-                        args = get_args(target_type)
-                        model_type = next(
-                            (
-                                arg
-                                for arg in args
-                                if inspect.isclass(arg) and issubclass(arg, BaseModel)
-                            ),
-                            None,
-                        )
-                    elif inspect.isclass(target_type) and issubclass(target_type, BaseModel):
-                        model_type = target_type
-                    else:
-                        model_type = None
-
+                    model_type = _model_type_of(field_info.annotation)
                     if model_type:
                         try:
                             final_value = model_type(**value)
@@ -371,7 +386,13 @@ class JStyle:
                     f"{prop_name}.{key}",
                 )
             else:
-                merged_update_dict[key] = update_val
+                # model_copy(update=...) skips validation, so a submodel field set from a
+                # raw list/dict (e.g. padding: [..] -> BoxInset) must be coerced here.
+                model_type = _model_type_of(model_fields[key].annotation)
+                if model_type is not None and not isinstance(update_val, BaseModel):
+                    merged_update_dict[key] = model_type.model_validate(update_val)
+                else:
+                    merged_update_dict[key] = update_val
 
         # Identity-preserve: no actual updates means the input is unchanged. Avoid
         # constructing a new instance so `panel.rescaler is explicit` holds for the
