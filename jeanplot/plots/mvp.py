@@ -2,9 +2,7 @@
 # Copyright (c) 2026 Jean Disset
 """Measured vs Predicted scatter plot with density and trendline.
 
-Optional generative-model diagnostics (pass ``model_samples``):
-- PIT histogram inset (auto-computed, or pass ``pit_values`` directly)
-- Sample-based coverage bands (empirical quantiles from model draws)
+Pass ``model_samples`` for generative diagnostics: PIT inset + sample coverage bands.
 """
 
 import numpy as np
@@ -145,16 +143,10 @@ def fit_median_trend(
     degree: int = 1,
     quantiles: tuple[float, ...] = (0.4, 0.5, 0.6),
 ) -> NdArray:
-    """Fit a stacked-polynomial conditional median of `predicted` given `measured`.
+    """Stacked-poly conditional median of `predicted` given `measured`, evaluated at `eval_x`.
 
-    Returns the trend evaluated at `eval_x`. Used both for the optional
-    display trendline and for the bias-area metric (see `bias_area`).
-
-    The underlying ``fit_stacked_poly_at_quantiles`` requires at least
-    two distinct quantiles (it builds Gaussian-weighted segments between
-    them), so this helper defaults to a tight band around 0.5 -- the
-    average across these quantiles approximates the conditional median
-    while staying numerically stable.
+    Defaults to a tight band around 0.5: the underlying ``fit_stacked_poly_at_quantiles``
+    needs at least two distinct quantiles.
     """
     from jeanplot.plots.stacked_poly import evaluate_stacked_poly, fit_stacked_poly_at_quantiles
 
@@ -183,18 +175,10 @@ def calibration_rms(
 ) -> float:
     """RMS of `(conditional_median − x)` over the dense region.
 
-    L2 partner of :func:`bias_area`. While `bias_area` is signed (and so
-    can cancel positive and negative deviations), `calibration_rms`
-    measures the *magnitude* of systematic miscalibration. Together with
-    :func:`conditional_spread` and the data noise floor, this gives the
-    classic Murphy / Bröcker decomposition of MSE:
-
-        MSE  ≈  cal_rms²  +  spread²  +  noise²
-
-    so `sqrt(cal_rms² + spread²)` is the model-only RMSE (noise excluded).
-
-    Pass `trend_y` to skip the (cached) fit and reuse a precomputed
-    conditional-median trend -- useful when many metrics share one fit.
+    L2 partner of :func:`bias_area`: the *magnitude* of systematic miscalibration. With
+    :func:`conditional_spread` and the data noise floor, gives the Murphy / Bröcker MSE
+    decomposition `MSE ≈ cal_rms² + spread² + noise²`, so `sqrt(cal_rms² + spread²)` is the
+    model-only RMSE. Pass `trend_y` to reuse a precomputed conditional-median trend.
     """
     measured, predicted = _clean_paired(np.asarray(measured).ravel(), np.asarray(predicted).ravel())
     if measured.size < max(2, degree + 1):
@@ -227,14 +211,9 @@ def conditional_spread(
 ) -> float:
     """RMS of `(predicted − conditional_median(predicted | measured))`.
 
-    Captures the stochastic component of the model's MSE -- how much the
-    predictions disperse around their conditional median trend. This is
-    the natural variance-side companion to :func:`calibration_rms`.
-
-    Pass `trend_at_measured` to reuse a precomputed trend evaluation at
-    each input point. `dense_mask_at_measured` filters out tail points
-    where the trend is extrapolated, keeping spread comparable to
-    `calibration_rms` (which already restricts to the dense region).
+    The stochastic component of the model's MSE; variance-side companion to
+    :func:`calibration_rms`. Pass `trend_at_measured` to reuse a precomputed trend;
+    `dense_mask_at_measured` drops extrapolated tail points so spread stays comparable.
     """
     measured, predicted = _clean_paired(np.asarray(measured).ravel(), np.asarray(predicted).ravel())
     if measured.size < max(2, degree + 1):
@@ -257,16 +236,11 @@ def crps_empirical(
 ) -> float:
     """Continuous Ranked Probability Score for an empirical sample distribution.
 
-    CRPS(F, y) = E_F|X − y| − ½ E_F|X − X'|
-
-    Estimated unbiasedly per observation by
+    CRPS(F, y) = E_F|X − y| − ½ E_F|X − X'|, estimated unbiasedly per observation by
 
         crps_i = (1/M) Σ_m |s_im − y_i|  −  (1/(2M(M-1))) Σ_{m,m'} |s_im − s_im'|
 
-    then averaged across observations. Reduces to MAE when the predictive
-    distribution is a point mass; smaller is better. Generalises the
-    Murphy decomposition to the full conditional distribution: it folds
-    calibration AND sharpness into a single proper score.
+    then averaged. Reduces to MAE for a point mass; smaller is better.
     """
     obs = np.asarray(observation).ravel()
     samp = np.asarray(samples)
@@ -308,21 +282,10 @@ def bias_area(
 ) -> float:
     """Average vertical offset of the conditional-median trend from y=x.
 
-    Mathematically: ``∫ [f(x) - x] dx / Δx`` over the support, where
-    ``f(x) = median(predicted | measured = x)`` is fit with a stacked
-    polynomial. The result is in y-units and represents the mean
-    *systematic* bias of the model -- distinct from RMSE, which folds in
-    both bias and variance. Switch `signed=False` for the unsigned
-    (mean absolute calibration error) variant.
-
-    Interpretation:
-      ≈ 0   : the trend tracks y=x -> well-calibrated on average
-      > 0   : model systematically over-predicts
-      < 0   : model systematically under-predicts
-
-    Computed only over the dense region (`dense_mask`) to avoid
-    extrapolating into low-density tails. If no dense region exists,
-    returns ``nan``.
+    ``∫ [f(x) - x] dx / Δx`` over the support, ``f(x) = median(predicted | measured = x)``.
+    In y-units, the mean *systematic* bias (distinct from RMSE). `signed=False` for the
+    unsigned variant. >0 over-predicts, <0 under-predicts, ≈0 well-calibrated. Dense-region
+    only; returns ``nan`` if no dense region exists.
     """
     measured, predicted = _clean_paired(np.asarray(measured).ravel(), np.asarray(predicted).ravel())
     if measured.size < max(2, degree + 1):
@@ -550,9 +513,7 @@ def measured_vs_predicted(
 ):
     """Render a measured-vs-predicted scatter plot on ``ax``.
 
-    Generative model diagnostics (pass ``model_samples``, shape ``(n_draws, n_points)``):
-      - PIT histogram inset (auto-computed from samples, or pass ``pit_values``).
-      - Sample-based coverage bands: pointwise quantiles smoothed with knn_stats.
+    ``model_samples`` (shape ``(n_draws, n_points)``) adds a PIT inset + sample coverage bands.
     """
     if model_bands is None:
         model_bands = [[25, 75]]
@@ -1189,12 +1150,10 @@ def measured_vs_predicted(
 
 
 def noise_floor_panel(ax, **kwargs):
-    """Data-only kernel-smoother MVP twin of :func:`measured_vs_predicted`.
+    """Data-only kernel-smoother twin of :func:`measured_vs_predicted`.
 
-    Thin wrapper over ``measured_vs_predicted`` whose only purpose is to
-    carry a *different* name so plot-config's ``measured_vs_predicted_params``
-    callstack defaults don't bleed into this panel. Auto-shows RMSE and R²
-    (kernel-vs-gt) so the user can compare against the model panel directly.
+    A separate name so plot-config's ``measured_vs_predicted_params`` defaults don't bleed
+    in. Auto-shows RMSE and R² (kernel-vs-gt) to compare against the model panel.
     """
     defaults = {
         "show_stats": True,

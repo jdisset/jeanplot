@@ -1,8 +1,6 @@
-"""SmoothPanel3D — a Container with cube view + R×C grid of 2D slices.
+"""SmoothPanel3D: cube view + R×C grid of 2D slices, composed as nested Containers.
 
-Per the refactor spec: this panel composes nested Containers and is not itself
-drawable. The renderer hands each child its own matplotlib Axes from the laid-out
-bbox.
+Not itself drawable; the renderer hands each child its own Axes from the laid-out bbox.
 """
 
 from typing import Any
@@ -128,24 +126,18 @@ class SmoothPanel3D(PlotPanel):
         rows, cols = self.slice_grid
         n_slices = rows * cols
 
-        # Uniform per-cell reservations (inches): a title strip on top, a colorbar on
-        # the right, x/y tick-label room on the bottom/left. Kept IDENTICAL on every
-        # cell so the equal flex weights below give every slice the same plot area at
-        # any final panel size. (Size-dependent weights only equalize at one exact
-        # size, which is why the bottom row drifted.) Which cells actually draw tick
-        # labels is decided by show_labels below, not by changing their size.
+        # Uniform per-cell reservations (inches): title strip on top, colorbar on the
+        # right, hairline elsewhere. Kept IDENTICAL on every cell so the equal flex
+        # weights below give every slice the same plot area at any panel size.
+        # (Size-dependent weights only equalize at one exact size, which is why the
+        # bottom row drifted.) Bottom-row x labels / left-column y labels live in the GRID
+        # container's margin (grid_pad), NOT per-cell padding, so interior cells don't each
+        # waste a tick band. show_labels below decides which cells draw labels.
         gap = 0.05
-        # Per-cell padding is uniform (title strip on top, colorbar on the right, a
-        # hairline elsewhere) so the equal flex weights below give every slice the
-        # same plot area at any panel size. The bottom-row x labels and left-column y
-        # labels live in the GRID container's margin (grid_pad), NOT per-cell padding,
-        # so interior cells don't each waste a tick band -- that's what keeps the
-        # slices large while staying equal.
         # The slice colorbar's TRUE right-gutter (band overflow + tick allowance) is what
         # `SmoothPanel2D._right_overflow` reserves at render; under-reserving it here was
         # what made the grid balloon past the panel. So `pad_cbar` MUST cover that gutter
-        # when colorbars are on, and collapses to a hairline when they're off (the cells
-        # then pack tight, and no overflow is possible since nothing is reserved).
+        # when colorbars are on, and collapses to a hairline when they're off.
         pad_title, pad_edge = 0.16, 0.03
         pad_cbar = 0.34 if self.slice_show_colorbar else pad_edge
         pad_xaxis, pad_yaxis = 0.40, 0.44

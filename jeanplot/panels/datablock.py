@@ -1,17 +1,14 @@
 """DataBlockPanel — one SSOT data view: a fixed-aspect (2:1) pair of square sub-views,
-dispatched by input dim. The SAME primitive renders experimental data OR a model
-prediction, so a row of circuits reads consistently no matter the dimension:
+dispatched by input dim. The SAME primitive renders experimental data OR a model prediction:
 
     1D   smooth curve (+std band)   |  2D density histogram of (x, y)
     2D   smooth value heatmap       |  gradient-magnitude heatmap + gradient field
     3D   data cube                  |  R×C grid of z-slices            (via SmoothPanel3D)
 
-`is_drawable=False`: the figure renderer hands each leaf its own axes from the laid-out
-bbox. The block pins its OWN size (min == max == aspect·height × height) and flex-fills
-its two halves, so it always occupies exactly one rigid 2:1 box and never overflows the
-cell it sits in. Every sub-view's appearance (cmap, smoothing, margins, colorbars) is the
-jstyle cascade keyed on the sub-panel types under `DataBlockPanel` — nothing visual is
-hard-coded here; this file wires structure + sizing only.
+`is_drawable=False` (renderer hands each leaf its own axes). The block pins its OWN size
+(min == max == aspect·height × height) so it occupies exactly one rigid 2:1 box and never
+overflows its cell. All visual defaults come from the jstyle cascade keyed on the sub-panel
+types under `DataBlockPanel`; this file wires structure + sizing only.
 """
 
 from typing import Any

@@ -69,8 +69,6 @@ class GridStyle(BaseModel):
 
 
 class TableCell(Container):
-    """single cell within a TableRow."""
-
     style: CellStyle = Field(default_factory=CellStyle)
     colspan: int = 1
 
@@ -230,8 +228,6 @@ class TableCell(Container):
 
 
 class TableRow(Container):
-    """single row within a Table."""
-
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
             direction="row",
@@ -246,8 +242,6 @@ class TableRow(Container):
 
 
 class Table(Container):
-    """container that arranges data into rows and columns."""
-
     layout: LayoutConstraints = Field(
         default_factory=lambda: LayoutConstraints(
             direction="column",

@@ -1,18 +1,11 @@
 """`panel_from` — turn a drawing function into a Pydantic Panel class.
 
-A drawing function `fn(X, Y, ..., ax, ...)` stays first-class Python.
-`panel_from(fn)` introspects its signature and produces a `PlotPanel` subclass
-whose Pydantic fields mirror the kwargs and whose `draw(self, ax)` forwards
-`{field: getattr(self, field)}` (plus per-`PlotData` slot wiring).
-
-Conventions
------------
+Introspects `fn(X, Y, ..., ax, ...)`: kwargs become Panel fields and `draw(self, ax)`
+forwards `{field: getattr(self, field)}` (plus per-`PlotData` slot wiring). Conventions:
 - `ax`, `self` are skipped.
-- Parameters whose names appear in `plot_data_keys` (default: `X`, `Y`,
-  `input_names`, `output_name`) are routed from `self.plot_data.{x,y,
-  input_names,output_name}` at draw time, *not* exposed as Panel fields.
-- Parameters whose names already exist on the base (`PlotPanel`) class
-  inherit those fields; `draw` forwards `getattr(self, name)`.
+- Names in `plot_data_keys` (default `X`, `Y`, `input_names`, `output_name`) route from
+  `self.plot_data.{x,y,input_names,output_name}` at draw time, *not* exposed as fields.
+- Names already on the base (`PlotPanel`) class inherit those fields.
 - `rescaler=None` falls back to `IdentityRescaler()` exactly once, here.
 """
 

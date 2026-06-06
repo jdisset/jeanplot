@@ -10,7 +10,6 @@ from matplotlib.collections import LineCollection
 from matplotlib.ticker import MaxNLocator, LogLocator
 
 from jeanplot.plots.ticks import setup_transformed_axis
-# (already imported above)
 
 
 ##────────────────────────────────────────────────────────────────────────────}}}
@@ -92,28 +91,14 @@ def particle_plot(
     label_params: dict = None,
     setup_yaxis_params: dict = None,
 ) -> None:
-    """
-    Particle plot showing current values, history trails, and trend arrows.
+    """Particle plot: current values, history trails, and trend arrows.
 
-    Args:
-        ax: matplotlib axes
-        data: (num_variables, num_timepoints) array
-        value_names: labels for each variable
-        colors: colormap name or list of colors (default: bc_multi)
-        rescaler: biocomp DataRescaler for axis transformation
-        ylims: (min, max) y-axis limits
-        max_line_extend: historical ticks to show
-        value_spacing: x-axis spacing between columns
-        derivative: explicit derivatives, or None to compute from data
-        line_params: {width, style, oldest_alpha, color, halo, halo_width, halo_cmap}
-        dot_params: {size}
-        arrow_params: {scale, cmap, size, threshold}
-        vaxis_params: {color, linewidth, major_tick_length, minor_tick_length,
-                       n_major_ticks, n_minor_per_major, custom_ticks}
-                       If custom_ticks is provided, uses those tick positions instead
-                       of computing from data range.
-        label_params: {show, rotation, line_color}
-        setup_yaxis_params: passed to setup_transformed_axis
+    data: (num_variables, num_timepoints). derivative: explicit, or None to compute from data.
+    Dict-param keys: line_params {width, style, oldest_alpha, color, halo, halo_width,
+    halo_cmap}, dot_params {size}, arrow_params {scale, cmap, size, threshold}, vaxis_params
+    {color, linewidth, major_tick_length, minor_tick_length, n_major_ticks, n_minor_per_major,
+    custom_ticks} (custom_ticks overrides the data-range computation), label_params {show,
+    rotation, line_color}. setup_yaxis_params -> setup_transformed_axis.
     """
     if setup_yaxis_params is None:
         setup_yaxis_params = {}

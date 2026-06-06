@@ -50,9 +50,8 @@ def _strategy_is_fill(cascade: CallableSymbol | None) -> bool:
 def _as_cascade(value: Any) -> CallableSymbol | None:
     """Coerce a value into a jstyle CallableSymbol with a flat rule_tree.
 
-    Accepts a CallableSymbol (rule_tree flattened in place) or a nested dict
-    (flattened then wrapped). Nested-rule trees ``{Sel: {Sel2: {prop: v}}}``
-    are flattened into descendant selectors ``{Selector("Sel Sel2"): {prop: v}}``.
+    Nested-rule trees ``{Sel: {Sel2: {prop: v}}}`` flatten into descendant selectors
+    ``{Selector("Sel Sel2"): {prop: v}}``.
     """
     from dracon.utils import dict_like
 
@@ -70,14 +69,10 @@ def _as_cascade(value: Any) -> CallableSymbol | None:
 def merge_jstyle_rules(base: Any, overrides: Any) -> Any:
     """Deep-merge a jstyle rule tree with ``overrides``; ``overrides`` wins at the leaves.
 
-    ``JStyle.update`` *replaces* the active cascade, so to layer overrides on top
-    of a base theme the rule trees must be merged first, then applied with a single
-    ``update``. Recurses into nested selector/prop mappings.
-
-    ``base`` may be a raw dict OR an already-parsed cascade ``CallableSymbol`` (what
-    every ``load_*_theme`` produces). For a cascade, overrides are parsed and layered
-    onto its flat ``{Selector: props}`` tree and a new fill cascade is returned -- a
-    plain dict merge would treat the cascade as non-dict and silently drop it.
+    ``JStyle.update`` *replaces* the active cascade, so overrides must be merged into the
+    base first, then applied with a single ``update``. ``base`` may be a raw dict OR an
+    already-parsed cascade ``CallableSymbol`` (what every ``load_*_theme`` produces); for a
+    cascade, overrides are layered onto its flat ``{Selector: props}`` tree.
     """
     from dracon.utils import dict_like, raw_items
 
@@ -102,12 +97,11 @@ def merge_jstyle_rules(base: Any, overrides: Any) -> Any:
 
 
 def _resolve_lazies(value: Any) -> Any:
-    """Recursively force-resolve any LazyInterpolable in dict keys / values,
-    leaving live-scope (component-bound) lazies untouched.
+    """Force-resolve any LazyInterpolable in dict keys / values, leaving live-scope
+    (component-bound) lazies untouched.
 
-    Needed because dracon's ``resolve_all_lazy`` skips private attributes on
-    objects, so ``CallableSymbol._rule_tree`` is never walked. We mirror its
-    semantics here against the flat rule_tree on update.
+    dracon's ``resolve_all_lazy`` skips private attributes, so ``CallableSymbol._rule_tree``
+    is never walked; we mirror its semantics here against the flat rule_tree on update.
     """
     from dracon.lazy import LazyInterpolable
     from dracon.utils import dict_like, raw_items

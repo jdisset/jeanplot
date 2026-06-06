@@ -1,8 +1,7 @@
-"""Figure-aware rendering: walks a Figure(Container), allocates one mpl Axes
-per drawable leaf PlotPanel, then runs overlay draws.
+"""Figure-aware rendering: walk a Figure, allocate one mpl Axes per drawable leaf, run overlays.
 
-This file owns the only branch in jeanplot.render that knows about `Figure`,
-`PlotPanel`, and `Colorbar`. The scene-graph renderer is untouched.
+The only jeanplot.render branch that knows about `Figure`/`PlotPanel`/`Colorbar`; the
+scene-graph renderer is untouched.
 """
 
 from pathlib import Path
@@ -274,15 +273,13 @@ def _draw_table_grid(table: Table, mfig: Any, root_w: float, root_h: float) -> N
 
 
 def _draw_chrome(fig: Figure, mfig: Any, root_w: float, root_h: float) -> None:
-    """Draw container/cell backgrounds + borders (the figure path otherwise only draws
+    """Draw container/cell backgrounds + borders (the figure path otherwise draws only
     PlotPanel leaves, so a Table's grid / a container's border would never show).
 
-    A ``Table`` is special: its whole chrome — frame, separators, and the cell/row/header
-    backgrounds (clipped to the frame) — is drawn once by ``_draw_table_grid`` from its
-    ``GridStyle``, so its rows/cells are skipped here entirely (the old per-cell-border
-    model drew every shared edge twice). For every other container, per-side borders
-    (CellStyle.border_top/right/bottom/left, ``False`` hides a side) become grid lines;
-    ``border_style``/``dash_sequence`` dash them; ``corner_radius`` rounds a full box."""
+    A ``Table`` is special: its whole chrome is drawn once by ``_draw_table_grid`` from its
+    ``GridStyle``, so its rows/cells are skipped here entirely. For every other container,
+    per-side borders (CellStyle.border_top/right/bottom/left, ``False`` hides a side) become
+    grid lines; ``border_style``/``dash_sequence`` dash them; ``corner_radius`` rounds a full box."""
     bg_patches: list = []
     border_segs: list[tuple] = []
     rounded: list[tuple] = []
