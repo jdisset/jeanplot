@@ -148,6 +148,14 @@ def splat_point_density(X, *, radius, sigma_in_radius=3.0, res=64):
     return out
 
 
+_FIT_CACHE: dict = {}
+_FIT_CACHE_MAX = 64
+
+
+def clear_fit_cache():
+    _FIT_CACHE.clear()
+
+
 class SplatField:
     """Moment-buffer kernel smoother over a d-dim lattice (d in {1,2,3})."""
 
@@ -160,6 +168,55 @@ class SplatField:
 
     @classmethod
     def fit(
+        cls,
+        X,
+        Y=None,
+        *,
+        bounds,
+        resolution,
+        radius,
+        sigma_in_radius=3.0,
+        min_points=0,
+        rebalance_values=0.0,
+        rebalance_values_mode="smooth",
+        rebalance_centroids=0.0,
+        rebalance_centroids_mode="hard",
+        zslice=None,
+        stats=("mean",),
+    ):
+        # exact content-keyed memo: fit is pure in its args and the result is
+        # read-only, so callers smoothing the same cloud+params (metrics re-using
+        # a surface, peer sub-views) share one fit instead of recomputing.
+        from jeanplot.knn import array_content_key
+
+        xk = array_content_key(np.asarray(X))
+        yk = None if Y is None else array_content_key(np.asarray(Y))
+        zk = None if zslice is None else array_content_key(np.asarray(zslice, dtype=np.float64))
+        ckey = (
+            xk, yk, tuple(map(tuple, bounds)), int(resolution), round(radius, 12),
+            round(sigma_in_radius, 12), int(min_points),
+            round(rebalance_values, 12), rebalance_values_mode,
+            round(rebalance_centroids, 12), rebalance_centroids_mode,
+            zk, frozenset(stats),
+        ) if xk is not None and (Y is None or yk is not None) else None
+        if ckey is not None and ckey in _FIT_CACHE:
+            return _FIT_CACHE[ckey]
+        field = cls._fit(
+            X, Y, bounds=bounds, resolution=resolution, radius=radius,
+            sigma_in_radius=sigma_in_radius, min_points=min_points,
+            rebalance_values=rebalance_values, rebalance_values_mode=rebalance_values_mode,
+            rebalance_centroids=rebalance_centroids,
+            rebalance_centroids_mode=rebalance_centroids_mode,
+            zslice=zslice, stats=stats,
+        )
+        if ckey is not None:
+            if len(_FIT_CACHE) >= _FIT_CACHE_MAX:
+                _FIT_CACHE.pop(next(iter(_FIT_CACHE)))
+            _FIT_CACHE[ckey] = field
+        return field
+
+    @classmethod
+    def _fit(
         cls,
         X,
         Y=None,

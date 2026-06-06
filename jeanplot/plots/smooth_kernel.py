@@ -25,13 +25,14 @@ _TREE_CACHE_LOCK = threading.Lock()
 
 def clear_knn_caches():
     """Drop cached trees and smooth grids (release between batch figures)."""
-    from jeanplot.splat.core import clear_density_cache, clear_weights_cache
+    from jeanplot.splat.core import clear_density_cache, clear_fit_cache, clear_weights_cache
 
     with _TREE_CACHE_LOCK:
         _TREE_CACHE.clear()
     _SMOOTH_GRID_CACHE.clear()
     clear_density_cache()
     clear_weights_cache()
+    clear_fit_cache()
 
 
 def build_tree(x):

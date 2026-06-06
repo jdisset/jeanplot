@@ -486,7 +486,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         matrix: np.ndarray,
         component=None,
     ):
-        """render multiple line segments (edges)."""
         if not edges:
             return
 
@@ -581,7 +580,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
         angle_deg: float,
         world_matrix: np.ndarray,
     ) -> None:
-        """render a ConnectionLabel at the given world position with rotation."""
         import matplotlib.patheffects as mpe
 
         data_fontsize = label.font_size
@@ -655,10 +653,13 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 set_aspect=adjust_lims_set_aspect,
             )
 
-        # synchronous draw to stabilize transforms before rendering;
-        # draw_idle() is async and causes transform inconsistencies
-        if context.figure and context.figure.canvas:
-            context.figure.canvas.draw()
+        # stabilize THIS axes' transform (aspect box adjustment) before rendering.
+        # apply_aspect() does the same box fit as a full canvas.draw() but for one
+        # axes only — a full figure draw here is O(n) in already-placed axes, so in
+        # a multi-panel draw loop it becomes O(n^2). Data-unit widths/fonts are
+        # refreshed below + again at savefig via the persistent draw_event.
+        if isinstance(context, Axes):
+            context.apply_aspect()
 
         for cb in self.pre_render_callbacks:
             cb(context)
@@ -851,7 +852,6 @@ class MatplotlibRenderer(DebugMixin, BaseRenderer):
                 self._data_font_texts.append((text_artist, target_data_height, matrix.copy()))
 
     def _render_text_as_paths(self, context: Axes, text_comp: Text, matrix: np.ndarray):
-        """render text as matplotlib paths."""
         comp_id = text_comp.id or "unknown_text_path"
         if not text_comp.effective_text or not text_comp.show or not text_comp._text_metrics_cache:
             self._log_debug(f"_render_text_as_paths skipped for {comp_id}: missing info")

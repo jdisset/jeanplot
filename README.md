@@ -557,6 +557,10 @@ For testing layouts, `jeanplot.testing` ships `MockRenderer`, `render_to_svg`, `
   (value heatmap, gradient map, quiver) share *one* query. LRU-bounded (arrays are large);
   `smooth_kernel.clear_knn_caches()` releases them between batch figures. Results are
   exact/deterministic on the `pykdtree`/`scipy` backends; `usearch` is approximate (HNSW).
+- **Splat fit cache.** `SplatField.fit` is a pure function with a read-only result, so it
+  carries an exact content-keyed LRU memo (`splat.core._FIT_CACHE`, on the full arg set incl.
+  `stats`/`zslice`): a surface re-smoothed for both metrics and render, or by peer sub-views,
+  reuses one fit. Also released by `clear_knn_caches()` (via `clear_fit_cache`).
 
 `jeanplot/color/`:
 - `load_palettes(path)`, `register_palettes(palettes)`, `closest_name(name)` for fuzzy name matching.
