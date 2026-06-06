@@ -428,10 +428,20 @@ rules: !cascade:jstyle_fill
       length: 8
 
   Table:
+    # Borders are a single collapsed grid (GridStyle), drawn once. Cells/rows carry no
+    # borders — only padding, content and backgrounds. See jeanplot.core.table.GridStyle.
+    grid:
+      frame:
+        color: ${theme.border_color}
+        width: 0.6
+      header:
+        color: ${theme.border_color}
+        width: 0.8
+      inner:
+        color: ${theme.border_color}
+        width: 0.5
     TableCell:
       style.padding: [7, 10, 7, 10]
-      style.border_color: ${theme.border_color}
-      style.border_width: 0.5
       Text: { align: center, vertical_align: middle }
     TableCell[style_class=table-header-cell]:
       style.background_color: "#eee"

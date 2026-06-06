@@ -11,12 +11,14 @@ from typing import Any, Iterator
 import matplotlib as mpl
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
+import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 
 from dracon.progress import step
 
 from jeanplot.core.component import Component
 from jeanplot.core.style import jstyle
+from jeanplot.core.table import GridStyle, LineStyle, Table, TableCell, TableRow
 from jeanplot.panels.base import PlotPanel
 from jeanplot.panels.figure import Figure
 
@@ -85,17 +87,215 @@ def _line_style(style: Any):
     )
 
 
+def _grid_linestyle(ls: LineStyle):
+    if ls.dash_sequence:
+        return (0.0, tuple(ls.dash_sequence))
+    return {"solid": "-", "dashed": (0, (4, 2)), "dotted": (0, (1, 1.6))}.get(ls.style, "-")
+
+
+# cubic-Bezier control factor for a quarter-circle (4/3 * tan(pi/8))
+_KAPPA = 0.5522847498307936
+
+
+def _rounded_rect_path(x: float, y: float, w: float, h: float, rx: float, ry: float) -> mpath.Path:
+    """Rounded rectangle as an explicit Bezier path with INDEPENDENT x/y corner radii.
+    Built in whatever coords the caller draws in (figure fraction here), with `rx`/`ry`
+    chosen so the corner is circular in *display* — exact, and immune to FancyBboxPatch's
+    mutation_aspect scaling. Counter-clockwise from the bottom edge."""
+    rx, ry = min(rx, w / 2.0), min(ry, h / 2.0)
+    cx, cy = _KAPPA * rx, _KAPPA * ry
+    x1, y1 = x + w, y + h
+    Path = mpath.Path
+    verts = [
+        (x + rx, y),
+        (x1 - rx, y),  # bottom edge
+        (x1 - rx + cx, y),
+        (x1, y + ry - cy),
+        (x1, y + ry),  # bottom-right corner
+        (x1, y1 - ry),  # right edge
+        (x1, y1 - ry + cy),
+        (x1 - rx + cx, y1),
+        (x1 - rx, y1),  # top-right corner
+        (x + rx, y1),  # top edge
+        (x + rx - cx, y1),
+        (x, y1 - ry + cy),
+        (x, y1 - ry),  # top-left corner
+        (x, y + ry),  # left edge
+        (x, y + ry - cy),
+        (x + rx - cx, y),
+        (x + rx, y),  # bottom-left corner
+        (x + rx, y),
+    ]
+    codes = [
+        Path.MOVETO,
+        Path.LINETO,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.LINETO,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.LINETO,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.LINETO,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.CURVE4,
+        Path.CLOSEPOLY,
+    ]
+    return Path(verts, codes)
+
+
+def _table_grid_geometry(table: Table, root_w: float, root_h: float):
+    """Collapsed-grid geometry in figure-fraction coords (y measured from the bottom).
+    Returns (frame_xywh, v_segments, h_lines, header_y) or None.
+
+    Everything is derived from the **cell** bboxes (never the rows'): the frame is exactly
+    the cells' bounding box, vertical dividers are cell right-edges per row (so colspans
+    contribute fewer), and a horizontal boundary is the shared edge between consecutive
+    rows. Frame and lines share one source, so they cannot drift apart. `header_y` is the
+    boundary just below the header rows (None if no header)."""
+    rows = [
+        r
+        for r in table.children
+        if isinstance(r, TableRow) and r._dimensions.width > 0 and r._dimensions.height > 0
+    ]
+    # per-row, sorted cell bboxes; drop empty rows
+    row_cells = [
+        sorted(
+            (_component_bbox(c, root_w, root_h) for c in r.children if isinstance(c, TableCell)),
+            key=lambda b: b[0],
+        )
+        for r in rows
+    ]
+    row_cells = [cb for cb in row_cells if cb]
+    if not row_cells:
+        return None
+    row_cells.sort(key=lambda cb: max(b[1] + b[3] for b in cb), reverse=True)  # top -> bottom
+
+    all_b = [b for cb in row_cells for b in cb]
+    x_left = min(b[0] for b in all_b)
+    x_right = max(b[0] + b[2] for b in all_b)
+    y_top = max(b[1] + b[3] for b in all_b)
+    y_bottom = min(b[1] for b in all_b)
+
+    v_segments: list[tuple[float, float, float]] = []
+    for cb in row_cells:
+        ry0, ry1 = min(b[1] for b in cb), max(b[1] + b[3] for b in cb)
+        for b in cb[:-1]:  # each cell's right edge except the row's last = a column divider
+            v_segments.append((b[0] + b[2], ry0, ry1))
+
+    h_lines: list[float] = []
+    header_y: float | None = None
+    for i in range(1, len(row_cells)):
+        y = max(b[1] + b[3] for b in row_cells[i])  # top of row i == bottom of row i-1
+        if i == table.header_rows:
+            header_y = y
+        else:
+            h_lines.append(y)
+    return (x_left, y_bottom, x_right - x_left, y_top - y_bottom), v_segments, h_lines, header_y
+
+
+def _draw_table_grid(table: Table, mfig: Any, root_w: float, root_h: float) -> None:
+    """Draw a Table's collapsed grid: cell/row + header-band backgrounds, interior
+    separators, header line, and the rounded outer frame — each element once, styled by the
+    `GridStyle` SSOT. Backgrounds are clipped to the frame path so a header/cell fill keeps
+    the frame's rounded corners instead of poking square nubs past them."""
+    geom = _table_grid_geometry(table, root_w, root_h)
+    if geom is None:
+        return
+    (fx, fy, fw, fh), v_segments, h_lines, header_y = geom
+    g: GridStyle = table.grid
+
+    # The frame path (rounded; rx=ry=0 degenerates to a plain rectangle) is the single
+    # source for both the stroked frame AND the background clip region. Per-axis radii make
+    # a `cr`-inch circular corner in display regardless of the figure's aspect.
+    cr = min(max(0.0, g.corner_radius), fw * root_w / 2.0, fh * root_h / 2.0)
+    frame_path = _rounded_rect_path(fx, fy, fw, fh, cr / root_w, cr / root_h)
+    clip = (frame_path, mfig.transFigure)
+
+    def bg(x: float, y: float, w: float, h: float, color: str | None) -> None:
+        if not color or w <= 0 or h <= 0:
+            return
+        rect = mpatches.Rectangle(
+            (x, y), w, h, facecolor=color, edgecolor="none", transform=mfig.transFigure, zorder=0
+        )
+        rect.set_clip_path(*clip)
+        mfig.add_artist(rect)
+
+    def line(x0: float, y0: float, x1: float, y1: float, ls: LineStyle) -> None:
+        if not ls.visible:
+            return
+        mfig.add_artist(
+            mlines.Line2D(
+                [x0, x1],
+                [y0, y1],
+                transform=mfig.transFigure,
+                color=ls.color,
+                lw=ls.width,
+                linestyle=_grid_linestyle(ls),
+                solid_capstyle="projecting",
+                zorder=2,
+            )
+        )
+
+    # backgrounds (under everything), all clipped to the frame: the table's own fill, then
+    # each row/cell fill, then the header band.
+    bg(fx, fy, fw, fh, getattr(table.style, "background_color", None))
+    for c in _iter_all_components(table):
+        if isinstance(c, (TableRow, TableCell)):
+            style = getattr(c, "style", None)
+            bg(*_component_bbox(c, root_w, root_h), getattr(style, "background_color", None))
+    if header_y is not None:
+        bg(fx, header_y, fw, (fy + fh) - header_y, g.header_fill)
+
+    for x, y0, y1 in v_segments:
+        line(x, y0, x, y1, g.inner)
+    for y in h_lines:
+        line(fx, y, fx + fw, y, g.inner)
+    if header_y is not None:
+        line(fx, header_y, fx + fw, header_y, g.header)
+
+    if g.frame.visible:
+        mfig.add_artist(
+            mpatches.PathPatch(
+                frame_path,
+                facecolor="none",
+                edgecolor=g.frame.color,
+                linewidth=g.frame.width,
+                linestyle=_grid_linestyle(g.frame),
+                transform=mfig.transFigure,
+                zorder=2,
+            )
+        )
+
+
 def _draw_chrome(fig: Figure, mfig: Any, root_w: float, root_h: float) -> None:
-    """Draw container/cell backgrounds + borders (the figure path otherwise only
-    draws PlotPanel leaves, so a Table's cell borders / row backgrounds would never
-    show). Per-side borders (CellStyle.border_top/right/bottom/left, where ``False``
-    hides a side) become real table grid lines; ``border_style``/``dash_sequence``
-    dash them; ``corner_radius`` rounds a full (four-sided) box's corners."""
+    """Draw container/cell backgrounds + borders (the figure path otherwise only draws
+    PlotPanel leaves, so a Table's grid / a container's border would never show).
+
+    A ``Table`` is special: its whole chrome — frame, separators, and the cell/row/header
+    backgrounds (clipped to the frame) — is drawn once by ``_draw_table_grid`` from its
+    ``GridStyle``, so its rows/cells are skipped here entirely (the old per-cell-border
+    model drew every shared edge twice). For every other container, per-side borders
+    (CellStyle.border_top/right/bottom/left, ``False`` hides a side) become grid lines;
+    ``border_style``/``dash_sequence`` dash them; ``corner_radius`` rounds a full box."""
     bg_patches: list = []
     border_segs: list[tuple] = []
     rounded: list[tuple] = []
+
     for c in _iter_all_components(fig):
         if isinstance(c, PlotPanel) or not getattr(c, "show", True):
+            continue
+        # A Table draws ALL of its own chrome (frame, separators, and the cell/row/header
+        # backgrounds, clipped to the frame) in one place; skip its rows/cells here.
+        if isinstance(c, Table):
+            _draw_table_grid(c, mfig, root_w, root_h)
+            continue
+        if isinstance(c, (TableRow, TableCell)):
             continue
         style = getattr(c, "style", None)
         if style is None or c._dimensions.width <= 0 or c._dimensions.height <= 0:

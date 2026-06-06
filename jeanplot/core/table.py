@@ -40,6 +40,34 @@ class ColumnStyle(BaseModel):
     cell_style: CellStyle | None = Field(default_factory=CellStyle)
 
 
+class LineStyle(BaseModel):
+    """One grid line's appearance. `color=None` or `width<=0` => not drawn."""
+
+    color: str | None = None
+    width: float = 0.0
+    style: Literal["solid", "dashed", "dotted"] = "solid"
+    dash_sequence: list[float] | None = None
+
+    @property
+    def visible(self) -> bool:
+        return bool(self.color) and self.width > 0
+
+
+class GridStyle(BaseModel):
+    """SSOT for a Table's collapsed border grid. Each logical line type is described
+    ONCE and the renderer draws every grid line a single time — no per-cell edge drawing,
+    so shared edges are never doubled and the outer frame never overlaps an interior line.
+    `frame` = the four-sided outer boundary; `header` = the separator below the header
+    rows; `inner` = every interior row/column separator. `corner_radius` (inches) rounds
+    the frame; interior lines meet the straight part of the frame, so they need no clip."""
+
+    frame: LineStyle = Field(default_factory=LineStyle)
+    header: LineStyle = Field(default_factory=LineStyle)
+    inner: LineStyle = Field(default_factory=LineStyle)
+    corner_radius: float = 0.0
+    header_fill: str | None = None
+
+
 class TableCell(Container):
     """single cell within a TableRow."""
 
@@ -228,12 +256,11 @@ class Table(Container):
             gap=0,
         )
     )
-    style: BoxStyle = Field(
-        default_factory=lambda: BoxStyle(
-            border_color="#333333",
-            border_width=0.5,
-        )
-    )
+    style: BoxStyle = Field(default_factory=BoxStyle)
+    # Collapsed-grid SSOT: the Table's frame + separators are described here and drawn
+    # once by `_figure_render._draw_table_grid`. Cells/rows no longer carry grid borders
+    # (their `style` is for backgrounds/padding/content only).
+    grid: GridStyle = Field(default_factory=GridStyle)
 
     data: list[list[Any]] = Field(default_factory=list)
     column_styles: list[ColumnStyle] = Field(default_factory=list)

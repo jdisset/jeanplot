@@ -141,14 +141,21 @@ class SmoothPanel3D(PlotPanel):
         # labels live in the GRID container's margin (grid_pad), NOT per-cell padding,
         # so interior cells don't each waste a tick band -- that's what keeps the
         # slices large while staying equal.
-        pad_title, pad_cbar, pad_edge = 0.16, 0.30, 0.03
+        # The slice colorbar's TRUE right-gutter (band overflow + tick allowance) is what
+        # `SmoothPanel2D._right_overflow` reserves at render; under-reserving it here was
+        # what made the grid balloon past the panel. So `pad_cbar` MUST cover that gutter
+        # when colorbars are on, and collapses to a hairline when they're off (the cells
+        # then pack tight, and no overflow is possible since nothing is reserved).
+        pad_title, pad_edge = 0.16, 0.03
+        pad_cbar = 0.34 if self.slice_show_colorbar else pad_edge
         pad_xaxis, pad_yaxis = 0.40, 0.44
         cell_pad = BoxStyle(
             padding=BoxInset(top=pad_title, right=pad_cbar, bottom=pad_edge, left=pad_edge)
         )
         grid_pad = BoxStyle(padding=BoxInset(bottom=pad_xaxis, left=pad_yaxis))
-        # Hug the heatmap with a thin, tall colorbar so it costs little width.
-        slice_colorbar_params = {"position": (1.04, 0.08), "size": (0.05, 0.84)}
+        # Hug the heatmap with a thin, tall colorbar so it costs little width; the slice
+        # colorbars carry no rotated label, so a small `label_reserve` matches `pad_cbar`.
+        slice_colorbar_params = {"position": (1.04, 0.08), "size": (0.05, 0.84), "label_reserve": 0.22}
 
         # axes_size sizes the per-cell min_dimensions so the panel honors the size the
         # caller asked for (per_network_row's per-cell width x panel_scale). The equal

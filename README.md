@@ -56,7 +56,7 @@ Everything is a `Component`. The interesting subclasses live in `jeanplot/core/`
 - `Text` — string with font size, weight, color, optional `TextHalo`. Two sizing modes: `data` (scales with the world) and `points` (fixed visual size). Use `points` for labels that should stay legible at any zoom.
 - `Connection` — line between two components by id (`start_component="a", end_component="b"`). Curves: `StraightCurve`, `OrthogonalCurve` (right angles + rounded corners), `SimpleBezierCurve`. Endpoints: `LineEndFlat`, `LineEndCircle`, `LineEndArrow`. Endpoint position defaults to the component centre (`Offset(reference_relative=(0.5, 0.5))`); override with `start_offset` / `end_offset`. If both endpoints have `AnchorComponent` children (gene parts do), `auto_route=True` picks the best anchor pair automatically — set `auto_route=False` to use raw centres.
 - `ConnectionLabel` — text attached to a `Connection` at a fractional position along its path.
-- `Table` — `TableRow`s of `TableCell`s, column widths in `%` or pixels.
+- `Table` — `TableRow`s of `TableCell`s, column widths in `%` or pixels. Borders are **one collapsed grid** (`GridStyle` on the Table: `frame` / `header` / `inner` line roles + `corner_radius` / `header_fill`), drawn once per line — cells/rows carry no grid borders, so shared edges are never doubled.
 - `SVGElement` — drop arbitrary SVG into the tree for things matplotlib doesn't have a primitive for.
 - `Overlay` / `AnchorComponent` — base classes for things that read from a parent (overlays for panels, anchors for connections).
 
@@ -112,10 +112,12 @@ Selectors support:
 - type name (`Container`, inherits — a `Component` rule applies to `Container`)
 - id (`[id=foo]`)
 - class (`[style_class=card]`)
-- attribute (`[attr=value]`, `[attr~=value]`, `[attr*=value]`, `[attr^=value]`, `[attr$=value]`)
-- descendant (space-separated, like CSS)
+- attribute (`[attr=value]`, `[attr~=value]`, `[attr*=value]`, `[attr^=value]`, `[attr$=value]`, `[attr=/regex/]`, numeric `[attr>0]`, presence `[attr]` / absence `[!attr]`)
+- combinators: descendant (space, like CSS), child (`>`), sibling (`~`)
 
 Specificity is the standard `(ids, classes, types)` tuple, ordered `id > class/attr > type > *`. More specific wins; newer wins ties.
+
+The selector engine is the shared **dracon locator** (`dracon.parse_locator`), so this is exactly the grammar behind dracon's `!ref` and `attached_to` (which now takes a locator string, resolved relative to the component). One grammar for styling, references, and attachment; jeanplot keeps only a ~40-line `ComponentTreeAdapter`. See `docs/STYLE_GUIDE.md` and dracon's `reference/locators.md`.
 
 `jstyle.update(...)` defaults to **fill** semantics — cascade values fill fields the user didn't explicitly set on the component, explicit values always win. Every `Component` snapshots `model_fields_set` at construction (`_user_set_fields`), and the cascade walks around those. For the old clobber-everything behaviour, use `!cascade:jstyle` instead of `!cascade:jstyle_fill` (which is the default). `jstyle.clear()` for a true reset.
 
@@ -295,6 +297,7 @@ render(fig, output="smooth.png")
 - **`SmoothGradMagnitudePanel2D`** — gradient magnitude of a 2D smooth.
 - **`GradientFieldPanel2D`** — quiver of the 2D gradient.
 - **`SmoothPanel3D`** + **`CubeView`** + **`CubeStackPanel`** — 3D surfaces. Cube view (rotatable wireframe with face heatmaps) plus a grid of 2D slices.
+- **`DataBlockPanel`** — one fixed-aspect (2:1) **two-view block** that dispatches on data dim, so a row of mixed-dimension circuits reads consistently: 1D → smooth curve + 2D density histogram; 2D → value heatmap + gradient-magnitude heatmap with the gradient field over it; 3D → data cube + R×C z-slice grid. It pins its own size (`min == max`) and flex-fills its two square halves, so it never overflows the cell it sits in. Sub-view look is the cascade keyed under `DataBlockPanel`. `data_block(plot_data, …)` is the code-side twin (mirrors `auto_panel`).
 - **`MVPPanel`** — measured-vs-predicted scatter with an identity line.
 - **`DensityPanel1D`** — kernel density estimate.
 - **`GridHistogramPanel`** / **`ScatterPanel3D`** — gridded histograms and 3D scatter.
@@ -331,7 +334,7 @@ def my_plot(plot_data, *, ax, vlims=(0.0, 1.0), cmap="viridis"):
     ax.imshow(plot_data.X, vmin=vlims[0], vmax=vlims[1], cmap=cmap)
 ```
 
-The decorator introspects the signature and synthesises a `PlotPanel` subclass with `vlims` and `cmap` as Pydantic fields, registers it as the YAML tag `!my_plot`, and keeps the original function callable as a plain function (REPL-friendly). Panels also expose cascade-fillable `axes_size`, `colorbar_pad`, `legend_pad`, and a computed `min_dimensions` so the figure auto-sizes around its contents.
+The decorator introspects the signature and synthesises a `PlotPanel` subclass with `vlims` and `cmap` as Pydantic fields, registers it as the YAML tag `!my_plot`, and keeps the original function callable as a plain function (REPL-friendly). Panels expose a cascade-fillable `axes_size` and a computed `min_dimensions` so the figure auto-sizes around its contents. A panel that draws **outside** its axes box (e.g. an out-of-axes colorbar at axes-fraction > 1) overrides `_right_overflow(self) -> float`; `PlotPanel.effective_padding` folds that into the right inset, so the layout reserves the space automatically — no hand-tuned `style.padding.right`. (`SmoothPanel2D` computes it from the colorbar band geometry + a `label_reserve` allowance; see `panels/smooth_2d.py`.)
 
 **Plot data routing.** Four parameter names are special: `X`, `Y`, `input_names`, `output_name`. If your function declares any of them, they're not exposed as Panel fields — they're auto-wired from `self.plot_data.{x, y, input_names, output_name}` at draw time. So you write:
 

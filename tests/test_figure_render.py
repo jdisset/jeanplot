@@ -124,8 +124,60 @@ def test_figure_overwrite_false_skips_existing():
         assert out.read_bytes() == b"placeholder"
 
 
+def test_table_grid_collapsed_no_double_draw():
+    """A Table's frame + separators are one collapsed grid, drawn once per line. The old
+    model drew every shared edge twice (cell-right + next-cell-left, row-bottom +
+    next-row-top); this asserts the new model emits each line exactly once."""
+    import matplotlib.lines as mlines
+    import matplotlib.patches as mpatches
+    from matplotlib.colors import to_hex
+    from jeanplot._figure_render import render_figure
+    from jeanplot.core.table import GridStyle, LineStyle, Table, TableCell
+
+    def cell(label):
+        return TableCell(children=[FakePanel(min_dimensions=Size(1.6, 0.9))])
+
+    with tempfile.TemporaryDirectory() as td:
+        fig = Figure(output_dir=td, output_file="out.png", dpi=50)
+        fig.add_child(
+            Table(
+                header_rows=1,
+                data=[[cell("h0"), cell("h1")], [cell("a"), cell("b")], [cell("c"), cell("d")]],
+                grid=GridStyle(
+                    corner_radius=0.2,
+                    frame=LineStyle(color="#aa0000", width=1.6),
+                    header=LineStyle(color="#00aa00", width=1.0),
+                    inner=LineStyle(color="#0000aa", width=0.5),
+                ),
+            )
+        )
+        mfig = render_figure(fig)
+
+        def lines(hexcol):
+            return [
+                a
+                for a in mfig.artists
+                if isinstance(a, mlines.Line2D) and to_hex(a.get_color()) == hexcol
+            ]
+
+        # frame: rounded -> exactly one PathPatch (no per-side frame lines), drawn in the
+        # same transFigure space as the inner lines so they can't drift apart
+        frame = [
+            a
+            for a in mfig.artists
+            if isinstance(a, mpatches.PathPatch) and to_hex(a.get_edgecolor()) == "#aa0000"
+        ]
+        assert len(frame) == 1
+        assert frame[0].get_transform() is mfig.transFigure
+        # header separator: exactly one line (below the single header row), not doubled
+        assert len(lines("#00aa00")) == 1
+        # interior: 3 column dividers (one per row, 2 cols) + 1 row divider (between the
+        # two body rows; the header/body boundary is the header line) = 4, each drawn once
+        assert len(lines("#0000aa")) == 4
+
+
 def test_figure_render_draws_container_chrome():
-    """Container/cell borders (e.g. a Table grid) render in the figure path, which
+    """A plain (non-Table) container's per-side border renders in the figure path, which
     otherwise only draws PlotPanel leaves."""
     import matplotlib.lines as mlines
     from jeanplot import Container

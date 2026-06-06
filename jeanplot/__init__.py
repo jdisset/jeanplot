@@ -22,7 +22,7 @@ from jeanplot.core.debug import (
 from jeanplot.core.renderer import BaseRenderer, MatplotlibRenderer, SVGRenderer
 from jeanplot.core.text import Text
 from jeanplot.core.connection_label import ConnectionLabel
-from jeanplot.core.table import Table, TableRow, TableCell
+from jeanplot.core.table import Table, TableRow, TableCell, GridStyle, LineStyle
 from jeanplot.render import (
     render as render,
     render_to_string as render_to_string,
@@ -81,6 +81,7 @@ from jeanplot.panels import (
     GradientFieldPanel2D,
     SmoothPanel3D,
     CubeView,
+    DataBlockPanel,
     MVPPanel,
     DensityPanel1D,
     GridHistogramPanel,
@@ -97,6 +98,7 @@ from jeanplot.panels import (
     LinearityReferenceOverlay,
     DensityContourOverlay,
     auto_panel as auto_panel,
+    data_block as data_block,
 )
 
 DEFAULT_TYPES = [
@@ -128,6 +130,8 @@ DEFAULT_TYPES = [
     Table,
     TableRow,
     TableCell,
+    GridStyle,
+    LineStyle,
     GeneticPart,
     Promoter,
     Terminator,
@@ -159,6 +163,7 @@ DEFAULT_TYPES = [
     GradientFieldPanel2D,
     SmoothPanel3D,
     CubeView,
+    DataBlockPanel,
     MVPPanel,
     DensityPanel1D,
     GridHistogramPanel,

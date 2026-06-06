@@ -36,13 +36,22 @@ class PlotPanel(Container):
     _mappable: Any | None = PrivateAttr(default=None)
     _last_metadata: dict = PrivateAttr(default_factory=dict)
 
+    def _right_overflow(self) -> float:
+        """Inches of content drawn to the RIGHT of the axes box (e.g. an out-of-axes
+        colorbar). 0 here; panels that draw such content override and it is reserved
+        as right inset by `effective_padding`, so the layout accounts for it."""
+        return 0.0
+
     @property
     def effective_padding(self) -> BoxInset:
-        """style.padding, with top bumped to TITLE_ROOM when there's a title above."""
+        """style.padding, with top bumped to TITLE_ROOM when there's a title above and
+        the right inset grown to reserve any `_right_overflow` (e.g. a colorbar)."""
         p = self.safe_style.padding
-        if self.title and not self.title_inside and p.top < TITLE_ROOM:
-            return BoxInset(top=TITLE_ROOM, right=p.right, bottom=p.bottom, left=p.left)
-        return p
+        top = TITLE_ROOM if (self.title and not self.title_inside and p.top < TITLE_ROOM) else p.top
+        right = p.right + self._right_overflow()
+        if top == p.top and right == p.right:
+            return p
+        return BoxInset(top=top, right=right, bottom=p.bottom, left=p.left)
 
     @model_validator(mode="after")
     def _compute_min_dimensions(self):

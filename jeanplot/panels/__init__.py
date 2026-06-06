@@ -8,6 +8,7 @@ from jeanplot.panels.smooth_2d import (
     GradientFieldPanel2D,
 )
 from jeanplot.panels.smooth_3d import SmoothPanel3D, CubeView, CubeStackPanel
+from jeanplot.panels.datablock import DataBlockPanel, data_block
 from jeanplot.panels.mvp import MVPPanel
 from jeanplot.panels.density import DensityPanel1D
 from jeanplot.panels.scatter import GridHistogramPanel, ScatterPanel3D
@@ -39,6 +40,8 @@ __all__ = [
     "SmoothPanel3D",
     "CubeView",
     "CubeStackPanel",
+    "DataBlockPanel",
+    "data_block",
     "MVPPanel",
     "DensityPanel1D",
     "GridHistogramPanel",

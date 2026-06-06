@@ -69,16 +69,29 @@ def test_figure_auto_sizes_from_children():
 
 
 def test_padding_sums_to_min_dimensions():
+    # draw_colorbar=False so effective_padding == style.padding (no out-of-axes colorbar
+    # reserve folded into the right inset); this test is about the padding arithmetic.
     panel = SmoothPanel2D(
         plot_data=_data_2d(),
         axes_size=Size(width=2.5, height=2.0),
         title=None,
+        draw_colorbar=False,
         style={"padding": {"left": 0.5, "right": 0.6, "bottom": 0.5, "top": 0.0}},
     )
     p = panel.effective_padding
     assert (p.left, p.top, p.right, p.bottom) == (0.5, 0.0, 0.6, 0.5)
     assert panel.min_dimensions.width == panel.axes_size.width + p.left + p.right
     assert panel.min_dimensions.height == panel.axes_size.height + p.top + p.bottom
+
+
+def test_colorbar_reserved_in_effective_padding():
+    # the out-of-axes colorbar (axes-fraction position+size > 1) is auto-reserved as
+    # right inset so the layout accounts for it; toggling draw_colorbar removes it.
+    common = dict(plot_data=_data_2d(), axes_size=Size(width=2.5, height=2.0), title=None)
+    with_cb = SmoothPanel2D(draw_colorbar=True, **common)
+    without = SmoothPanel2D(draw_colorbar=False, **common)
+    assert with_cb.effective_padding.right > without.effective_padding.right
+    assert with_cb.min_dimensions.width == with_cb.axes_size.width + with_cb.effective_padding.right
 
 
 def test_effective_padding_reserves_title_room():
