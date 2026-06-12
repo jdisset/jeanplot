@@ -190,6 +190,7 @@ def smooth_1d(
     show_slopes: bool = True,
     slope_props: dict | None = None,
     slope_fmt: str = r"$\alpha={:.2g}$",
+    box_aspect: float | None = None,
 ):
     knn_stats_params = dict(smooth_params or knn_stats_params or {})
     knn_radius = knn_stats_params.get("radius", 0.075)
@@ -364,5 +365,7 @@ def smooth_1d(
         ax.set_ylabel(ylabel)
     if title is not None:
         ax.set_title(title)
+    if box_aspect is not None:
+        ax.set_box_aspect(box_aspect)  # force a square (or fixed-ratio) data box
 
     return PlotFunctionResult(rendering=ax.lines, metadata={"vlims": tuple(vlims)})

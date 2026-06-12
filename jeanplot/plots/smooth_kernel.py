@@ -394,7 +394,10 @@ def _render_smooth_heatmap(
 
     if draw_colorbar and value_rescaler is not None:
         vlabel = (output_name if vtitle is None else vtitle) if draw_colorbar_label else None
-        colorbar(ax, im, value_rescaler, vlims, **{**colorbar_params, "label": vlabel})
+        # `label_reserve` is a layout-only hint (read by `_colorbar_right_overflow` to reserve
+        # the right gutter), not a `colorbar()` draw arg — drop it before drawing.
+        draw_cbar = {k: v for k, v in colorbar_params.items() if k != "label_reserve"}
+        colorbar(ax, im, value_rescaler, vlims, **{**draw_cbar, "label": vlabel})
 
     return PlotFunctionResult(rendering=(im, cntrs), metadata={"vlims": vlims}, mappable=im)
 

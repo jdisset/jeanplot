@@ -77,7 +77,16 @@ def merge_jstyle_rules(base: Any, overrides: Any) -> Any:
     from dracon.utils import dict_like, raw_items
 
     if isinstance(base, CallableSymbol):
-        merged: dict[Any, Any] = dict(base._rule_tree or {})
+        # Flatten BOTH trees to Locator keys before merging. The override is parsed below;
+        # the base rule_tree may still be raw (string keys, nested selectors) if the cascade
+        # hasn't been applied yet. Without parsing the base too, a string `"CubeStackPanel"`
+        # base key never matches the override's `Locator("CubeStackPanel")`, so the override
+        # lands as a SEPARATE same-specificity rule and (under fill) is shadowed by the base
+        # whenever they set the same field. Parsing both makes equal selectors collide and
+        # deep-merge. `parse_jstyle_rule_tree` is idempotent on already-flat trees.
+        merged: dict[Any, Any] = dict(
+            parse_jstyle_rule_tree(_resolve_lazies(dict(base._rule_tree or {})))
+        )
         ov_tree = parse_jstyle_rule_tree(_resolve_lazies(overrides)) if overrides else {}
         for sel, props in ov_tree.items():
             if sel in merged and dict_like(merged[sel]) and dict_like(props):

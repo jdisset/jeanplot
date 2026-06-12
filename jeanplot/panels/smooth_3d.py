@@ -79,6 +79,7 @@ class SmoothPanel3D(PlotPanel):
     stack_zrange: tuple[float, float] = (0.05, 0.55)
     stack_n_slices: int = 4
     cube_frac_w: float = 0.45
+    cube_grid_gap: float = 0.1  # spacing (inches) between the cube view and the z-slice grid
     xlims: tuple[float | None, float | None] = (0.0, 1.0)
     ylims: tuple[float | None, float | None] = (None, None)
     zlims: tuple[float | None, float | None] = (None, None)
@@ -91,6 +92,9 @@ class SmoothPanel3D(PlotPanel):
     projection_angle: float = 45.0
     projection_diag_coef: float = 0.5
     slice_show_colorbar: bool = True
+    # Draw the x/y axis TITLES (input-protein names) on the bottom-row / left-column slices.
+    # Off when the paired cube already carries them (DataBlockPanel), so they aren't repeated.
+    slice_show_axis_titles: bool = True
     slice_title_fontsize: int = 7
     slice_title_color: str = "#777777"
     slice_title_pad: float = 3.0
@@ -133,12 +137,12 @@ class SmoothPanel3D(PlotPanel):
         # bottom row drifted.) Bottom-row x labels / left-column y labels live in the GRID
         # container's margin (grid_pad), NOT per-cell padding, so interior cells don't each
         # waste a tick band. show_labels below decides which cells draw labels.
-        gap = 0.05
+        gap = 0.02  # minimal gap between slices (they read as one tight grid)
         # The slice colorbar's TRUE right-gutter (band overflow + tick allowance) is what
         # `SmoothPanel2D._right_overflow` reserves at render; under-reserving it here was
         # what made the grid balloon past the panel. So `pad_cbar` MUST cover that gutter
         # when colorbars are on, and collapses to a hairline when they're off.
-        pad_title, pad_edge = 0.16, 0.03
+        pad_title, pad_edge = 0.13, 0.03
         pad_cbar = 0.34 if self.slice_show_colorbar else pad_edge
         pad_xaxis, pad_yaxis = 0.40, 0.44
         cell_pad = BoxStyle(
@@ -147,7 +151,11 @@ class SmoothPanel3D(PlotPanel):
         grid_pad = BoxStyle(padding=BoxInset(bottom=pad_xaxis, left=pad_yaxis))
         # Hug the heatmap with a thin, tall colorbar so it costs little width; the slice
         # colorbars carry no rotated label, so a small `label_reserve` matches `pad_cbar`.
-        slice_colorbar_params = {"position": (1.04, 0.08), "size": (0.05, 0.84), "label_reserve": 0.22}
+        slice_colorbar_params = {
+            "position": (1.04, 0.08),
+            "size": (0.05, 0.84),
+            "label_reserve": 0.22,
+        }
 
         # axes_size sizes the per-cell min_dimensions so the panel honors the size the
         # caller asked for (per_network_row's per-cell width x panel_scale). The equal
@@ -228,8 +236,8 @@ class SmoothPanel3D(PlotPanel):
                 draw_colorbar=self.slice_show_colorbar,
                 draw_colorbar_label=False,
                 colorbar_params=slice_colorbar_params,
-                draw_xlabel=is_bottom,
-                draw_ylabel=is_left,
+                draw_xlabel=is_bottom and self.slice_show_axis_titles,
+                draw_ylabel=is_left and self.slice_show_axis_titles,
                 # Shared-axes grid: only the bottom row / left column show tick labels;
                 # interior cells suppress them (draw_x/ylabel toggle only the axis
                 # title, not the ticks).
@@ -273,7 +281,7 @@ class SmoothPanel3D(PlotPanel):
 
         self.layout = LayoutConstraints(
             direction="row",
-            gap=0.1,
+            gap=self.cube_grid_gap,
             align_items="stretch",
             main_axis_weights=[self.cube_frac_w, 1.0 - self.cube_frac_w],
         )
@@ -313,6 +321,11 @@ class CubeStackPanel(PlotPanel):
     show_front_face_ticks: bool = False
     smooth_2d_params: dict | None = None
     colorbar_params: dict | None = None
+    # Opacity (0..1) of the translucent value-heatmap slices drawn inside the cube. 1.0
+    # (default) is unchanged/opaque; lower lets back slices show through. Read at draw
+    # time and folded into the face `heatmap_params`, so it is cascade-fillable even though
+    # the cube is built procedurally (`CubeStackPanel: {slice_opacity: 0.7}`).
+    slice_opacity: float = 1.0
     # When set, symbolic contour levels are resolved from this field instead of
     # `plot_data` (lets a prediction cube clip at the ground-truth iso-level).
     contour_reference_plot_data: PlotData | None = None
@@ -342,6 +355,10 @@ class CubeStackPanel(PlotPanel):
         ref = self.contour_reference_plot_data
         contour_reference = (ref.x, ref.y) if ref is not None else None
         smooth_2d_params = dict(self.smooth_2d_params or {})
+        if self.slice_opacity != 1.0:
+            hp = dict(smooth_2d_params.get("heatmap_params") or {})
+            hp.setdefault("opacity", self.slice_opacity)
+            smooth_2d_params["heatmap_params"] = hp
         sgp = self._face_smooth_grid_params()
         if sgp is not None:
             smooth_2d_params["smooth_grid_params"] = sgp
