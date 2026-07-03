@@ -405,7 +405,9 @@ def render_figure(fig: Figure) -> Any:
     if fig.theme_overrides is not None:
         from jeanplot.core.style_engine import merge_jstyle_rules
 
-        jstyle.update(merge_jstyle_rules(fig.theme if fig.theme is not None else {}, fig.theme_overrides))
+        jstyle.update(
+            merge_jstyle_rules(fig.theme if fig.theme is not None else {}, fig.theme_overrides)
+        )
     elif fig.theme is not None:
         jstyle.update(fig.theme)
     jstyle.apply(fig)
@@ -557,11 +559,18 @@ def save_figure(fig: Figure, mfig: Any) -> Path | None:
     if out is None:
         return None
     md = _stringify_metadata(fig.metadata)
+    # Colocated twins (same dir + stem, swapped suffix) derived from the FINAL path, plus any
+    # explicit extra paths. Dedup so an ext that coincides with an explicit path isn't written twice.
+    twins = [out.with_suffix("." + e.lstrip(".")) for e in fig.also_save_exts]
+    extras = [Path(p) for p in fig.extra_output_paths]
+    seen = {out}
     with step("save"), mpl.rc_context(rc=fig.rc_context):
         out.parent.mkdir(parents=True, exist_ok=True)
         mfig.savefig(out, dpi=fig.dpi, metadata=_metadata_for(out, md))
-        for extra in fig.extra_output_paths:
-            p = Path(extra)
+        for p in twins + extras:
+            if p in seen:
+                continue
+            seen.add(p)
             p.parent.mkdir(parents=True, exist_ok=True)
             mfig.savefig(p, dpi=fig.dpi, metadata=_metadata_for(p, md))
     return out

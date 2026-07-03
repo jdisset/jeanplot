@@ -37,6 +37,73 @@ def _split_userset(parent: Any, spec: dict[str, str]) -> tuple[dict[str, Any], d
     return user, default
 
 
+# ── Uniform face sizing (DataBlock tables) ──────────────────────────────────────────────
+# SSOT for the chrome reserved around EVERY sub-plot's AXES BOX (2D value face, 1D curve, each
+# 3D z-slice). We pin the axes box (the plotted square) to one canonical size for every face, so
+# tick labels + titles render at ONE physical size across the whole table; the CELL a face
+# occupies then varies with its chrome (a colorbar face is wider than a bare 1D curve) but the
+# plotted square is identical. top == TITLE_ROOM so a z-titled slice and an untitled 2D face
+# reserve the same top strip. right == 0: a per-cell colorbar adds its own right gutter via
+# `_right_overflow` (folded into `face_cell_size`). datablock.py imports all of these.
+FACE_PAD = BoxInset(top=0.30, right=0.0, bottom=0.50, left=0.56)
+FACE_COLORBAR = {"position": (1.04, 0.08), "size": (0.05, 0.84), "label_reserve": 0.22}
+FACE_GAP = 0.1  # inter-face gap (inches), shared by the slice grid and the 1D/2D twin
+
+
+def _freeze_size(panel: PlotPanel) -> None:
+    """Mark axes_size / min / max as user-set so the render-time jstyle cascade (which re-runs the
+    base `_compute_min_dimensions` validator via validate_assignment) can NEITHER recompute nor fill
+    them. Without this the cascade silently regrows the pinned cells at render, so a block ends up
+    drawing wider than the width it reported to the table's auto column -> cross-column overlap."""
+    panel._user_set_fields.update(("axes_size", "min_dimensions", "max_dimensions"))
+
+
+def face_cell_size(box_w: float, box_h: float, colorbar: bool) -> tuple[float, float]:
+    """Footprint of a face whose plotted axes box is (box_w, box_h): the box plus FACE_PAD, plus
+    the colorbar's right gutter (mirrors `_colorbar_right_overflow`: band overflow + label
+    reserve) when present. SSOT so the block/grid width can be derived without a measure pass."""
+    cp = FACE_COLORBAR
+    overflow = (
+        max(0.0, cp["position"][0] + cp["size"][0] - 1.0) * box_w + cp["label_reserve"]
+        if colorbar
+        else 0.0
+    )
+    return (
+        box_w + FACE_PAD.left + FACE_PAD.right + overflow,
+        box_h + FACE_PAD.top + FACE_PAD.bottom,
+    )
+
+
+def pin_axes_box(panel: PlotPanel, box_w: float, box_h: float) -> None:
+    """Pin a face's plotted AXES BOX to exactly (box_w, box_h): set axes_size to the box, then
+    min==max==box+effective_padding (the cell) so layout gives the panel that exact footprint and
+    the axes fills the box. Uniform box across faces => identical tick-label size table-wide,
+    whatever each face's chrome. No band-term circularity: effective_padding is read with axes_size
+    already at box_w. Called from the PARENT after the child is built (survives re-validation, which
+    lands on the same min)."""
+    object.__setattr__(panel, "axes_size", Size(width=box_w, height=box_h))
+    p = panel.effective_padding
+    cell = Size(width=box_w + p.left + p.right, height=box_h + p.top + p.bottom)
+    object.__setattr__(panel, "min_dimensions", cell)
+    object.__setattr__(panel, "max_dimensions", cell)
+    _freeze_size(panel)
+
+
+def pin_to_cell(panel: PlotPanel, cell_w: float, cell_h: float) -> None:
+    """Make `panel` a RIGID cell of exactly (cell_w, cell_h): axes box = cell minus the panel's
+    effective padding, min==max==cell so layout can neither stretch nor shrink it. Used for the
+    cube (fill an exact footprint) and for the whole block. Called from the PARENT after the
+    child is built. Sets axes_size too so the min validator lands on the same cell."""
+    object.__setattr__(panel, "axes_size", Size(width=cell_w, height=cell_h))  # seed cbar band term
+    p = panel.effective_padding
+    aw = max(0.2, cell_w - p.left - p.right)
+    ah = max(0.2, cell_h - p.top - p.bottom)
+    object.__setattr__(panel, "axes_size", Size(width=aw, height=ah))
+    object.__setattr__(panel, "min_dimensions", Size(width=cell_w, height=cell_h))
+    object.__setattr__(panel, "max_dimensions", Size(width=cell_w, height=cell_h))
+    _freeze_size(panel)
+
+
 class CubeView(PlotPanel):
     plot_data: PlotData
     xlims: tuple[float, float] = (0.0, 1.0)
@@ -95,6 +162,21 @@ class SmoothPanel3D(PlotPanel):
     # Draw the x/y axis TITLES (input-protein names) on the bottom-row / left-column slices.
     # Off when the paired cube already carries them (DataBlockPanel), so they aren't repeated.
     slice_show_axis_titles: bool = True
+    # Draw x/y tick LABELS on EVERY slice (each cell reserves its own tick band) instead of only
+    # the bottom row / left column (shared-axes grid, the band living once in the grid margin).
+    # Use for a wide single-row strip where each slice is read independently.
+    slice_all_ticks: bool = False
+    # UNIFORM FACE MODE (DataBlock tables). When set to the axes-box size (box_w, box_h), every
+    # z-slices are pinned so tick labels render identically table-wide (see `pin_axes_box` /
+    # `face_cell_size` / `FACE_PAD`). When `uniform_height` = the block height H, the R×C grid is
+    # packed into ONE H (each slice = H/R tall, minus gaps): a single-row [1,N] strip gives
+    # full-height slices == a 2D value face; a grid shrinks each row to keep the block one row tall.
+    # The cube is full H tall, `cube_cell_units`·(a FULL-height face cell) wide. The panel pins
+    # ITSELF to the derived (width, H). None = legacy flex layout (cube_frac_w split + stretch-to-
+    # fill), kept for standalone `PaperSurface` / `AutoPanel` use.
+    uniform_height: float | None = None
+    uniform_single_aspect: float = 1.0  # slice/face axes-box width:height (1 = square)
+    cube_cell_units: float = 1.4  # uniform mode: cube width in FULL-height face-cell-widths
     slice_title_fontsize: int = 7
     slice_title_color: str = "#777777"
     slice_title_pad: float = 3.0
@@ -127,6 +209,10 @@ class SmoothPanel3D(PlotPanel):
         if self.children:
             return
 
+        if self.uniform_height is not None:
+            self._build_uniform()
+            return
+
         rows, cols = self.slice_grid
         n_slices = rows * cols
 
@@ -145,10 +231,18 @@ class SmoothPanel3D(PlotPanel):
         pad_title, pad_edge = 0.13, 0.03
         pad_cbar = 0.34 if self.slice_show_colorbar else pad_edge
         pad_xaxis, pad_yaxis = 0.40, 0.44
+        # slice_all_ticks: every cell draws its own x/y tick band → reserve it PER-CELL and drop
+        # the shared grid margin. Otherwise only the bottom row / left column draw ticks and the
+        # band lives once in the grid margin (interior cells stay tight).
+        all_ticks = self.slice_all_ticks
+        cell_left = pad_yaxis if all_ticks else pad_edge
+        cell_bottom = pad_xaxis if all_ticks else pad_edge
+        grid_left = pad_edge if all_ticks else pad_yaxis
+        grid_bottom = pad_edge if all_ticks else pad_xaxis
         cell_pad = BoxStyle(
-            padding=BoxInset(top=pad_title, right=pad_cbar, bottom=pad_edge, left=pad_edge)
+            padding=BoxInset(top=pad_title, right=pad_cbar, bottom=cell_bottom, left=cell_left)
         )
-        grid_pad = BoxStyle(padding=BoxInset(bottom=pad_xaxis, left=pad_yaxis))
+        grid_pad = BoxStyle(padding=BoxInset(bottom=grid_bottom, left=grid_left))
         # Hug the heatmap with a thin, tall colorbar so it costs little width; the slice
         # colorbars carry no rotated label, so a small `label_reserve` matches `pad_cbar`.
         slice_colorbar_params = {
@@ -162,10 +256,10 @@ class SmoothPanel3D(PlotPanel):
         # weights drive the actual cell sizes; this just sets a sensible floor.
         if "axes_size" in self.model_fields_set:
             w, h = self.axes_size.width, self.axes_size.height
-            grid_w = w * (1.0 - self.cube_frac_w) - pad_yaxis
-            grid_h = h - pad_xaxis
-            cell_w = max(0.3, (grid_w - gap * (cols - 1)) / cols - (pad_edge + pad_cbar))
-            cell_h = max(0.3, (grid_h - gap * (rows - 1)) / rows - (pad_title + pad_edge))
+            grid_w = w * (1.0 - self.cube_frac_w) - grid_left
+            grid_h = h - grid_bottom
+            cell_w = max(0.3, (grid_w - gap * (cols - 1)) / cols - (cell_left + pad_cbar))
+            cell_h = max(0.3, (grid_h - gap * (rows - 1)) / rows - (pad_title + cell_bottom))
             cube_size = {"axes_size": Size(width=w * self.cube_frac_w, height=h)}
             cell_size = {"axes_size": Size(width=cell_w, height=cell_h)}
         else:
@@ -217,8 +311,8 @@ class SmoothPanel3D(PlotPanel):
         slice_panels: list[SmoothPanel2D] = []
         for i, z in enumerate(zs):
             r, c = i // cols, i % cols
-            is_left = c == 0
-            is_bottom = r == rows - 1
+            is_left = c == 0 or all_ticks
+            is_bottom = r == rows - 1 or all_ticks
             title_label = _format_z_label(float(z), self.rescaler)
             sp = SmoothPanel2D(
                 plot_data=self.plot_data,
@@ -286,6 +380,123 @@ class SmoothPanel3D(PlotPanel):
             main_axis_weights=[self.cube_frac_w, 1.0 - self.cube_frac_w],
         )
         self.add_children([cube, slice_grid_container])
+
+    def _build_uniform(self) -> None:
+        """Height-invariant uniform layout: cube (full H tall) + an R×C slice grid packed into the
+        SAME height H, so a [1,N] strip gives full-size slices (== a 2D value face) and a grid
+        shrinks each row to H/R. Slice axes boxes are pinned (FACE_PAD chrome) so tick labels stay
+        consistent; the panel pins ITSELF to the derived (width, H). See `uniform_height`."""
+        assert self.uniform_height is not None
+        height = self.uniform_height
+        sa = self.uniform_single_aspect
+        cbar = self.slice_show_colorbar
+        rows, cols = self.slice_grid
+        n = rows * cols
+        # Slice cell packs R rows into H; its plotted box = cell minus the FACE_PAD chrome.
+        slice_cell_h = (height - FACE_GAP * (rows - 1)) / rows
+        box_h = max(0.2, slice_cell_h - FACE_PAD.top - FACE_PAD.bottom)
+        box_w = sa * box_h
+        cell_w, _ = face_cell_size(box_w, box_h, colorbar=cbar)
+        # Cube spans the full height; width = cube_cell_units × a FULL-height face cell (so the cube
+        # reads at face scale regardless of how many grid rows shrank the slices).
+        full_box_h = max(0.2, height - FACE_PAD.top - FACE_PAD.bottom)
+        full_cell_w, _ = face_cell_size(sa * full_box_h, full_box_h, colorbar=cbar)
+        cube_cell_w = self.cube_cell_units * full_cell_w
+
+        if self.slice_zvalues is not None:
+            zs = np.asarray(self.slice_zvalues, dtype=float)
+            assert zs.size == n, f"slice_zvalues has {zs.size} entries, expected R*C={n}"
+        else:
+            zs = np.linspace(self.slice_zrange[0], self.slice_zrange[1], n)
+        cube_zs: list[float] = (
+            list(self.stack_zslices)
+            if self.stack_zslices is not None
+            else list(self.zslices)
+            if self.zslices is not None
+            else list(np.linspace(self.stack_zrange[0], self.stack_zrange[1], self.stack_n_slices))
+        )
+
+        cube_user, cube_def = _split_userset(
+            self, {"xlims": "xlims", "ylims": "ylims", "zlims": "zlims", "vlims": "vlims"}
+        )
+        cube = CubeStackPanel(
+            plot_data=self.plot_data,
+            rescaler=self.rescaler,
+            zslices=[cube_zs],
+            **cube_user,
+            projection_angle=self.projection_angle,
+            projection_diag_coef=self.projection_diag_coef,
+            title=self.title,
+            title_kwargs=self.title_kwargs,
+            show_inner_spines=self.cube_show_inner_spines,
+            show_slice_ticks=self.cube_show_slice_ticks,
+            show_front_face_ticks=self.cube_show_front_face_ticks,
+            contour_reference_plot_data=self.cube_contour_reference_plot_data,
+            smooth_2d_params=self.cube_smooth_2d_params,
+            colorbar_params=self.cube_colorbar_params,
+            draw_colorbar=False,
+        )
+        cube.with_defaults(**cube_def)
+        pin_to_cell(cube, cube_cell_w, height)
+
+        slice_user, slice_def = _split_userset(
+            self, {"xlims": "xlims", "ylims": "ylims", "vlims": "slice_vlims"}
+        )
+        slice_panels: list[SmoothPanel2D] = []
+        for z in zs:
+            sp = SmoothPanel2D(
+                plot_data=self.plot_data,
+                rescaler=self.rescaler,
+                zslice=[float(z)],
+                **slice_user,
+                style=BoxStyle(padding=FACE_PAD),
+                vlim_quantiles=self.slice_vlim_quantiles,
+                vlim_min_floor=None,
+                vlim_min_range=None,
+                draw_colorbar=self.slice_show_colorbar,
+                draw_colorbar_label=False,
+                colorbar_params=dict(FACE_COLORBAR),
+                draw_xlabel=self.slice_show_axis_titles,
+                draw_ylabel=self.slice_show_axis_titles,
+                setup_transformed_axis_params={
+                    "setup_xaxis_params": {"show_labels": True},
+                    "setup_yaxis_params": {"show_labels": True},
+                },
+                title=_format_z_label(float(z), self.rescaler),
+                title_inside=False,
+                title_kwargs={
+                    "color": self.slice_title_color,
+                    "fontsize": self.slice_title_fontsize,
+                    "pad": self.slice_title_pad,
+                },
+            )
+            sp.with_defaults(**slice_def)
+            pin_axes_box(sp, box_w, box_h)
+            slice_panels.append(sp)
+
+        slice_rows = [
+            Container(
+                layout=LayoutConstraints(direction="row", gap=FACE_GAP, align_items="start"),
+                children=slice_panels[r * cols : (r + 1) * cols],
+            )
+            for r in range(rows)
+        ]
+        grid = Container(
+            layout=LayoutConstraints(direction="column", gap=FACE_GAP, align_items="start"),
+            children=slice_rows,
+        )
+        self.layout = LayoutConstraints(
+            direction="row", gap=self.cube_grid_gap, align_items="start"
+        )
+        self.add_children([cube, grid])
+        # Pin SELF to the derived footprint so the parent DataBlock (and the table column) reads the
+        # true width. grid_w = cols slice cells + inter-cell gaps.
+        grid_w = cols * cell_w + FACE_GAP * (cols - 1)
+        total_w = cube_cell_w + self.cube_grid_gap + grid_w
+        object.__setattr__(self, "axes_size", Size(width=total_w, height=height))
+        object.__setattr__(self, "min_dimensions", Size(width=total_w, height=height))
+        object.__setattr__(self, "max_dimensions", Size(width=total_w, height=height))
+        _freeze_size(self)
 
     def render_txt(self) -> str | None:
         from jeanplot.plots.txt import smooth_3d_txt

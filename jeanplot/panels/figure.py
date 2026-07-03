@@ -16,6 +16,10 @@ class Figure(Container):
     output_dir: str = "./"
     output_file: str | None = "unnamed.png"
     extra_output_paths: list[str] = Field(default_factory=list)
+    # Extra extensions to ALSO save the figure as, colocated with `output_path` (same dir + stem,
+    # swapped suffix). Derived at save time from the final path, so it survives any output_dir
+    # override — unlike pre-built `extra_output_paths`. e.g. ["svg"] writes an svg twin of the pdf.
+    also_save_exts: list[str] = Field(default_factory=list)
     dpi: int = 300
     rc_context: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
